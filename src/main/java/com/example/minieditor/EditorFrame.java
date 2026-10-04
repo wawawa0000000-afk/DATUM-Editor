@@ -37,15 +37,21 @@ public class EditorFrame extends JFrame {
         JMenuBar menuBar = new JMenuBar();
         JMenu fileMenu = new JMenu("ファイル");
         JMenuItem saveItem = new JMenuItem("保存");
+        JMenuItem saveAsItem = new JMenuItem("名前を付けて保存");
         
         saveItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_S, InputEvent.CTRL_DOWN_MASK));
         saveItem.addActionListener(e -> saveFile());
 
         fileMenu.setFont(new Font("Dialog", Font.PLAIN, 24));
         saveItem.setFont(new Font("Dialog", Font.PLAIN, 24));
+        saveAsItem.setFont(new Font("Dialog", Font.PLAIN, 24));
 
-        fileMenu.add(saveItem);
         menuBar.add(fileMenu);
+        fileMenu.add(saveItem);
+        fileMenu.add(saveAsItem);
+
+        saveItem.addActionListener(e -> saveFileAs());
+        
         return menuBar;
     }
 
@@ -62,5 +68,15 @@ public class EditorFrame extends JFrame {
             JOptionPane.showMessageDialog(this, "保存できませんでした: " + ex.getMessage(),
             "エラー", JOptionPane.ERROR_MESSAGE);
         }
+    }
+
+    private void saveFileAs() {
+        JFileChooser fileChooser = new JFileChooser();
+        int result = fileChooser.showSaveDialog(this);
+        if(result != JFileChooser.APPROVE_OPTION) {
+            return;     // キャンセルやダイアログを閉じたら　何もなく終わる
+        }
+        Path path = fileChooser.getSelectedFile().toPath();
+        // ここから先　拡張子を付けて保存する
     }
 }
