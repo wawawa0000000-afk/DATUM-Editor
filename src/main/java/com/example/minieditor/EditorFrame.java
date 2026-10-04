@@ -50,7 +50,7 @@ public class EditorFrame extends JFrame {
         fileMenu.add(saveItem);
         fileMenu.add(saveAsItem);
 
-        saveItem.addActionListener(e -> saveFileAs());
+        saveAsItem.addActionListener(e -> saveFileAs());
         
         return menuBar;
     }
