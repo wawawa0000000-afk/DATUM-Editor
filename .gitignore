@@ -1,0 +1,13 @@
+# Maven のビルド結果（mvn package で再生成される）
+target/
+
+# コンパイル結果
+*.class
+
+# 動作確認で保存したテスト用ファイル
+memo.txt
+
+# IDE の設定ファイル
+.idea/
+*.iml
+.vscode/
