@@ -42,7 +42,7 @@ public class EditorFrame extends JFrame {
         addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosing(WindowEvent e) {
-                if (confirmClose()) {
+                if (confirmDiscardChanges()) {
                     System.exit(0);     // 閉じて良いときだけ、プログラムを終了する
                 }
             }
@@ -54,17 +54,24 @@ public class EditorFrame extends JFrame {
         JMenuBar menuBar = new JMenuBar();
         JMenu fileMenu = new JMenu("ファイル");
         JMenuItem saveItem = new JMenuItem("保存");
+        JMenuItem newItem = new JMenuItem("新規");
         JMenuItem saveAsItem = new JMenuItem("名前を付けて保存");
         
         saveItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_S, InputEvent.CTRL_DOWN_MASK));
         saveItem.addActionListener(e -> saveFile());
 
+        newItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_N, InputEvent.CTRL_DOWN_MASK));
+        newItem.addActionListener(e -> newFile());
+
         fileMenu.setFont(new Font("Dialog", Font.PLAIN, 24));
         saveItem.setFont(new Font("Dialog", Font.PLAIN, 24));
+        newItem.setFont(new Font("Dialog", Font.PLAIN, 24));
         saveAsItem.setFont(new Font("Dialog", Font.PLAIN, 24));
+        
         setDialogFont(22);
 
         menuBar.add(fileMenu);
+        fileMenu.add(newItem);
         fileMenu.add(saveItem);
         fileMenu.add(saveAsItem);
 
@@ -100,6 +107,15 @@ public class EditorFrame extends JFrame {
         String name = (currentPath == null) ? "無題" : currentPath.getFileName().toString();
         String mark = dirty ? " *" : "";
         setTitle(name + mark + " - DATUM-Editor");
+    }
+
+    private void newFile() {
+        if (!confirmDiscardChanges()) {
+            return;                 // 「キャンセル」なら何もしない
+        }
+        area.setText("");           // テキストを空にする
+        currentPath = null;         // 保存先をリセットする（次の保存は名前を付けて保存になる）
+        markSaved();                // 未保存マークを消す（setText で dirty が立つので、最後に戻す）
     }
 
     private void saveFile() {
@@ -172,7 +188,7 @@ public class EditorFrame extends JFrame {
         return answer == JOptionPane.YES_OPTION;    // はい の場合だけ true
     }
 
-    private boolean confirmClose() {
+    private boolean confirmDiscardChanges() {
         if (!dirty) {
             return true;
         }
