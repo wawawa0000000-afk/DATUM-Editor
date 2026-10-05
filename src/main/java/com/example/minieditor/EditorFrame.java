@@ -15,6 +15,7 @@ import java.nio.file.Path;
 public class EditorFrame extends JFrame {
 
     private final JTextArea area = new JTextArea();             //ライブラリにあるテキストエリアをインスタンス化
+    private Path currentPath = null;
     private final FileService fileService = new FileService();
 
     public EditorFrame() {
@@ -71,11 +72,14 @@ public class EditorFrame extends JFrame {
     }
 
     private void saveFile() {
-        Path path = Path.of("untitled.txt");
+        if (currentPath == null) {
+            saveFileAs();
+            return;
+        }
 
         try{
-            fileService.save(area.getText(), path);
-            JOptionPane.showMessageDialog(this, "保存しました: " + path.toAbsolutePath());
+            fileService.save(area.getText(), currentPath);
+            JOptionPane.showMessageDialog(this, "保存しました: " + currentPath.toAbsolutePath());
         } 
         catch (IOException ex) {
             JOptionPane.showMessageDialog(this, "保存できませんでした: " + ex.getMessage(),
@@ -113,11 +117,12 @@ public class EditorFrame extends JFrame {
         // 中身を保存する。失敗したらエラーを表示する
         try {
             fileService.save(area.getText(), path);
+            currentPath = path;
             JOptionPane.showMessageDialog(this, "保存しました: " + path.toAbsolutePath());
         } 
         catch (IOException ex) {
             JOptionPane.showMessageDialog(this, "保存できませんでした: " + ex.getMessage(),
-                    "エラー", JOptionPane.ERROR_MESSAGE);
+                "エラー", JOptionPane.ERROR_MESSAGE);
         }
     }
 
