@@ -6,6 +6,7 @@ target/
 
 # 動作確認で保存したテスト用ファイル
 memo.txt
+untitled.txt
 
 # IDE の設定ファイル
 .idea/

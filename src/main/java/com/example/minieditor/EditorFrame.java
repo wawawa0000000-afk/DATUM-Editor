@@ -3,6 +3,7 @@ package com.example.minieditor;
 import java.awt.Font;
 
 import javax.swing.*;
+import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.event.*;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -45,6 +46,7 @@ public class EditorFrame extends JFrame {
         fileMenu.setFont(new Font("Dialog", Font.PLAIN, 24));
         saveItem.setFont(new Font("Dialog", Font.PLAIN, 24));
         saveAsItem.setFont(new Font("Dialog", Font.PLAIN, 24));
+        setDialogFont(22);
 
         menuBar.add(fileMenu);
         fileMenu.add(saveItem);
@@ -55,10 +57,21 @@ public class EditorFrame extends JFrame {
         return menuBar;
     }
 
+    private void setDialogFont(int size) {
+        Font font = new Font("Dialog", Font.PLAIN, size);
+        UIManager.put("OptionPane.messageFont", font);   // 確認・エラーダイアログの本文
+        UIManager.put("OptionPane.buttonFont", font);    // ダイアログのボタン
+        UIManager.put("Label.font", font);               // ラベル（「ファイル名」「ファイルの種類」など）
+        UIManager.put("Button.font", font);              // 「保存」「キャンセル」などのボタン
+        UIManager.put("ComboBox.font", font);            // ファイルの種類の選択欄
+        UIManager.put("List.font", font);                // ファイル一覧
+        UIManager.put("Table.font", font);               // 詳細表示のファイル一覧
+        UIManager.put("TextField.font", font);           // ファイル名の入力欄
+        UIManager.put("Menu.font", font);                // メニューの文字
+    }
+
     private void saveFile() {
-        Path path = Path.of("memo.txt");
-        UIManager.put("OptionPane.messageFont", new Font("Dialog", Font.PLAIN, 24));
-        UIManager.put("OptionPane.buttonFont", new Font("Dialog", Font.PLAIN, 24));
+        Path path = Path.of("untitled.txt");
 
         try{
             fileService.save(area.getText(), path);
@@ -69,14 +82,55 @@ public class EditorFrame extends JFrame {
             "エラー", JOptionPane.ERROR_MESSAGE);
         }
     }
-
+    
+    // 保存に関するUIと振る舞いの記述
     private void saveFileAs() {
         JFileChooser fileChooser = new JFileChooser();
+        FileNameExtensionFilter txtFilter = new FileNameExtensionFilter("テキスト(*.txt)", "txt");
+        FileNameExtensionFilter jsonFilter = new FileNameExtensionFilter("JSON(*.json)", "json");
+
+        fileChooser.addChoosableFileFilter(txtFilter);
+        fileChooser.addChoosableFileFilter(jsonFilter);
+        fileChooser.setFileFilter(txtFilter);               // 初期の形式
+        fileChooser.setAcceptAllFileFilterUsed(false);      // すべてのファイルは出さない
+
         int result = fileChooser.showSaveDialog(this);
-        if(result != JFileChooser.APPROVE_OPTION) {
-            return;     // キャンセルやダイアログを閉じたら　何もなく終わる
+        if (result != JFileChooser.APPROVE_OPTION) {
+            return;
         }
-        Path path = fileChooser.getSelectedFile().toPath();
-        // ここから先　拡張子を付けて保存する
+
+        FileNameExtensionFilter selected = (FileNameExtensionFilter) fileChooser.getFileFilter();
+        String ext = selected.getExtensions()[0];
+        String name = fileChooser.getSelectedFile().toString();
+        if (!name.toLowerCase().endsWith("." + ext)) {
+            name = name + "." + ext;
+        }
+
+        Path path = Path.of(name);
+        if (!confirmOverwrite(path)) {
+            return;
+        }
+        // 中身を保存する。失敗したらエラーを表示する
+        try {
+            fileService.save(area.getText(), path);
+            JOptionPane.showMessageDialog(this, "保存しました: " + path.toAbsolutePath());
+        } 
+        catch (IOException ex) {
+            JOptionPane.showMessageDialog(this, "保存できませんでした: " + ex.getMessage(),
+                    "エラー", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    // 保存の際同じ名前のファイルがないかの判定
+    private boolean confirmOverwrite(Path path) {
+        if (!path.toFile().exists()) {
+            return true;            // 同名なし　判定OK
+        }
+        int answer = JOptionPane.showConfirmDialog(this, 
+            path.getFileName() + " は既にあります。上書きしますか？",
+            "上書きの確認",
+            JOptionPane.YES_NO_OPTION,
+            JOptionPane.WARNING_MESSAGE);
+        return answer == JOptionPane.YES_OPTION;    // はい の場合だけ true
     }
 }
