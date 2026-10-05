@@ -1,8 +1,8 @@
 package com.example.minieditor;
 
 import java.awt.Font;
-
 import javax.swing.*;
+import javax.swing.event.*;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.event.*;
 import java.io.IOException;
@@ -16,6 +16,7 @@ public class EditorFrame extends JFrame {
 
     private final JTextArea area = new JTextArea();             //ライブラリにあるテキストエリアをインスタンス化
     private Path currentPath = null;
+    private boolean dirty = false;
     private final FileService fileService = new FileService();
 
     public EditorFrame() {
@@ -23,6 +24,11 @@ public class EditorFrame extends JFrame {
 
         // テキストを入力する部品。フォントは部品（JTextArea）ごとに設定する。               
         area.setFont(new Font("Monospaced", Font.PLAIN, 48));
+        area.getDocument().addDocumentListener(new DocumentListener() {
+            public void insertUpdate(DocumentEvent e) { markDirty(); }
+            public void removeUpdate(DocumentEvent e) { markDirty(); }
+            public void changedUpdate(DocumentEvent e) { markDirty(); }
+        });
 
         // 文章が長くなったときにスクロールできるよう、JScrollPane で包んで追加する。
         add(new JScrollPane(area));                             //フレームにテキストエリアを追加
@@ -33,6 +39,7 @@ public class EditorFrame extends JFrame {
         setSize(1200, 600);                                     //フレームサイズの指定
         // ×ボタンを押したらプログラムを終了する（後の step で確認ダイアログに変える）。
         setDefaultCloseOperation(EXIT_ON_CLOSE);
+        updateTitle();
     }
 
     private JMenuBar createMenuBar() {
@@ -71,6 +78,22 @@ public class EditorFrame extends JFrame {
         UIManager.put("Menu.font", font);                // メニューの文字
     }
 
+    private void markDirty() {
+        dirty = true;
+        updateTitle();
+    }
+
+    private void markSaved() {
+        dirty = false;
+        updateTitle();
+    }
+
+    private void updateTitle() {
+        String name = (currentPath == null) ? "無題" : currentPath.getFileName().toString();
+        String mark = dirty ? " *" : "";
+        setTitle(name + mark + " - DATUM-Editor");
+    }
+
     private void saveFile() {
         if (currentPath == null) {
             saveFileAs();
@@ -79,6 +102,7 @@ public class EditorFrame extends JFrame {
 
         try{
             fileService.save(area.getText(), currentPath);
+            markSaved();
             JOptionPane.showMessageDialog(this, "保存しました: " + currentPath.toAbsolutePath());
         } 
         catch (IOException ex) {
@@ -118,6 +142,7 @@ public class EditorFrame extends JFrame {
         try {
             fileService.save(area.getText(), path);
             currentPath = path;
+            markSaved();
             JOptionPane.showMessageDialog(this, "保存しました: " + path.toAbsolutePath());
         } 
         catch (IOException ex) {
