@@ -37,8 +37,16 @@ public class EditorFrame extends JFrame {
         setJMenuBar(createMenuBar());
 
         setSize(1200, 600);                                     //フレームサイズの指定
-        // ×ボタンを押したらプログラムを終了する（後の step で確認ダイアログに変える）。
-        setDefaultCloseOperation(EXIT_ON_CLOSE);
+        // ×ボタンを押しても、勝手には閉じない
+        setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(WindowEvent e) {
+                if (confirmClose()) {
+                    System.exit(0);     // 閉じて良いときだけ、プログラムを終了する
+                }
+            }
+        });
         updateTitle();
     }
 
@@ -162,5 +170,25 @@ public class EditorFrame extends JFrame {
             JOptionPane.YES_NO_OPTION,
             JOptionPane.WARNING_MESSAGE);
         return answer == JOptionPane.YES_OPTION;    // はい の場合だけ true
+    }
+
+    private boolean confirmClose() {
+        if (!dirty) {
+            return true;
+        }
+        int answer = JOptionPane.showConfirmDialog(this,
+            "変更を保存しますか？",
+            "確認",
+            JOptionPane.YES_NO_CANCEL_OPTION,
+            JOptionPane.WARNING_MESSAGE);
+
+        if (answer == JOptionPane.YES_OPTION) {
+            saveFile();         // 保存する
+            return !dirty;      // 保存に成功して dirty が false になったときだけ閉じる
+        }
+        if (answer == JOptionPane.NO_OPTION) {
+            return true;        // 保存せずに閉じる
+        }
+        return false;           // キャンセル、またはダイアログを閉じた場合は閉じない
     }
 }
