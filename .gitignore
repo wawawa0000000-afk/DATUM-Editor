@@ -12,3 +12,6 @@ untitled.txt
 .idea/
 *.iml
 .vscode/
+
+# テキストファイル（動作確認で保存したものなど）は追跡しない
+*.txt
