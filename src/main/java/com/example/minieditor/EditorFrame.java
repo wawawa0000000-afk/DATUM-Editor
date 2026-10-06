@@ -56,6 +56,7 @@ public class EditorFrame extends JFrame {
         JMenuItem saveItem = new JMenuItem("保存");
         JMenuItem newItem = new JMenuItem("新規");
         JMenuItem saveAsItem = new JMenuItem("名前を付けて保存");
+        JMenuItem openItem = new JMenuItem("開く");
         
         saveItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_S, InputEvent.CTRL_DOWN_MASK));
         saveItem.addActionListener(e -> saveFile());
@@ -63,15 +64,20 @@ public class EditorFrame extends JFrame {
         newItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_N, InputEvent.CTRL_DOWN_MASK));
         newItem.addActionListener(e -> newFile());
 
+        openItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_O, InputEvent.CTRL_DOWN_MASK));
+        openItem.addActionListener(e -> openFile());
+
         fileMenu.setFont(new Font("Dialog", Font.PLAIN, 24));
         saveItem.setFont(new Font("Dialog", Font.PLAIN, 24));
         newItem.setFont(new Font("Dialog", Font.PLAIN, 24));
         saveAsItem.setFont(new Font("Dialog", Font.PLAIN, 24));
+        openItem.setFont(new Font("Dialog", Font.PLAIN, 24));
         
         setDialogFont(22);
 
         menuBar.add(fileMenu);
         fileMenu.add(newItem);
+        fileMenu.add(openItem);
         fileMenu.add(saveItem);
         fileMenu.add(saveAsItem);
 
@@ -116,6 +122,32 @@ public class EditorFrame extends JFrame {
         area.setText("");           // テキストを空にする
         currentPath = null;         // 保存先をリセットする（次の保存は名前を付けて保存になる）
         markSaved();                // 未保存マークを消す（setText で dirty が立つので、最後に戻す）
+    }
+
+    private void openFile() {
+        if(!confirmDiscardChanges()) {
+            return;
+        }
+
+        JFileChooser fileChooser = new JFileChooser();
+        int result = fileChooser.showOpenDialog(this);
+        if (result != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+
+        Path path = fileChooser.getSelectedFile().toPath();
+        try {
+            String text = fileService.read(path);
+            area.setText(text);                 // 中身をテキストエリアに入れる
+            currentPath = path;                 // 開いたファイルを保存先として覚える
+            markSaved();                        // setText で dirty が立つので、最後に戻す
+        }
+        catch (IOException ex) {
+            JOptionPane.showMessageDialog(this, 
+            "開けませんでした: " + ex.getMessage(),
+            "エラー",
+            JOptionPane.ERROR_MESSAGE);
+        }
     }
 
     private void saveFile() {
