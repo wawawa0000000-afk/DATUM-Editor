@@ -1,13 +1,27 @@
 package com.example.minieditor;
 
 import java.awt.Font;
-import javax.swing.*;
-import javax.swing.event.*;
-import javax.swing.filechooser.FileNameExtensionFilter;
-import java.awt.event.*;
+import java.awt.event.InputEvent;
+import java.awt.event.KeyEvent;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.io.IOException;
 import java.nio.file.Path;
 
+import javax.swing.JFileChooser;
+import javax.swing.JFrame;
+import javax.swing.JMenu;
+import javax.swing.JMenuBar;
+import javax.swing.JMenuItem;
+import javax.swing.JOptionPane;
+import javax.swing.JScrollPane;
+import javax.swing.JTextArea;
+import javax.swing.KeyStroke;
+import javax.swing.UIManager;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
+import javax.swing.filechooser.FileNameExtensionFilter;
+import javax.swing.undo.UndoManager;
 
 /**
  * メインウィンドウ。テキストエリアを置いて、ウィンドウの設定をする。
@@ -18,6 +32,7 @@ public class EditorFrame extends JFrame {
     private Path currentPath = null;
     private boolean dirty = false;
     private final FileService fileService = new FileService();
+    private final UndoManager undoManager = new UndoManager();
 
     public EditorFrame() {
         super("DATUM-Editor");  // ソフト名表示
@@ -25,10 +40,21 @@ public class EditorFrame extends JFrame {
         // テキストを入力する部品。フォントは部品（JTextArea）ごとに設定する。               
         area.setFont(new Font("Monospaced", Font.PLAIN, 48));
         area.getDocument().addDocumentListener(new DocumentListener() {
-            public void insertUpdate(DocumentEvent e) { markDirty(); }
-            public void removeUpdate(DocumentEvent e) { markDirty(); }
-            public void changedUpdate(DocumentEvent e) { markDirty(); }
+            public void insertUpdate(DocumentEvent e) {
+                markDirty();
+            }
+
+            public void removeUpdate(DocumentEvent e) {
+                markDirty();
+            }
+
+            public void changedUpdate(DocumentEvent e) {
+                markDirty();
+            }
         });
+
+        // 文字を入力・削除するたびに、その操作が履歴に入ります。
+        area.getDocument().addUndoableEditListener(e -> undoManager.addEdit(e.getEdit()));
 
         // 文章が長くなったときにスクロールできるよう、JScrollPane で包んで追加する。
         add(new JScrollPane(area));                             //フレームにテキストエリアを追加
@@ -57,7 +83,7 @@ public class EditorFrame extends JFrame {
         JMenuItem newItem = new JMenuItem("新規");
         JMenuItem saveAsItem = new JMenuItem("名前を付けて保存");
         JMenuItem openItem = new JMenuItem("開く");
-        
+
         saveItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_S, InputEvent.CTRL_DOWN_MASK));
         saveItem.addActionListener(e -> saveFile());
 
@@ -72,18 +98,62 @@ public class EditorFrame extends JFrame {
         newItem.setFont(new Font("Dialog", Font.PLAIN, 24));
         saveAsItem.setFont(new Font("Dialog", Font.PLAIN, 24));
         openItem.setFont(new Font("Dialog", Font.PLAIN, 24));
-        
+
         setDialogFont(22);
 
         menuBar.add(fileMenu);
+        menuBar.add(createEditMenu());
         fileMenu.add(newItem);
         fileMenu.add(openItem);
         fileMenu.add(saveItem);
         fileMenu.add(saveAsItem);
 
         saveAsItem.addActionListener(e -> saveFileAs());
-        
+
         return menuBar;
+    }
+
+    private JMenu createEditMenu() {
+        JMenu editMenu = new JMenu("編集");
+        editMenu.setFont(new Font("Dialog", Font.PLAIN, 24));
+
+        JMenuItem undoItem = new JMenuItem("元に戻す");
+        undoItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_Z, InputEvent.CTRL_DOWN_MASK));
+        undoItem.addActionListener(e -> {
+            if (undoManager.canUndo()) {
+                undoManager.undo();
+        
+            }});
+
+        JMenuItem redoItem = new JMenuItem("やり直し");
+        redoItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_Y, InputEvent.CTRL_DOWN_MASK));
+        redoItem.addActionListener(e -> {
+            if (undoManager.canRedo()) {
+                undoManager.redo();
+        
+            }});
+
+        JMenuItem cutItem = new JMenuItem("切り取り");
+        cutItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_X, InputEvent.CTRL_DOWN_MASK));
+        cutItem.addActionListener(e -> area.cut());
+
+        JMenuItem copyItem = new JMenuItem("コピー");
+        copyItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_C, InputEvent.CTRL_DOWN_MASK));
+        copyItem.addActionListener(e -> area.copy());
+
+        JMenuItem pasteItem = new JMenuItem("貼り付け");
+        pasteItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_V, InputEvent.CTRL_DOWN_MASK));
+        pasteItem.addActionListener(e -> area.paste());
+
+        JMenuItem selectAllItem = new JMenuItem("すべて選択");
+        selectAllItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_A, InputEvent.CTRL_DOWN_MASK));
+        selectAllItem.addActionListener(e -> area.selectAll());
+
+        for (JMenuItem item : new JMenuItem[]{undoItem, redoItem, cutItem, copyItem, pasteItem, selectAllItem}) {
+            item.setFont(new Font("Dialog", Font.PLAIN, 24));
+            editMenu.add(item);
+        }
+        return editMenu;
     }
 
     private void setDialogFont(int size) {
@@ -117,15 +187,16 @@ public class EditorFrame extends JFrame {
 
     private void newFile() {
         if (!confirmDiscardChanges()) {
-            return;                 // 「キャンセル」なら何もしない
+            return;                     // 「キャンセル」なら何もしない
         }
-        area.setText("");           // テキストを空にする
-        currentPath = null;         // 保存先をリセットする（次の保存は名前を付けて保存になる）
-        markSaved();                // 未保存マークを消す（setText で dirty が立つので、最後に戻す）
+        area.setText("");               // テキストを空にする
+        undoManager.discardAllEdits();  // 入れ替えた操作は、元に戻す対象から外す
+        currentPath = null;             // 保存先をリセットする（次の保存は名前を付けて保存になる）
+        markSaved();                    // 未保存マークを消す（setText で dirty が立つので、最後に戻す）
     }
 
     private void openFile() {
-        if(!confirmDiscardChanges()) {
+        if (!confirmDiscardChanges()) {
             return;
         }
 
@@ -139,14 +210,14 @@ public class EditorFrame extends JFrame {
         try {
             String text = fileService.read(path);
             area.setText(text);                 // 中身をテキストエリアに入れる
+            undoManager.discardAllEdits();      // 入れ替えた操作は、元に戻す対象から外す
             currentPath = path;                 // 開いたファイルを保存先として覚える
             markSaved();                        // setText で dirty が立つので、最後に戻す
-        }
-        catch (IOException ex) {
-            JOptionPane.showMessageDialog(this, 
-            "開けませんでした: " + ex.getMessage(),
-            "エラー",
-            JOptionPane.ERROR_MESSAGE);
+        } catch (IOException ex) {
+            JOptionPane.showMessageDialog(this,
+                    "開けませんでした: " + ex.getMessage(),
+                    "エラー",
+                    JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -156,17 +227,16 @@ public class EditorFrame extends JFrame {
             return;
         }
 
-        try{
+        try {
             fileService.save(area.getText(), currentPath);
             markSaved();
             JOptionPane.showMessageDialog(this, "保存しました: " + currentPath.toAbsolutePath());
-        } 
-        catch (IOException ex) {
+        } catch (IOException ex) {
             JOptionPane.showMessageDialog(this, "保存できませんでした: " + ex.getMessage(),
-            "エラー", JOptionPane.ERROR_MESSAGE);
+                    "エラー", JOptionPane.ERROR_MESSAGE);
         }
     }
-    
+
     // 保存に関するUIと振る舞いの記述
     private void saveFileAs() {
         JFileChooser fileChooser = new JFileChooser();
@@ -200,10 +270,9 @@ public class EditorFrame extends JFrame {
             currentPath = path;
             markSaved();
             JOptionPane.showMessageDialog(this, "保存しました: " + path.toAbsolutePath());
-        } 
-        catch (IOException ex) {
+        } catch (IOException ex) {
             JOptionPane.showMessageDialog(this, "保存できませんでした: " + ex.getMessage(),
-                "エラー", JOptionPane.ERROR_MESSAGE);
+                    "エラー", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -212,11 +281,11 @@ public class EditorFrame extends JFrame {
         if (!path.toFile().exists()) {
             return true;            // 同名なし　判定OK
         }
-        int answer = JOptionPane.showConfirmDialog(this, 
-            path.getFileName() + " は既にあります。上書きしますか？",
-            "上書きの確認",
-            JOptionPane.YES_NO_OPTION,
-            JOptionPane.WARNING_MESSAGE);
+        int answer = JOptionPane.showConfirmDialog(this,
+                path.getFileName() + " は既にあります。上書きしますか？",
+                "上書きの確認",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.WARNING_MESSAGE);
         return answer == JOptionPane.YES_OPTION;    // はい の場合だけ true
     }
 
@@ -225,10 +294,10 @@ public class EditorFrame extends JFrame {
             return true;
         }
         int answer = JOptionPane.showConfirmDialog(this,
-            "変更を保存しますか？",
-            "確認",
-            JOptionPane.YES_NO_CANCEL_OPTION,
-            JOptionPane.WARNING_MESSAGE);
+                "変更を保存しますか？",
+                "確認",
+                JOptionPane.YES_NO_CANCEL_OPTION,
+                JOptionPane.WARNING_MESSAGE);
 
         if (answer == JOptionPane.YES_OPTION) {
             saveFile();         // 保存する
