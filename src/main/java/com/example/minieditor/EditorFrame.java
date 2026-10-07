@@ -22,23 +22,41 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import javax.swing.undo.UndoManager;
+import javax.swing.text.BadLocationException;
+import javax.swing.text.DefaultHighlighter;
+import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.event.ActionEvent;
+import javax.swing.AbstractAction;
+import javax.swing.JButton;
+import javax.swing.JComponent;
+import javax.swing.JLabel;
+import javax.swing.JPanel;
+import javax.swing.JTextField;
 
 /**
  * メインウィンドウ。テキストエリアを置いて、ウィンドウの設定をする。
  */
 public class EditorFrame extends JFrame {
 
-    private final JTextArea area = new JTextArea();             //ライブラリにあるテキストエリアをインスタンス化
+    // 背景は黒、1行おきに黒灰色の縞を入れる
+    private final JTextArea area = new StripedTextArea(Color.BLACK, new Color(40, 40, 40));
     private Path currentPath = null;
     private boolean dirty = false;
     private final FileService fileService = new FileService();
     private final UndoManager undoManager = new UndoManager();
+    private final JPanel findBar = new JPanel();
+    private final JTextField findField = new JTextField(20);
+    private int lastMatchEnd = 0;
 
     public EditorFrame() {
         super("DATUM-Editor");  // ソフト名表示
 
         // テキストを入力する部品。フォントは部品（JTextArea）ごとに設定する。               
         area.setFont(new Font("Monospaced", Font.PLAIN, 48));
+        area.setForeground(Color.WHITE);    // 文字の色を白にする
+        area.setCaretColor(Color.WHITE);    // カーソルの色も白にする（黒背景だと見えなくなるため）
+
         area.getDocument().addDocumentListener(new DocumentListener() {
             public void insertUpdate(DocumentEvent e) {
                 markDirty();
@@ -57,10 +75,16 @@ public class EditorFrame extends JFrame {
         area.getDocument().addUndoableEditListener(e -> undoManager.addEdit(e.getEdit()));
 
         // 文章が長くなったときにスクロールできるよう、JScrollPane で包んで追加する。
-        add(new JScrollPane(area));                             //フレームにテキストエリアを追加
+        JScrollPane scrollPane = new JScrollPane(area);
+        scrollPane.getViewport().setBackground(Color.BLACK);   // スクロール時に白が見えないようにする
+        scrollPane.setBorder(null);                             // ふちの灰色の枠線を消す
+        add(scrollPane);                                        //フレームにテキストエリアを追加
+        createFindBar();
 
         // メニューバー
         setJMenuBar(createMenuBar());
+
+        getContentPane().setBackground(Color.BLACK);   // ウィンドウの余白部分も黒にする
 
         setSize(1200, 600);                                     //フレームサイズの指定
         // ×ボタンを押しても、勝手には閉じない
@@ -74,6 +98,85 @@ public class EditorFrame extends JFrame {
             }
         });
         updateTitle();
+    }
+
+    private void createFindBar() {
+        JButton closeButton = new JButton("閉じる");
+        closeButton.addActionListener(e -> hideFindBar());
+
+        JLabel findLabel = new JLabel("検索:");
+        findLabel.setForeground(Color.WHITE);
+        findField.setBackground(new Color(40, 40, 40));
+        findField.setForeground(Color.WHITE);
+        findField.setCaretColor(Color.WHITE);
+
+        findBar.setBackground(Color.BLACK);
+        findBar.add(findLabel);
+        findBar.add(findField);
+        findBar.add(closeButton);
+        findBar.setVisible(false);
+        add(findBar, BorderLayout.NORTH);
+        
+        findField.getInputMap(JComponent.WHEN_FOCUSED)
+            .put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "closeFind");
+        findField.getActionMap().put("closeFind", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                hideFindBar();
+            }
+        });
+        findField.addActionListener(e -> findNext());
+    }
+
+    private void toggleFindBar() {
+        if (findBar.isVisible()) {
+            hideFindBar();
+        }
+        else {
+            showFindBar();
+        }
+    }
+
+    private  void showFindBar() {
+        findBar.setVisible(true);
+        findField.requestFocusInWindow();
+    }
+
+    private void hideFindBar() {
+        findBar.setVisible(false);
+        area.requestFocusInWindow();
+    }
+
+    private void findNext() {
+        String keyword = findField.getText();
+        if (keyword.isEmpty()) {
+            return;
+        }
+
+        String text = area.getText();
+        int index = text.indexOf(keyword, lastMatchEnd);
+        if (index < 0) {
+            index = text.indexOf(keyword, 0);        // 先頭から探し直す（ループ）
+        }
+        if (index < 0) {
+            JOptionPane.showMessageDialog(this, "見つかりません: " + keyword);
+            return;
+        }
+
+        highlightMatch(index, index + keyword.length());
+        lastMatchEnd = index + keyword.length();
+    }
+
+    // 見つかった場所に、直接色を塗る
+    private void highlightMatch(int start, int end) {
+        try {
+            area.getHighlighter().removeAllHighlights();
+            area.getHighlighter().addHighlight(start, end,
+                    new DefaultHighlighter.DefaultHighlightPainter(new Color(0, 200, 255))); // 水色
+            area.setCaretPosition(end);
+        } catch (BadLocationException ex) {
+            // text.indexOf で得た位置なので、通常は起きない
+        }
     }
 
     private JMenuBar createMenuBar() {
@@ -101,6 +204,13 @@ public class EditorFrame extends JFrame {
 
         setDialogFont(22);
 
+        // メニューバーと、その中の項目を黒地に白文字にする
+        menuBar.setBackground(Color.BLACK);
+        for (JMenuItem item : new JMenuItem[]{fileMenu, saveItem, newItem, saveAsItem, openItem}) {
+            item.setBackground(Color.BLACK);
+            item.setForeground(Color.WHITE);
+        }
+
         menuBar.add(fileMenu);
         menuBar.add(createEditMenu());
         fileMenu.add(newItem);
@@ -116,6 +226,8 @@ public class EditorFrame extends JFrame {
     private JMenu createEditMenu() {
         JMenu editMenu = new JMenu("編集");
         editMenu.setFont(new Font("Dialog", Font.PLAIN, 24));
+        editMenu.setBackground(Color.BLACK);
+        editMenu.setForeground(Color.WHITE);
 
         JMenuItem undoItem = new JMenuItem("元に戻す");
         undoItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_Z, InputEvent.CTRL_DOWN_MASK));
@@ -149,10 +261,17 @@ public class EditorFrame extends JFrame {
         selectAllItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_A, InputEvent.CTRL_DOWN_MASK));
         selectAllItem.addActionListener(e -> area.selectAll());
 
-        for (JMenuItem item : new JMenuItem[]{undoItem, redoItem, cutItem, copyItem, pasteItem, selectAllItem}) {
+        JMenuItem findItem = new JMenuItem("検索");
+        findItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_F, InputEvent.CTRL_DOWN_MASK));
+        findItem.addActionListener(e -> toggleFindBar());
+
+        for (JMenuItem item : new JMenuItem[]{undoItem, redoItem, cutItem, copyItem, pasteItem, selectAllItem, findItem}) {
             item.setFont(new Font("Dialog", Font.PLAIN, 24));
+            item.setBackground(Color.BLACK);
+            item.setForeground(Color.WHITE);
             editMenu.add(item);
         }
+
         return editMenu;
     }
 
