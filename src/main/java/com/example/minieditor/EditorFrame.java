@@ -33,6 +33,11 @@ import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JTextField;
+import java.util.ArrayList;
+import java.util.List;
+import javax.swing.JCheckBoxMenuItem;
+import javax.swing.JComboBox;
+import javax.swing.BoxLayout;
 
 /**
  * メインウィンドウ。テキストエリアを置いて、ウィンドウの設定をする。
@@ -45,8 +50,14 @@ public class EditorFrame extends JFrame {
     private boolean dirty = false;
     private final FileService fileService = new FileService();
     private final UndoManager undoManager = new UndoManager();
+    private final JPanel searchPanel = new JPanel();
     private final JPanel findBar = new JPanel();
+    private final JPanel replaceBar = new JPanel();
     private final JTextField findField = new JTextField(20);
+    private final JTextField replaceField = new JTextField(20);
+    private final JLabel countLabel = new JLabel();
+    private final JLabel statusBar = new JLabel();
+    private int lastMatchStart = 0;
     private int lastMatchEnd = 0;
 
     public EditorFrame() {
@@ -60,16 +71,22 @@ public class EditorFrame extends JFrame {
         area.getDocument().addDocumentListener(new DocumentListener() {
             public void insertUpdate(DocumentEvent e) {
                 markDirty();
+                updateStatusBar();
             }
 
             public void removeUpdate(DocumentEvent e) {
                 markDirty();
+                updateStatusBar();
             }
 
             public void changedUpdate(DocumentEvent e) {
                 markDirty();
+                updateStatusBar();
             }
         });
+
+        // カーソルが動くたびに、ステータスバーの行・列を更新する。
+        area.addCaretListener(e -> updateStatusBar());
 
         // 文字を入力・削除するたびに、その操作が履歴に入ります。
         area.getDocument().addUndoableEditListener(e -> undoManager.addEdit(e.getEdit()));
@@ -80,6 +97,12 @@ public class EditorFrame extends JFrame {
         scrollPane.setBorder(null);                             // ふちの灰色の枠線を消す
         add(scrollPane);                                        //フレームにテキストエリアを追加
         createFindBar();
+
+        // ステータスバー（行番号・列番号・文字数）
+        statusBar.setForeground(Color.WHITE);
+        statusBar.setBackground(Color.BLACK);
+        statusBar.setOpaque(true);
+        add(statusBar, BorderLayout.SOUTH);
 
         // メニューバー
         setJMenuBar(createMenuBar());
@@ -92,16 +115,37 @@ public class EditorFrame extends JFrame {
         addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosing(WindowEvent e) {
-                if (confirmDiscardChanges()) {
-                    System.exit(0);     // 閉じて良いときだけ、プログラムを終了する
-                }
+                exitApp();
             }
         });
         updateTitle();
+        updateStatusBar();
+    }
+
+    // 閉じてよいか確認してから、プログラムを終了する
+    private void exitApp() {
+        if (confirmDiscardChanges()) {
+            System.exit(0);
+        }
+    }
+
+    // 行番号・列番号・文字数を表示する
+    private void updateStatusBar() {
+        int caretPos = area.getCaretPosition();
+        int line = 1;
+        int column = 1;
+        try {
+            line = area.getLineOfOffset(caretPos) + 1;
+            column = caretPos - area.getLineStartOffset(line - 1) + 1;
+        } catch (BadLocationException ex) {
+            // 通常は起きない
+        }
+        int length = area.getText().length();
+        statusBar.setText(String.format("  行 %d, 列 %d　|　%d 文字", line, column, length));
     }
 
     private void createFindBar() {
-        JButton closeButton = new JButton("閉じる");
+        JButton closeButton = new JButton("X");
         closeButton.addActionListener(e -> hideFindBar());
 
         JLabel findLabel = new JLabel("検索:");
@@ -110,13 +154,14 @@ public class EditorFrame extends JFrame {
         findField.setForeground(Color.WHITE);
         findField.setCaretColor(Color.WHITE);
 
+        countLabel.setForeground(Color.WHITE);
+
         findBar.setBackground(Color.BLACK);
         findBar.add(findLabel);
         findBar.add(findField);
+        findBar.add(countLabel);
         findBar.add(closeButton);
-        findBar.setVisible(false);
-        add(findBar, BorderLayout.NORTH);
-        
+
         findField.getInputMap(JComponent.WHEN_FOCUSED)
             .put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "closeFind");
         findField.getActionMap().put("closeFind", new AbstractAction() {
@@ -126,45 +171,190 @@ public class EditorFrame extends JFrame {
             }
         });
         findField.addActionListener(e -> findNext());
+
+        findField.getInputMap(JComponent.WHEN_FOCUSED)
+                .put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.SHIFT_DOWN_MASK), "findPrevious");
+        findField.getActionMap().put("findPrevious", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                findPrevious();
+            }
+        });
+
+        // 置換の行
+        JLabel replaceLabel = new JLabel("置換:");
+        replaceLabel.setForeground(Color.WHITE);
+        replaceField.setBackground(new Color(40, 40, 40));
+        replaceField.setForeground(Color.WHITE);
+        replaceField.setCaretColor(Color.WHITE);
+
+        JButton replaceOneButton = new JButton("置換");
+        replaceOneButton.addActionListener(e -> replaceOne());
+
+        JButton replaceAllButton = new JButton("すべて置換");
+        replaceAllButton.addActionListener(e -> replaceAll());
+
+        replaceBar.setBackground(Color.BLACK);
+        replaceBar.add(replaceLabel);
+        replaceBar.add(replaceField);
+        replaceBar.add(replaceOneButton);
+        replaceBar.add(replaceAllButton);
+        replaceBar.setVisible(false);
+
+        replaceField.getInputMap(JComponent.WHEN_FOCUSED)
+                .put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "closeFind");
+        replaceField.getActionMap().put("closeFind", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                hideFindBar();
+            }
+        });
+        replaceField.addActionListener(e -> replaceOne());
+
+        // 検索の行と、置換の行を、縦に並べる
+        searchPanel.setLayout(new BoxLayout(searchPanel, BoxLayout.Y_AXIS));
+        searchPanel.setBackground(Color.BLACK);
+        searchPanel.add(findBar);
+        searchPanel.add(replaceBar);
+        searchPanel.setVisible(false);
+        add(searchPanel, BorderLayout.NORTH);
     }
 
     private void toggleFindBar() {
-        if (findBar.isVisible()) {
+        if (searchPanel.isVisible() && !replaceBar.isVisible()) {
             hideFindBar();
-        }
-        else {
+        } else {
             showFindBar();
         }
     }
 
-    private  void showFindBar() {
-        findBar.setVisible(true);
+    private void showFindBar() {
+        searchPanel.setVisible(true);
+        replaceBar.setVisible(false);
         findField.requestFocusInWindow();
     }
 
     private void hideFindBar() {
-        findBar.setVisible(false);
+        searchPanel.setVisible(false);
+        replaceBar.setVisible(false);
         area.requestFocusInWindow();
     }
 
-    private void findNext() {
+    private void toggleReplaceBar() {
+        searchPanel.setVisible(true);
+        replaceBar.setVisible(!replaceBar.isVisible());
+        if (replaceBar.isVisible()) {
+            replaceField.requestFocusInWindow();
+        } else {
+            findField.requestFocusInWindow();
+        }
+    }
+
+    // 今、ハイライトしている場所を、置換欄の文字で置き換える
+    private void replaceOne() {
         String keyword = findField.getText();
         if (keyword.isEmpty()) {
             return;
         }
-
         String text = area.getText();
-        int index = text.indexOf(keyword, lastMatchEnd);
-        if (index < 0) {
-            index = text.indexOf(keyword, 0);        // 先頭から探し直す（ループ）
-        }
-        if (index < 0) {
-            JOptionPane.showMessageDialog(this, "見つかりません: " + keyword);
+        boolean hasCurrentMatch = lastMatchEnd > lastMatchStart
+                && lastMatchEnd <= text.length()
+                && text.substring(lastMatchStart, lastMatchEnd).equals(keyword);
+
+        if (!hasCurrentMatch) {
+            findNext();          // まだ今の場所が一致していなければ、先に探す
             return;
         }
 
-        highlightMatch(index, index + keyword.length());
+        String replacement = replaceField.getText();
+        area.replaceRange(replacement, lastMatchStart, lastMatchEnd);
+        lastMatchEnd = lastMatchStart + replacement.length();
+        findNext();              // 置換した続きから、次を探す
+    }
+
+    // 一致するものを、すべて置き換える
+    private void replaceAll() {
+        String keyword = findField.getText();
+        if (keyword.isEmpty()) {
+            return;
+        }
+        String text = area.getText();
+        List<Integer> positions = findAllMatches(text, keyword);
+        if (positions.isEmpty()) {
+            countLabel.setText("見つかりません");
+            return;
+        }
+
+        String replacement = replaceField.getText();
+        area.setText(text.replace(keyword, replacement));
+        countLabel.setText(positions.size() + " 件を置換しました");
+        lastMatchStart = 0;
+        lastMatchEnd = 0;
+    }
+
+    private void findNext() {
+        search(true);
+    }
+
+    private void findPrevious() {
+        search(false);
+    }
+
+    // forward が true なら次へ、false なら前へ探す
+    private void search(boolean forward) {
+        String keyword = findField.getText();
+        String text = area.getText();
+        List<Integer> positions = findAllMatches(text, keyword);
+
+        if (positions.isEmpty()) {
+            countLabel.setText("見つかりません");
+            return;
+        }
+
+        int index = forward
+                ? nextIndexFrom(positions, lastMatchEnd)
+                : previousIndexFrom(positions, lastMatchStart);
+
+        int rank = positions.indexOf(index) + 1;
+        countLabel.setText(rank + " / " + positions.size() + " 件");
+
+        lastMatchStart = index;
         lastMatchEnd = index + keyword.length();
+        highlightMatch(lastMatchStart, lastMatchEnd);
+    }
+
+    // 一致する場所を、すべて先頭から順に集める
+    private List<Integer> findAllMatches(String text, String keyword) {
+        List<Integer> positions = new ArrayList<>();
+        if (keyword.isEmpty()) {
+            return positions;             // 空欄なら、何も一致しないことにする
+        }
+        int index = text.indexOf(keyword);
+        while (index >= 0) {
+            positions.add(index);
+            index = text.indexOf(keyword, index + keyword.length());
+        }
+        return positions;
+    }
+
+    // from 以上で、一番近い一致を探す。なければ先頭に戻る
+    private int nextIndexFrom(List<Integer> positions, int from) {
+        for (int p : positions) {
+            if (p >= from) {
+                return p;
+            }
+        }
+        return positions.get(0);
+    }
+
+    // from より前で、一番近い一致を探す。なければ最後に戻る
+    private int previousIndexFrom(List<Integer> positions, int from) {
+        for (int i = positions.size() - 1; i >= 0; i--) {
+            if (positions.get(i) < from) {
+                return positions.get(i);
+            }
+        }
+        return positions.get(positions.size() - 1);
     }
 
     // 見つかった場所に、直接色を塗る
@@ -186,6 +376,7 @@ public class EditorFrame extends JFrame {
         JMenuItem newItem = new JMenuItem("新規");
         JMenuItem saveAsItem = new JMenuItem("名前を付けて保存");
         JMenuItem openItem = new JMenuItem("開く");
+        JMenuItem exitItem = new JMenuItem("終了");
 
         saveItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_S, InputEvent.CTRL_DOWN_MASK));
         saveItem.addActionListener(e -> saveFile());
@@ -196,27 +387,32 @@ public class EditorFrame extends JFrame {
         openItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_O, InputEvent.CTRL_DOWN_MASK));
         openItem.addActionListener(e -> openFile());
 
+        exitItem.addActionListener(e -> exitApp());
+
         fileMenu.setFont(new Font("Dialog", Font.PLAIN, 24));
         saveItem.setFont(new Font("Dialog", Font.PLAIN, 24));
         newItem.setFont(new Font("Dialog", Font.PLAIN, 24));
         saveAsItem.setFont(new Font("Dialog", Font.PLAIN, 24));
         openItem.setFont(new Font("Dialog", Font.PLAIN, 24));
+        exitItem.setFont(new Font("Dialog", Font.PLAIN, 24));
 
         setDialogFont(22);
 
         // メニューバーと、その中の項目を黒地に白文字にする
         menuBar.setBackground(Color.BLACK);
-        for (JMenuItem item : new JMenuItem[]{fileMenu, saveItem, newItem, saveAsItem, openItem}) {
+        for (JMenuItem item : new JMenuItem[]{fileMenu, saveItem, newItem, saveAsItem, openItem, exitItem}) {
             item.setBackground(Color.BLACK);
             item.setForeground(Color.WHITE);
         }
 
         menuBar.add(fileMenu);
         menuBar.add(createEditMenu());
+        menuBar.add(createFormatMenu());
         fileMenu.add(newItem);
         fileMenu.add(openItem);
         fileMenu.add(saveItem);
         fileMenu.add(saveAsItem);
+        fileMenu.add(exitItem);
 
         saveAsItem.addActionListener(e -> saveFileAs());
 
@@ -265,7 +461,11 @@ public class EditorFrame extends JFrame {
         findItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_F, InputEvent.CTRL_DOWN_MASK));
         findItem.addActionListener(e -> toggleFindBar());
 
-        for (JMenuItem item : new JMenuItem[]{undoItem, redoItem, cutItem, copyItem, pasteItem, selectAllItem, findItem}) {
+        JMenuItem replaceItem = new JMenuItem("置換");
+        replaceItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_H, InputEvent.CTRL_DOWN_MASK));
+        replaceItem.addActionListener(e -> toggleReplaceBar());
+
+        for (JMenuItem item : new JMenuItem[]{undoItem, redoItem, cutItem, copyItem, pasteItem, selectAllItem, findItem, replaceItem}) {
             item.setFont(new Font("Dialog", Font.PLAIN, 24));
             item.setBackground(Color.BLACK);
             item.setForeground(Color.WHITE);
@@ -273,6 +473,55 @@ public class EditorFrame extends JFrame {
         }
 
         return editMenu;
+    }
+
+    private JMenu createFormatMenu() {
+        JMenu formatMenu = new JMenu("書式");
+        formatMenu.setFont(new Font("Dialog", Font.PLAIN, 24));
+        formatMenu.setBackground(Color.BLACK);
+        formatMenu.setForeground(Color.WHITE);
+
+        JMenuItem fontItem = new JMenuItem("フォント変更");
+        fontItem.addActionListener(e -> chooseFont());
+
+        JCheckBoxMenuItem wrapItem = new JCheckBoxMenuItem("折り返し");
+        wrapItem.addActionListener(e -> {
+            area.setLineWrap(wrapItem.isSelected());
+            area.setWrapStyleWord(true);
+        });
+
+        for (JMenuItem item : new JMenuItem[]{fontItem, wrapItem}) {
+            item.setFont(new Font("Dialog", Font.PLAIN, 24));
+            item.setBackground(Color.BLACK);
+            item.setForeground(Color.WHITE);
+            formatMenu.add(item);
+        }
+        return formatMenu;
+    }
+
+    // フォントの種類とサイズを選ぶダイアログ
+    private void chooseFont() {
+        String[] fontNames = {"Monospaced", "SansSerif", "Serif"};
+        Integer[] sizes = {14, 18, 24, 32, 40, 48, 64};
+
+        JComboBox<String> nameBox = new JComboBox<>(fontNames);
+        nameBox.setSelectedItem(area.getFont().getFamily());
+        JComboBox<Integer> sizeBox = new JComboBox<>(sizes);
+        sizeBox.setSelectedItem(area.getFont().getSize());
+
+        JPanel panel = new JPanel();
+        panel.add(new JLabel("フォント:"));
+        panel.add(nameBox);
+        panel.add(new JLabel("サイズ:"));
+        panel.add(sizeBox);
+
+        int result = JOptionPane.showConfirmDialog(this, panel, "フォント変更",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (result == JOptionPane.OK_OPTION) {
+            String name = (String) nameBox.getSelectedItem();
+            int size = (Integer) sizeBox.getSelectedItem();
+            area.setFont(new Font(name, Font.PLAIN, size));
+        }
     }
 
     private void setDialogFont(int size) {
