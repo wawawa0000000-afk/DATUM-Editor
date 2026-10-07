@@ -150,6 +150,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         file.add(item("開く…", key(KeyEvent.VK_O, CTRL), this::openFile));
         file.add(item("保存", key(KeyEvent.VK_S, CTRL), () -> save(currentPane())));
         file.add(item("名前を付けて保存…", key(KeyEvent.VK_S, CTRL | SHIFT), () -> saveAs(currentPane())));
+        file.add(item("PDF として書き出す…", key(KeyEvent.VK_P, CTRL | SHIFT), this::exportPdf));
         file.addSeparator();
         file.add(item("タブを閉じる", key(KeyEvent.VK_W, CTRL), () -> closePane(activeGroup, currentPane())));
         file.add(item("終了", key(KeyEvent.VK_Q, CTRL), this::exitApp));
@@ -587,6 +588,57 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         }
         pane.setRawFile(wasRaw);
         return false;
+    }
+
+    /** 今の文書を、PDF ファイルに書き出す。 */
+    private void exportPdf() {
+        EditorPane pane = currentPane();
+        if (pane == null) {
+            return;
+        }
+        if (pane.getMode() == EditorPane.Mode.KJ && pane.isEmpty()) {
+            flash("カードがないので、書き出すものがありません");
+            return;
+        }
+        JFileChooser chooser = new JFileChooser();
+        chooser.setAcceptAllFileFilterUsed(false);
+        chooser.setFileFilter(new FileNameExtensionFilter("PDF (*.pdf)", "pdf"));
+        if (pane.getPath() != null) {
+            String base = pane.getPath().toString().replaceAll("\\.[^.\\\\/]+$", "");
+            chooser.setSelectedFile(new java.io.File(base + ".pdf"));
+        }
+        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+        String name = chooser.getSelectedFile().toString();
+        if (!name.toLowerCase().endsWith(".pdf")) {
+            name = name + ".pdf";
+        }
+        Path path = Path.of(name);
+        if (!confirmOverwrite(path)) {
+            return;
+        }
+
+        // 長い文章では少し時間がかかるので、その間は「待ち」のカーソルにする
+        setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.WAIT_CURSOR));
+        try {
+            int pages;
+            try (PdfWriter writer = new PdfWriter(path)) {
+                pane.exportPdf(writer);
+                pages = writer.getPageCount();
+            }
+            flash("PDF を書き出しました（" + pages + " ページ）: " + path);
+        } catch (IOException ex) {
+            try {
+                java.nio.file.Files.deleteIfExists(path);   // 途中までしか書けていない PDF は残さない
+            } catch (IOException ignored) {
+                // 消せなくても、下のダイアログで失敗は伝わる
+            }
+            JOptionPane.showMessageDialog(this, "書き出せませんでした: " + ex.getMessage(),
+                    "エラー", JOptionPane.ERROR_MESSAGE);
+        } finally {
+            setCursor(java.awt.Cursor.getDefaultCursor());
+        }
     }
 
     /** 実際にファイルへ書く。拡張子が .json なら JSON、それ以外は本文だけを書く。 */

@@ -51,6 +51,7 @@ Java で書いてあるので、同じ `minieditor.jar` が Windows・macOS・Li
 - `.txt` は本文だけを保存します。`.json` は、種類・フォント・折り返し・カードの位置なども保存します。
 - 開くときは、JSON の中身を見て種類を自動で判定します。このアプリの形式ではない `.json` は、中身をそのままテキストとして開きます（保存しても形式は変わりません）。
 - 未保存の変更があるタブを閉じる・終了するときは、確認ダイアログを出します。
+- **PDF として書き出す**（Ctrl+Shift+P）：テキストと縦書きは A4 の紙に割り付け（白地に黒文字、ページ番号付き）、KJ法ボードは全体を1ページにします。
 - 未保存のタブには `●` が付きます。読み書きに失敗したときは、ダイアログで知らせます。
 
 ### タブと画面分割
@@ -100,6 +101,7 @@ Miro・FigJam・Mural などのオンラインのボードにある機能を参�
 |---|---|
 | 新規（テキスト / 縦書き / KJ法） | Ctrl+N / Ctrl+Shift+N / Ctrl+Shift+K |
 | 開く / 保存 / 名前を付けて保存 | Ctrl+O / Ctrl+S / Ctrl+Shift+S |
+| PDF として書き出す | Ctrl+Shift+P |
 | タブを閉じる / 終了 | Ctrl+W / Ctrl+Q |
 | 元に戻す / やり直し | Ctrl+Z / Ctrl+Y（Ctrl+Shift+Z） |
 | 切り取り / コピー / 貼り付け / すべて選択 | Ctrl+X / Ctrl+C / Ctrl+V / Ctrl+A |
@@ -132,6 +134,8 @@ src/main/java/com/example/minieditor/
 ├── StripedTextArea.java    縞模様とカーソル行を描くテキストエリア
 ├── LineNumberGutter.java   行番号
 ├── Json.java               JSON の読み書き（手書き）
+├── PdfWriter.java          PDF の書き出し（手書き）
+├── PagePrinter.java        文章を A4 のページに割り付ける
 ├── FileService.java        ファイルの読み書き（UTF-8）
 ├── Theme.java              色とフォント
 └── FlatScrollBarUI.java    細いスクロールバー
@@ -163,5 +167,5 @@ KJ法では `text` の代わりに、`cards`（位置・大きさ・色・票数
 - 縦書きには、ルビ・縦中横・禁則処理はありません。
 - 検索・置換は、KJ法ボードでは使えません。
 - 複数人での同時編集や、クラウドへの保存はありません（ファイルは手元に保存します）。
-- 書き出しは、KJ法ボードの PNG 画像だけです。PDF への書き出しは、まだありません。
+- PDF は、1ページを1枚の画像として入れています（日本語フォントを PDF に埋め込む処理を避けるため）。見た目はどの PC でも同じですが、PDF の中の文字を選択・検索することはできません。
 - Windows と macOS では、まだ実際に動かして確かめていません。

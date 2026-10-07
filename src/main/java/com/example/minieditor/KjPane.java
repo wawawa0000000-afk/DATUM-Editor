@@ -210,18 +210,36 @@ public class KjPane extends EditorPane {
 
     /** ボード全体を1枚の画像にする（「画像として書き出す」で使う）。カードがなければ null。 */
     public BufferedImage renderImage() {
+        return renderImage(1.0);
+    }
+
+    /** zoom 倍の細かさで、ボード全体を画像にする（PDF では、拡大しても粗くならないように 2 倍にする）。 */
+    private BufferedImage renderImage(double zoom) {
         Rectangle bounds = contentBounds(cards);
         if (bounds == null) {
             return null;
         }
         bounds.grow(40, 40);
-        BufferedImage image = new BufferedImage(bounds.width, bounds.height, BufferedImage.TYPE_INT_RGB);
+        BufferedImage image = new BufferedImage((int) Math.ceil(bounds.width * zoom),
+                (int) Math.ceil(bounds.height * zoom), BufferedImage.TYPE_INT_RGB);
         Graphics2D g2 = image.createGraphics();
+        g2.scale(zoom, zoom);
         g2.translate(-bounds.x, -bounds.y);
         g2.setClip(bounds);
         board.paintBoard(g2, false);
         g2.dispose();
         return image;
+    }
+
+    /** ボード全体を、PDF の1ページにする。紙の大きさは、ボードの形に合わせる。 */
+    @Override
+    public void exportPdf(PdfWriter writer) throws java.io.IOException {
+        BufferedImage image = renderImage(2.0);
+        if (image == null) {
+            throw new java.io.IOException("カードがないので、書き出すものがありません");
+        }
+        // 画面の 1 ピクセルを 0.75 ポイント（= 1/96 インチ）として、紙の大きさを決める
+        writer.addPage(image, image.getWidth() / 2.0 * 0.75, image.getHeight() / 2.0 * 0.75);
     }
 
     // ---------- 変更と「元に戻す」 ----------

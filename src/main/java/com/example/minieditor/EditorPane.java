@@ -146,6 +146,9 @@ public abstract class EditorPane extends JPanel {
     /** .txt で保存するときの中身。 */
     public abstract String toPlainText();
 
+    /** PDF のページを作って、writer に追加する。 */
+    public abstract void exportPdf(PdfWriter writer) throws java.io.IOException;
+
     /** ステータスバーに出す文字（行・列・文字数など）。 */
     public abstract String statusText();
 

@@ -398,7 +398,38 @@ public class VerticalTextPane extends EditorPane implements Searchable {
         view.scrollRectToVisible(r);
     }
 
+    /**
+     * 縦書き用に、1文字を (centerX, centerY) を中心にして描く。
+     * 記号や半角文字は 90 度回し、句読点や小さい仮名は右上に寄せる。
+     * 画面の表示と PDF の書き出しの両方から使うので、static にしてある。
+     */
+    static void drawVerticalCharacter(Graphics2D g2, FontMetrics fm, String s,
+            double centerX, double centerY, int size) {
+        char c = s.charAt(0);
+        float x = (float) (centerX - fm.stringWidth(s) / 2.0);
+        float baseline = (float) (centerY + (fm.getAscent() - fm.getDescent()) / 2.0);
+
+        boolean halfWidth = c <= 0x00FF || (c >= 0xFF61 && c <= 0xFF9F);
+        if (halfWidth || ROTATED.indexOf(c) >= 0) {
+            Graphics2D rotated = (Graphics2D) g2.create();
+            rotated.rotate(Math.PI / 2, centerX, centerY);      // 時計回りに 90 度
+            rotated.drawString(s, x, baseline);
+            rotated.dispose();
+        } else if (PUNCTUATION.indexOf(c) >= 0) {
+            g2.drawString(s, x + size * 0.55f, baseline - size * 0.55f);
+        } else if (SMALL_KANA.indexOf(c) >= 0) {
+            g2.drawString(s, x + size * 0.1f, baseline - size * 0.1f);
+        } else {
+            g2.drawString(s, x, baseline);
+        }
+    }
+
     // ---------- EditorPane ----------
+
+    @Override
+    public void exportPdf(PdfWriter writer) throws java.io.IOException {
+        PagePrinter.printVertical(text, view.getFont().getFamily(), writer);
+    }
 
     @Override
     public Mode getMode() {
@@ -850,28 +881,10 @@ public class VerticalTextPane extends EditorPane implements Searchable {
             }
         }
 
-        /** 1文字を、マスの中央に描く。記号や半角文字は、縦書き用に回したり寄せたりする。 */
+        /** 1文字を、マスの中央に描く。 */
         private void drawCharacter(Graphics2D g2, FontMetrics fm, String s, Rectangle cell) {
-            char c = s.charAt(0);
-            int centerX = cell.x + cell.width / 2;
-            int centerY = cell.y + cell.height / 2;
-            int x = centerX - fm.stringWidth(s) / 2;
-            int baseline = centerY + (fm.getAscent() - fm.getDescent()) / 2;
-            int size = getFont().getSize();
-
-            boolean halfWidth = c <= 0x00FF || (c >= 0xFF61 && c <= 0xFF9F);
-            if (halfWidth || ROTATED.indexOf(c) >= 0) {
-                Graphics2D rotated = (Graphics2D) g2.create();
-                rotated.rotate(Math.PI / 2, centerX, centerY);      // 時計回りに 90 度
-                rotated.drawString(s, x, baseline);
-                rotated.dispose();
-            } else if (PUNCTUATION.indexOf(c) >= 0) {
-                g2.drawString(s, x + Math.round(size * 0.55f), baseline - Math.round(size * 0.55f));
-            } else if (SMALL_KANA.indexOf(c) >= 0) {
-                g2.drawString(s, x + Math.round(size * 0.1f), baseline - Math.round(size * 0.1f));
-            } else {
-                g2.drawString(s, x, baseline);
-            }
+            drawVerticalCharacter(g2, fm, s, cell.x + cell.width / 2.0, cell.y + cell.height / 2.0,
+                    getFont().getSize());
         }
 
         // --- Scrollable：スクロール枠に「高さは枠に合わせ、横だけスクロールする」と伝える ---

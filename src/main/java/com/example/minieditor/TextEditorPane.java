@@ -134,6 +134,11 @@ public class TextEditorPane extends EditorPane implements Searchable {
     }
 
     @Override
+    public void exportPdf(PdfWriter writer) throws java.io.IOException {
+        PagePrinter.printHorizontal(area.getText(), area.getFont().getFamily(), writer);
+    }
+
+    @Override
     public String statusText() {
         int caret = area.getCaretPosition();
         int line = 1;
