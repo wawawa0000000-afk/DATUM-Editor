@@ -18,6 +18,13 @@ import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.awt.event.FocusEvent;
 import java.awt.event.FocusListener;
+import java.awt.event.InputMethodEvent;
+import java.awt.event.InputMethodListener;
+import java.awt.font.TextHitInfo;
+import java.awt.im.InputMethodRequests;
+import java.text.AttributedCharacterIterator;
+import java.text.AttributedString;
+import java.text.CharacterIterator;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
@@ -66,6 +73,11 @@ public class VerticalTextPane extends EditorPane implements Searchable {
     private boolean loading;
     private CompoundEdit compound;
     private List<Highlight> highlights = List.of();
+
+    // 日本語入力（IME）で、まだ確定していない変換中の文字。
+    // 文書には入れず、カーソルの位置に「はさんで」表示だけする。
+    private String composed = "";
+    private int composedCaret = 0;      // 変換中の文字の中での、カーソルの位置
 
     // 文字ごとの置き場所。colOf[i] が「右から何列目か」、rowOf[i] が「上から何文字目か」
     private int[] colOf = {0};
@@ -143,6 +155,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
         } catch (BadLocationException ex) {
             text = "";
         }
+        composed = "";                  // 文書が変わったら、変換中の表示は取り消す（位置がずれるため）
         caret = anchor = Math.max(0, Math.min(newCaret, text.length()));
         layoutDirty = true;
         caretVisible = true;
@@ -163,6 +176,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
             // 0 文字目から全体を入れ替えているので、通常は起きない
         }
         loading = false;
+        dropComposition();
         caret = anchor = 0;
         undoManager.discardAllEdits();
         setDirty(false);
@@ -199,7 +213,17 @@ public class VerticalTextPane extends EditorPane implements Searchable {
         return Math.max(caret, anchor);
     }
 
+    /** 変換中の文字を捨てる。カーソルを動かす前に呼ぶ（はさむ位置が変わってしまうため）。 */
+    private void dropComposition() {
+        if (!composed.isEmpty()) {
+            composed = "";
+            composedCaret = 0;
+            layoutDirty = true;
+        }
+    }
+
     private void moveCaret(int position, boolean extendSelection) {
+        dropComposition();
         int p = Math.max(0, Math.min(position, text.length()));
         // サロゲートペア（2つで1文字になる文字）の真ん中には止まらない
         if (p > 0 && p < text.length() && Character.isLowSurrogate(text.charAt(p))
@@ -250,15 +274,17 @@ public class VerticalTextPane extends EditorPane implements Searchable {
         layoutHeight = height;
         layoutDirty = false;
 
-        int n = text.length();
+        // 配置は「画面に出す文章」（変換中の文字をはさんだもの）で計算する
+        String shown = shownText();
+        int n = shown.length();
         colOf = new int[n + 1];
         rowOf = new int[n + 1];
         int rowsPerColumn = Math.max(1, (height - 2 * margin()) / cellHeight());
         int col = 0;
         int row = 0;
         for (int i = 0; i < n; i++) {
-            char c = text.charAt(i);
-            if (i > 0 && Character.isLowSurrogate(c) && Character.isHighSurrogate(text.charAt(i - 1))) {
+            char c = shown.charAt(i);
+            if (i > 0 && Character.isLowSurrogate(c) && Character.isHighSurrogate(shown.charAt(i - 1))) {
                 colOf[i] = colOf[i - 1];        // 前の文字と合わせて1文字なので、同じ場所
                 rowOf[i] = rowOf[i - 1];
                 continue;
@@ -281,25 +307,77 @@ public class VerticalTextPane extends EditorPane implements Searchable {
         totalCols = col + 1;
     }
 
-    /** i 文字目のマス（画面上の四角）。列は右から数えるので、右端から引き算する。 */
+    /** 画面に出す文章。変換中の文字があれば、カーソルの位置にはさむ。 */
+    private String shownText() {
+        if (composed.isEmpty()) {
+            return text;
+        }
+        return text.substring(0, caret) + composed + text.substring(caret);
+    }
+
+    /** 文書の中の位置を、画面に出す文章の中の位置に直す（変換中の文字のぶん、後ろへずれる）。 */
+    private int toShown(int index) {
+        return index > caret ? index + composed.length() : index;
+    }
+
+    /** 画面に出す文章の中の位置を、文書の中の位置に戻す。 */
+    private int fromShown(int shownIndex) {
+        if (shownIndex <= caret) {
+            return shownIndex;
+        }
+        return Math.max(caret, shownIndex - composed.length());
+    }
+
+    /** 画面に出す文章の i 文字目のマス。列は右から数えるので、右端から引き算する。 */
+    private Rectangle shownCellRect(int shownIndex) {
+        return new Rectangle(view.getWidth() - margin() - (colOf[shownIndex] + 1) * columnWidth(),
+                margin() + rowOf[shownIndex] * cellHeight(), columnWidth(), cellHeight());
+    }
+
+    /** 文書の i 文字目のマス（画面上の四角）。 */
     private Rectangle cellRect(int i) {
-        return new Rectangle(view.getWidth() - margin() - (colOf[i] + 1) * columnWidth(),
-                margin() + rowOf[i] * cellHeight(), columnWidth(), cellHeight());
+        return shownCellRect(toShown(i));
+    }
+
+    /** カーソルを描く位置（変換中は、変換中の文字の中のカーソル位置）。 */
+    private int shownCaret() {
+        return caret + Math.min(composedCaret, composed.length());
+    }
+
+    /** 変換中の文字を入れ替えて、並べ直す。 */
+    private void setComposed(String newComposed, int newCaret) {
+        composed = newComposed;
+        composedCaret = newCaret;
+        layoutDirty = true;
+        caretVisible = true;
+        view.revalidate();
+        view.repaint();
+        SwingUtilities.invokeLater(this::scrollToCaret);
+    }
+
+    /** 変換の途中なら、そこで確定させる（クリックや、ほかの場所へ移るとき）。 */
+    private void finishComposition() {
+        if (!composed.isEmpty() && view.getInputContext() != null) {
+            view.getInputContext().endComposition();
+        }
+        if (!composed.isEmpty()) {
+            setComposed("", 0);         // 入力方式が確定を返さなかったときは、変換中の文字を捨てる
+        }
     }
 
     /** 指定した列・行にいちばん近い文字の位置を返す。 */
     private int indexAt(int col, int row) {
         ensureLayout();
         int lastInColumn = -1;
-        for (int i = 0; i <= text.length(); i++) {
+        for (int i = 0; i < colOf.length; i++) {
             if (colOf[i] == col) {
                 if (rowOf[i] >= row) {
-                    return i;
+                    return fromShown(i);
                 }
                 lastInColumn = i;
             }
         }
-        return lastInColumn >= 0 ? lastInColumn : text.length();
+        return lastInColumn >= 0 ? fromShown(lastInColumn) : text.length();
     }
 
     private int indexAt(Point p) {
@@ -315,7 +393,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
         if (caret > text.length()) {
             return;
         }
-        Rectangle r = cellRect(caret);
+        Rectangle r = shownCellRect(shownCaret());
         r.grow(columnWidth(), 0);               // 左右の列も少し見えるようにする
         view.scrollRectToVisible(r);
     }
@@ -425,6 +503,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
 
     @Override
     public void selectAll() {
+        dropComposition();
         anchor = 0;
         caret = text.length();
         view.requestFocusInWindow();
@@ -447,6 +526,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
 
     @Override
     public void reveal(int offset) {
+        dropComposition();
         caret = anchor = Math.max(0, Math.min(offset, text.length()));
         view.repaint();
         scrollToCaret();
@@ -475,6 +555,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
             MouseAdapter mouse = new MouseAdapter() {
                 @Override
                 public void mousePressed(MouseEvent e) {
+                    finishComposition();
                     requestFocusInWindow();
                     moveCaret(indexAt(e.getPoint()), e.isShiftDown());
                 }
@@ -507,11 +588,110 @@ public class VerticalTextPane extends EditorPane implements Searchable {
                 }
 
                 public void focusLost(FocusEvent e) {
+                    if (!e.isTemporary()) {
+                        finishComposition();
+                    }
                     blinkTimer.stop();
                     repaint();
                 }
             });
+
+            // 日本語入力（IME）から、変換中の文字と確定した文字を受け取る
+            enableInputMethods(true);
+            addInputMethodListener(new InputMethodListener() {
+                @Override
+                public void inputMethodTextChanged(InputMethodEvent e) {
+                    handleInputMethodText(e);
+                }
+
+                @Override
+                public void caretPositionChanged(InputMethodEvent e) {
+                    composedCaret = e.getCaret() != null ? e.getCaret().getInsertionIndex() : composed.length();
+                    repaint();
+                    e.consume();
+                }
+            });
         }
+
+        /**
+         * 日本語入力からの知らせ。届く文字は、前半が「確定した文字」、後半が「変換中の文字」。
+         * 確定したぶんは文書に入れ、変換中のぶんは表示用に覚えておく。
+         */
+        private void handleInputMethodText(InputMethodEvent e) {
+            StringBuilder committed = new StringBuilder();
+            StringBuilder composing = new StringBuilder();
+            AttributedCharacterIterator it = e.getText();
+            if (it != null) {
+                int count = 0;
+                for (char c = it.first(); c != CharacterIterator.DONE; c = it.next()) {
+                    (count++ < e.getCommittedCharacterCount() ? committed : composing).append(c);
+                }
+            }
+            composed = "";              // 文書を書き換える前に、いったん空にする（位置の計算がずれないように）
+            if (committed.length() > 0) {
+                insert(committed.toString());
+            } else if (composing.length() > 0 && selectionEnd() > selectionStart()) {
+                insert("");             // 範囲を選んだまま打ち始めたら、先にその範囲を消す
+            }
+            int caretInComposed = e.getCaret() != null ? e.getCaret().getInsertionIndex() : composing.length();
+            setComposed(composing.toString(), Math.max(0, Math.min(caretInComposed, composing.length())));
+            e.consume();
+        }
+
+        /** 入力方式に「自分で変換中の文字を表示する」と伝える。これがないと、確定するまで文字が出ない。 */
+        @Override
+        public InputMethodRequests getInputMethodRequests() {
+            return inputMethodRequests;
+        }
+
+        private final InputMethodRequests inputMethodRequests = new InputMethodRequests() {
+            /** 変換候補の窓を出す場所（カーソルのあるマスの、画面上の位置）を答える。 */
+            @Override
+            public Rectangle getTextLocation(TextHitInfo offset) {
+                ensureLayout();
+                Rectangle cell = shownCellRect(Math.min(shownCaret(), colOf.length - 1));
+                try {
+                    Point origin = getLocationOnScreen();
+                    cell.translate(origin.x, origin.y);
+                } catch (java.awt.IllegalComponentStateException ex) {
+                    // まだ画面に出ていないときは、部品の中の位置のまま返す
+                }
+                return cell;
+            }
+
+            @Override
+            public TextHitInfo getLocationOffset(int x, int y) {
+                return null;
+            }
+
+            @Override
+            public int getInsertPositionOffset() {
+                return caret;
+            }
+
+            @Override
+            public AttributedCharacterIterator getCommittedText(int beginIndex, int endIndex,
+                    AttributedCharacterIterator.Attribute[] attributes) {
+                int begin = Math.max(0, Math.min(beginIndex, text.length()));
+                int end = Math.max(begin, Math.min(endIndex, text.length()));
+                return new AttributedString(text.substring(begin, end)).getIterator();
+            }
+
+            @Override
+            public int getCommittedTextLength() {
+                return text.length();
+            }
+
+            @Override
+            public AttributedCharacterIterator cancelLatestCommittedText(AttributedCharacterIterator.Attribute[] attributes) {
+                return null;
+            }
+
+            @Override
+            public AttributedCharacterIterator getSelectedText(AttributedCharacterIterator.Attribute[] attributes) {
+                return new AttributedString(text.substring(selectionStart(), selectionEnd())).getIterator();
+            }
+        };
 
         private void handleKeyPressed(KeyEvent e) {
             if (e.isControlDown() || e.isAltDown() || e.isMetaDown()) {
@@ -566,11 +746,12 @@ public class VerticalTextPane extends EditorPane implements Searchable {
 
         /** 左右の列へ移る。同じ高さにいちばん近い文字へ動かす。 */
         private void moveColumn(int delta, boolean shift) {
-            int target = colOf[caret] + delta;
+            int here = toShown(caret);
+            int target = colOf[here] + delta;
             if (target < 0 || target >= totalCols) {
                 return;
             }
-            moveCaret(indexAt(target, rowOf[caret]), shift);
+            moveCaret(indexAt(target, rowOf[here]), shift);
         }
 
         private int charLengthBefore(int position) {
@@ -609,7 +790,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
                 if (x > clip.x + clip.width || x + columnWidth < clip.x) {
                     continue;
                 }
-                if (col == colOf[Math.min(caret, text.length())]) {
+                if (col == colOf[Math.min(shownCaret(), colOf.length - 1)]) {
                     g2.setColor(Theme.CURRENT_LINE);
                     g2.fillRect(x, 0, columnWidth, getHeight());
                 } else if (Theme.stripes && col % 2 == 1) {
@@ -628,23 +809,31 @@ public class VerticalTextPane extends EditorPane implements Searchable {
             g2.setFont(getFont());
             g2.setColor(Theme.FG);
             FontMetrics fm = g2.getFontMetrics();
-            for (int i = 0; i < text.length(); i++) {
-                char c = text.charAt(i);
+            String shown = shownText();
+            for (int i = 0; i < shown.length(); i++) {
+                char c = shown.charAt(i);
                 if (c == '\n' || Character.isLowSurrogate(c)) {
                     continue;
                 }
-                Rectangle cell = cellRect(i);
+                Rectangle cell = shownCellRect(i);
                 if (!cell.intersects(clip)) {
                     continue;           // 見えていない文字は描かない
                 }
-                String s = Character.isHighSurrogate(c) && i + 1 < text.length()
-                        ? text.substring(i, i + 2) : String.valueOf(c);
+                // 変換中の文字は白くして、右側に線を引く（縦書きの下線にあたる）
+                boolean composing = i >= caret && i < caret + composed.length();
+                g2.setColor(composing ? Color.WHITE : Theme.FG);
+                String s = Character.isHighSurrogate(c) && i + 1 < shown.length()
+                        ? shown.substring(i, i + 2) : String.valueOf(c);
                 drawCharacter(g2, fm, s, cell);
+                if (composing) {
+                    g2.setColor(Theme.MATCH_CURRENT);
+                    g2.fillRect(cell.x + cell.width - 8, cell.y + 2, 3, cell.height - 4);
+                }
             }
 
             // カーソル（文字の上に引く横線）
-            if (isFocusOwner() && caretVisible && caret <= text.length()) {
-                Rectangle cell = cellRect(caret);
+            if (isFocusOwner() && caretVisible) {
+                Rectangle cell = shownCellRect(Math.min(shownCaret(), colOf.length - 1));
                 g2.setColor(Color.WHITE);
                 g2.fillRect(cell.x + 6, cell.y - 1, cell.width - 12, 3);
             }

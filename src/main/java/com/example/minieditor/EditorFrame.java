@@ -11,6 +11,7 @@ import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -20,8 +21,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import javax.imageio.ImageIO;
 import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
+import javax.swing.ImageIcon;
 import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
@@ -33,7 +36,9 @@ import javax.swing.JMenuBar;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
+import javax.swing.JTextArea;
 import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
@@ -75,6 +80,11 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     public EditorFrame() {
         super(APP_NAME);
         messageTimer.setRepeats(false);
+        // ウィンドウとタスクバーに出すアイコン（JAR の中に入れてある画像を読む）
+        java.net.URL icon = EditorFrame.class.getResource("/icon.png");
+        if (icon != null) {
+            setIconImage(new ImageIcon(icon).getImage());
+        }
 
         JPanel center = new JPanel(new BorderLayout());
         center.setBackground(Theme.BG);
@@ -187,10 +197,30 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         });
         view.add(stripeItem);
 
+        // KJ法ボード専用の操作。ほかの種類の文書を開いているときは、案内を出すだけにする
+        JMenu boardMenu = new JMenu("ボード");
+        boardMenu.add(item("カードを一括追加…", key(KeyEvent.VK_B, CTRL | SHIFT), this::bulkAddCards));
+        boardMenu.add(item("複製", key(KeyEvent.VK_D, CTRL), () -> withBoard(KjPane::duplicateSelected)));
+        boardMenu.add(item("削除", null, () -> withBoard(KjPane::deleteSelected)));
+        boardMenu.addSeparator();
+        boardMenu.add(item("選んだカードをグループ枠で囲む", key(KeyEvent.VK_G, CTRL), () -> withBoard(KjPane::groupSelected)));
+        boardMenu.add(item("整列", key(KeyEvent.VK_L, CTRL | SHIFT), () -> withBoard(KjPane::tidy)));
+        boardMenu.add(item("色ごとに並べる", null, () -> withBoard(KjPane::arrangeByColor)));
+        boardMenu.addSeparator();
+        boardMenu.add(item("投票する（+1）", key(KeyEvent.VK_UP, CTRL | SHIFT), () -> withBoard(board -> board.vote(1))));
+        boardMenu.add(item("投票を取り消す（−1）", key(KeyEvent.VK_DOWN, CTRL | SHIFT), () -> withBoard(board -> board.vote(-1))));
+        boardMenu.addSeparator();
+        boardMenu.add(item("拡大", null, () -> withBoard(board -> board.zoomBy(1.25))));
+        boardMenu.add(item("縮小", null, () -> withBoard(board -> board.zoomBy(0.8))));
+        boardMenu.add(item("全体を表示", key(KeyEvent.VK_0, CTRL), () -> withBoard(KjPane::fitAll)));
+        boardMenu.addSeparator();
+        boardMenu.add(item("画像として書き出す（PNG）…", key(KeyEvent.VK_E, CTRL | SHIFT), this::exportBoardImage));
+
         menuBar.add(file);
         menuBar.add(edit);
         menuBar.add(format);
         menuBar.add(view);
+        menuBar.add(boardMenu);
         return menuBar;
     }
 
@@ -236,6 +266,79 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         EditorPane pane = currentPane();
         if (pane != null) {
             action.accept(pane);
+        }
+    }
+
+    /** 今の文書が KJ法ボードのときだけ、操作を実行する。 */
+    private void withBoard(java.util.function.Consumer<KjPane> action) {
+        if (currentPane() instanceof KjPane board) {
+            action.accept(board);
+            updateStatus();
+        } else {
+            flash("この操作は、KJ法ボードで使えます（ファイル → 新規（KJ法ボード））");
+        }
+    }
+
+    /** 複数行をまとめて入力し、1行につき1枚のカードにする。 */
+    private void bulkAddCards() {
+        if (!(currentPane() instanceof KjPane board)) {
+            flash("この操作は、KJ法ボードで使えます（ファイル → 新規（KJ法ボード））");
+            return;
+        }
+        JTextArea input = new JTextArea(10, 30);
+        input.setFont(Theme.ui());
+        input.setBackground(Theme.INPUT);
+        input.setForeground(Color.WHITE);
+        input.setCaretColor(Color.WHITE);
+        JPanel panel = new JPanel(new BorderLayout(0, 8));
+        panel.add(new JLabel("1行につき、カードが1枚できます。"), BorderLayout.NORTH);
+        panel.add(new JScrollPane(input), BorderLayout.CENTER);
+        int result = JOptionPane.showConfirmDialog(this, panel, "カードを一括追加",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (result == JOptionPane.OK_OPTION) {
+            board.addCardsFromLines(input.getText());
+        }
+        board.focusEditor();
+    }
+
+    /** KJ法ボードを、PNG 画像のファイルに書き出す。 */
+    private void exportBoardImage() {
+        if (!(currentPane() instanceof KjPane board)) {
+            flash("この操作は、KJ法ボードで使えます（ファイル → 新規（KJ法ボード））");
+            return;
+        }
+        BufferedImage image = board.renderImage();
+        if (image == null) {
+            flash("カードがないので、書き出すものがありません");
+            return;
+        }
+        JFileChooser chooser = new JFileChooser();
+        FileNameExtensionFilter pngFilter = new FileNameExtensionFilter("PNG 画像 (*.png)", "png");
+        chooser.setAcceptAllFileFilterUsed(false);
+        chooser.setFileFilter(pngFilter);
+        if (board.getPath() != null) {
+            String base = board.getPath().toString().replaceAll("\\.[^.\\\\/]+$", "");
+            chooser.setSelectedFile(new java.io.File(base + ".png"));
+        }
+        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+        String name = chooser.getSelectedFile().toString();
+        if (!name.toLowerCase().endsWith(".png")) {
+            name = name + ".png";
+        }
+        Path path = Path.of(name);
+        if (!confirmOverwrite(path)) {
+            return;
+        }
+        try {
+            if (!ImageIO.write(image, "png", path.toFile())) {
+                throw new IOException("PNG として書き出せませんでした");
+            }
+            flash("画像を書き出しました: " + path);
+        } catch (IOException ex) {
+            JOptionPane.showMessageDialog(this, "書き出せませんでした: " + ex.getMessage(),
+                    "エラー", JOptionPane.ERROR_MESSAGE);
         }
     }
 

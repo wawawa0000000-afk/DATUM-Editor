@@ -5,6 +5,7 @@ import java.awt.Cursor;
 import java.awt.Font;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.GraphicsEnvironment;
 import java.awt.RenderingHints;
 import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
@@ -46,14 +47,30 @@ public final class Theme {
     public static final Color MATCH_CURRENT = new Color(0x0090C8); // 検索：今いる場所（明るい水色）
     public static final Color REPLACED = new Color(0x1E7B34);      // 置換した場所（緑）
 
-    public static final int UI_SIZE = 22;
-    public static final int SMALL_SIZE = 18;
-    public static final int EDITOR_SIZE = 48;
+    // 文字の大きさ。Windows などで画面の拡大（125%・150% など）が効いているときは、
+    // Java が自動で拡大して描くので、そのぶん小さい数字にして二重に大きくならないようにする。
+    private static final double SCREEN_SCALE = screenScale();
+    public static final int UI_SIZE = scaled(22);
+    public static final int SMALL_SIZE = scaled(18);
+    public static final int EDITOR_SIZE = scaled(48);
 
     /** 行の縞模様を表示するか（表示メニューで切り替える）。 */
     public static boolean stripes = true;
 
     private Theme() {
+    }
+
+    private static double screenScale() {
+        try {
+            return Math.max(1.0, GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice()
+                    .getDefaultConfiguration().getDefaultTransform().getScaleX());
+        } catch (Exception | Error ex) {
+            return 1.0;                 // 画面がない環境（テストなど）では、拡大なしとして扱う
+        }
+    }
+
+    private static int scaled(int size) {
+        return Math.max(12, (int) Math.round(size / SCREEN_SCALE));
     }
 
     public static Font ui() {
