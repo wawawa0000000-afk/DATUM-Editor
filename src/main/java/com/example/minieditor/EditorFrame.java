@@ -1,127 +1,110 @@
 package com.example.minieditor;
 
+import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.Component;
 import java.awt.Font;
+import java.awt.GraphicsEnvironment;
+import java.awt.KeyboardFocusManager;
+import java.awt.event.ActionEvent;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
+import javax.swing.AbstractAction;
+import javax.swing.BorderFactory;
+import javax.swing.JCheckBoxMenuItem;
+import javax.swing.JComboBox;
+import javax.swing.JComponent;
 import javax.swing.JFileChooser;
 import javax.swing.JFrame;
+import javax.swing.JLabel;
 import javax.swing.JMenu;
 import javax.swing.JMenuBar;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
-import javax.swing.JScrollPane;
-import javax.swing.JTextArea;
-import javax.swing.KeyStroke;
-import javax.swing.UIManager;
-import javax.swing.event.DocumentEvent;
-import javax.swing.event.DocumentListener;
-import javax.swing.filechooser.FileNameExtensionFilter;
-import javax.swing.undo.UndoManager;
-import javax.swing.text.BadLocationException;
-import javax.swing.text.DefaultHighlighter;
-import java.awt.BorderLayout;
-import java.awt.Color;
-import java.awt.event.ActionEvent;
-import javax.swing.AbstractAction;
-import javax.swing.JButton;
-import javax.swing.JComponent;
-import javax.swing.JLabel;
 import javax.swing.JPanel;
-import javax.swing.JTextField;
-import java.util.ArrayList;
-import java.util.List;
-import javax.swing.JCheckBoxMenuItem;
-import javax.swing.JComboBox;
-import javax.swing.BoxLayout;
+import javax.swing.JSplitPane;
+import javax.swing.KeyStroke;
+import javax.swing.SwingUtilities;
+import javax.swing.Timer;
+import javax.swing.filechooser.FileNameExtensionFilter;
+import javax.swing.plaf.basic.BasicSplitPaneUI;
 
 /**
- * メインウィンドウ。テキストエリアを置いて、ウィンドウの設定をする。
+ * メインウィンドウ。
+ *
+ * 画面の構成（上から）：メニュー → 検索バー → タブ付きのエディタ（1つ、または分割して2つ） → ステータスバー
+ * 文書そのものの処理は EditorPane の各クラスに任せ、ここでは
+ * 「どの文書に対して、何をするか」（開く・保存・閉じる・分割など）を受け持つ。
  */
-public class EditorFrame extends JFrame {
+public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGroup.Host {
 
-    // 背景は黒、1行おきに黒灰色の縞を入れる
-    private final JTextArea area = new StripedTextArea(Color.BLACK, new Color(40, 40, 40));
-    private Path currentPath = null;
-    private boolean dirty = false;
+    private static final String APP_NAME = "DATUM-Editor";
+    private static final int CTRL = InputEvent.CTRL_DOWN_MASK;
+    private static final int SHIFT = InputEvent.SHIFT_DOWN_MASK;
+
     private final FileService fileService = new FileService();
-    private final UndoManager undoManager = new UndoManager();
-    private final JPanel searchPanel = new JPanel();
-    private final JPanel findBar = new JPanel();
-    private final JPanel replaceBar = new JPanel();
-    private final JTextField findField = new JTextField(20);
-    private final JTextField replaceField = new JTextField(20);
-    private final JLabel countLabel = new JLabel();
-    private final JLabel statusBar = new JLabel();
-    private int lastMatchStart = 0;
-    private int lastMatchEnd = 0;
+
+    private final EditorGroup group1 = new EditorGroup(this);
+    private final EditorGroup group2 = new EditorGroup(this);
+    private EditorGroup activeGroup = group1;
+    private boolean split = false;
+    private int splitOrientation = JSplitPane.HORIZONTAL_SPLIT;
+    private final JPanel editorArea = new JPanel(new BorderLayout());
+
+    private final FindBar findBar = new FindBar(this::currentPane);
+    private final JLabel statusLeft = new JLabel(" ");
+    private final JLabel statusRight = new JLabel(" ");
+    private final JCheckBoxMenuItem wrapItem = new JCheckBoxMenuItem("折り返し");
+    private String message;                     // ステータスバーに一時的に出す文
+    private final Timer messageTimer = new Timer(4000, e -> {
+        message = null;
+        updateStatus();
+    });
 
     public EditorFrame() {
-        super("DATUM-Editor");  // ソフト名表示
+        super(APP_NAME);
+        messageTimer.setRepeats(false);
 
-        // テキストを入力する部品。フォントは部品（JTextArea）ごとに設定する。               
-        area.setFont(new Font("Monospaced", Font.PLAIN, 48));
-        area.setForeground(Color.WHITE);    // 文字の色を白にする
+        JPanel center = new JPanel(new BorderLayout());
+        center.setBackground(Theme.BG);
+        center.add(findBar, BorderLayout.NORTH);
+        editorArea.setBackground(Theme.BG);
+        center.add(editorArea, BorderLayout.CENTER);
 
-        // JTextArea は Ctrl+H に「1文字削除」が既定で割り当てられているため、
-        // 本文にカーソルがあっても置換バーが開くように、上書きする。
-        area.getInputMap(JComponent.WHEN_FOCUSED).put(
-                KeyStroke.getKeyStroke(KeyEvent.VK_H, InputEvent.CTRL_DOWN_MASK), "toggleReplace");
-        area.getActionMap().put("toggleReplace", new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                toggleReplaceBar();
-            }
-        });
-        area.setCaretColor(Color.WHITE);    // カーソルの色も白にする（黒背景だと見えなくなるため）
-
-        area.getDocument().addDocumentListener(new DocumentListener() {
-            public void insertUpdate(DocumentEvent e) {
-                markDirty();
-                updateStatusBar();
-            }
-
-            public void removeUpdate(DocumentEvent e) {
-                markDirty();
-                updateStatusBar();
-            }
-
-            public void changedUpdate(DocumentEvent e) {
-                markDirty();
-                updateStatusBar();
-            }
-        });
-
-        // カーソルが動くたびに、ステータスバーの行・列を更新する。
-        area.addCaretListener(e -> updateStatusBar());
-
-        // 文字を入力・削除するたびに、その操作が履歴に入ります。
-        area.getDocument().addUndoableEditListener(e -> undoManager.addEdit(e.getEdit()));
-
-        // 文章が長くなったときにスクロールできるよう、JScrollPane で包んで追加する。
-        JScrollPane scrollPane = new JScrollPane(area);
-        scrollPane.getViewport().setBackground(Color.BLACK);   // スクロール時に白が見えないようにする
-        scrollPane.setBorder(null);                             // ふちの灰色の枠線を消す
-        add(scrollPane);                                        //フレームにテキストエリアを追加
-        createFindBar();
-
-        // ステータスバー（行番号・列番号・文字数）
-        statusBar.setForeground(Color.WHITE);
-        statusBar.setBackground(Color.BLACK);
-        statusBar.setOpaque(true);
-        add(statusBar, BorderLayout.SOUTH);
-
-        // メニューバー
+        getContentPane().setBackground(Theme.BG);
+        add(center, BorderLayout.CENTER);
+        add(createStatusBar(), BorderLayout.SOUTH);
         setJMenuBar(createMenuBar());
+        installExtraShortcuts();
 
-        getContentPane().setBackground(Color.BLACK);   // ウィンドウの余白部分も黒にする
+        // どちらのグループにカーソルがあるかを見張って、操作の対象を切り替える
+        KeyboardFocusManager.getCurrentKeyboardFocusManager().addPropertyChangeListener("permanentFocusOwner", e -> {
+            if (e.getNewValue() instanceof Component c) {
+                EditorGroup group = (EditorGroup) SwingUtilities.getAncestorOfClass(EditorGroup.class, c);
+                if (group != null) {
+                    setActiveGroup(group);
+                }
+            }
+        });
 
-        setSize(1200, 600);                                     //フレームサイズの指定
-        // ×ボタンを押しても、勝手には閉じない
+        group1.setGroupActive(true);
+        layoutGroups();
+        newDocument(EditorPane.Mode.TEXT);
+
+        setSize(1400, 850);
+        setLocationByPlatform(true);
+        // ×ボタンを押しても勝手には閉じず、未保存の確認をしてから終了する
         setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
         addWindowListener(new WindowAdapter() {
             @Override
@@ -129,447 +112,600 @@ public class EditorFrame extends JFrame {
                 exitApp();
             }
         });
-        updateTitle();
-        updateStatusBar();
     }
 
-    // 閉じてよいか確認してから、プログラムを終了する
-    private void exitApp() {
-        if (confirmDiscardChanges()) {
-            System.exit(0);
+    // ---------- 画面の部品 ----------
+
+    private JPanel createStatusBar() {
+        JPanel bar = new JPanel(new BorderLayout());
+        bar.setBackground(Theme.ACCENT);
+        bar.setBorder(BorderFactory.createEmptyBorder(4, 14, 4, 14));
+        for (JLabel label : new JLabel[]{statusLeft, statusRight}) {
+            label.setFont(Theme.small());
+            label.setForeground(Color.WHITE);
         }
-    }
-
-    // 行番号・列番号・文字数を表示する
-    private void updateStatusBar() {
-        int caretPos = area.getCaretPosition();
-        int line = 1;
-        int column = 1;
-        try {
-            line = area.getLineOfOffset(caretPos) + 1;
-            column = caretPos - area.getLineStartOffset(line - 1) + 1;
-        } catch (BadLocationException ex) {
-            // 通常は起きない
-        }
-        int length = area.getText().length();
-        statusBar.setText(String.format("  行 %d, 列 %d　|　%d 文字", line, column, length));
-    }
-
-    private void createFindBar() {
-        JButton closeButton = new JButton("X");
-        closeButton.addActionListener(e -> hideFindBar());
-        bindEnterToClick(closeButton);
-
-        JLabel findLabel = new JLabel("検索:");
-        findLabel.setForeground(Color.WHITE);
-        findField.setBackground(new Color(40, 40, 40));
-        findField.setForeground(Color.WHITE);
-        findField.setCaretColor(Color.WHITE);
-
-        countLabel.setForeground(Color.WHITE);
-
-        findBar.setBackground(Color.BLACK);
-        findBar.add(findLabel);
-        findBar.add(findField);
-        findBar.add(countLabel);
-        findBar.add(closeButton);
-
-        findField.getInputMap(JComponent.WHEN_FOCUSED)
-            .put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "closeFind");
-        findField.getActionMap().put("closeFind", new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                hideFindBar();
-            }
-        });
-        findField.addActionListener(e -> findNext());
-
-        findField.getInputMap(JComponent.WHEN_FOCUSED)
-                .put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.SHIFT_DOWN_MASK), "findPrevious");
-        findField.getActionMap().put("findPrevious", new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                findPrevious();
-            }
-        });
-
-        // 置換の行
-        JLabel replaceLabel = new JLabel("置換:");
-        replaceLabel.setForeground(Color.WHITE);
-        replaceField.setBackground(new Color(40, 40, 40));
-        replaceField.setForeground(Color.WHITE);
-        replaceField.setCaretColor(Color.WHITE);
-
-        JButton replaceOneButton = new JButton("置換");
-        replaceOneButton.addActionListener(e -> replaceOne());
-        bindEnterToClick(replaceOneButton);
-
-        JButton replaceAllButton = new JButton("すべて置換");
-        replaceAllButton.addActionListener(e -> replaceAll());
-        bindEnterToClick(replaceAllButton);
-
-        replaceBar.setBackground(Color.BLACK);
-        replaceBar.add(replaceLabel);
-        replaceBar.add(replaceField);
-        replaceBar.add(replaceOneButton);
-        replaceBar.add(replaceAllButton);
-        replaceBar.setVisible(false);
-
-        replaceField.getInputMap(JComponent.WHEN_FOCUSED)
-                .put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "closeFind");
-        replaceField.getActionMap().put("closeFind", new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                hideFindBar();
-            }
-        });
-        replaceField.addActionListener(e -> replaceOne());
-
-        // 検索の行と、置換の行を、縦に並べる
-        searchPanel.setLayout(new BoxLayout(searchPanel, BoxLayout.Y_AXIS));
-        searchPanel.setBackground(Color.BLACK);
-        searchPanel.add(findBar);
-        searchPanel.add(replaceBar);
-        searchPanel.setVisible(false);
-        add(searchPanel, BorderLayout.NORTH);
-    }
-
-    private void toggleFindBar() {
-        if (searchPanel.isVisible() && !replaceBar.isVisible()) {
-            hideFindBar();
-        } else {
-            showFindBar();
-        }
-    }
-
-    private void showFindBar() {
-        searchPanel.setVisible(true);
-        replaceBar.setVisible(false);
-        findField.requestFocusInWindow();
-    }
-
-    private void hideFindBar() {
-        searchPanel.setVisible(false);
-        replaceBar.setVisible(false);
-        area.requestFocusInWindow();
-    }
-
-    private void toggleReplaceBar() {
-        searchPanel.setVisible(true);
-        replaceBar.setVisible(!replaceBar.isVisible());
-        findField.requestFocusInWindow();   // まず「検索」欄から入力してもらう
-    }
-
-    // ボタンにカーソルが合っているとき、Enter でも押せるようにする
-    // （JButton は既定では Space にしか反応しないため）
-    private void bindEnterToClick(JButton button) {
-        button.getInputMap(JComponent.WHEN_FOCUSED)
-                .put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "pressButton");
-        button.getActionMap().put("pressButton", new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                button.doClick();
-            }
-        });
-    }
-
-    // 今、ハイライトしている場所を、置換欄の文字で置き換える
-    private void replaceOne() {
-        String keyword = findField.getText();
-        if (keyword.isEmpty()) {
-            return;
-        }
-        String text = area.getText();
-        boolean hasCurrentMatch = lastMatchEnd > lastMatchStart
-                && lastMatchEnd <= text.length()
-                && text.substring(lastMatchStart, lastMatchEnd).equals(keyword);
-
-        if (!hasCurrentMatch) {
-            findNext();          // まだ今の場所が一致していなければ、先に探す
-            return;
-        }
-
-        String replacement = replaceField.getText();
-        int replacedStart = lastMatchStart;
-        area.replaceRange(replacement, lastMatchStart, lastMatchEnd);
-        int replacedEnd = replacedStart + replacement.length();
-        lastMatchEnd = replacedEnd;
-
-        findNext();                                     // 次の一致を探して、色を塗り直す
-        highlightReplaced(replacedStart, replacedEnd);   // 置き換えた場所も、色を足す
-    }
-
-    // 一致するものを、すべて置き換える
-    private void replaceAll() {
-        String keyword = findField.getText();
-        if (keyword.isEmpty()) {
-            return;
-        }
-        String text = area.getText();
-        List<Integer> positions = findAllMatches(text, keyword);
-        if (positions.isEmpty()) {
-            countLabel.setText("見つかりません");
-            return;
-        }
-
-        String replacement = replaceField.getText();
-
-        // 置き換えながら、新しい文章の中で「置き換えた場所」を覚えておく
-        StringBuilder result = new StringBuilder();
-        List<Integer> replacedPositions = new ArrayList<>();
-        int cursor = 0;
-        for (int pos : positions) {
-            result.append(text, cursor, pos);           // 一致の前の部分はそのまま
-            replacedPositions.add(result.length());     // 今から置き換える場所を覚える
-            result.append(replacement);
-            cursor = pos + keyword.length();
-        }
-        result.append(text.substring(cursor));           // 最後の一致より後ろの部分
-
-        area.setText(result.toString());
-        countLabel.setText(positions.size() + " 件を置換しました");
-        lastMatchStart = 0;
-        lastMatchEnd = 0;
-
-        for (int start : replacedPositions) {
-            highlightReplaced(start, start + replacement.length());
-        }
-    }
-
-    // 置き換えた場所を、緑で色づける（検索のハイライトは消さず、足す）
-    private void highlightReplaced(int start, int end) {
-        if (start >= end) {
-            return;          // 空文字に置き換えたときは、塗る範囲がない
-        }
-        try {
-            area.getHighlighter().addHighlight(start, end,
-                    new DefaultHighlighter.DefaultHighlightPainter(new Color(0, 160, 0))); // 緑
-        } catch (BadLocationException ex) {
-            // 通常は起きない
-        }
-    }
-
-    private void findNext() {
-        search(true);
-    }
-
-    private void findPrevious() {
-        search(false);
-    }
-
-    // forward が true なら次へ、false なら前へ探す
-    private void search(boolean forward) {
-        String keyword = findField.getText();
-        String text = area.getText();
-        List<Integer> positions = findAllMatches(text, keyword);
-
-        if (positions.isEmpty()) {
-            countLabel.setText("見つかりません");
-            return;
-        }
-
-        int index = forward
-                ? nextIndexFrom(positions, lastMatchEnd)
-                : previousIndexFrom(positions, lastMatchStart);
-
-        int rank = positions.indexOf(index) + 1;
-        countLabel.setText(rank + " / " + positions.size() + " 件");
-
-        lastMatchStart = index;
-        lastMatchEnd = index + keyword.length();
-        highlightAll(positions, keyword.length(), lastMatchStart);
-    }
-
-    // 一致する場所を、すべて先頭から順に集める
-    private List<Integer> findAllMatches(String text, String keyword) {
-        List<Integer> positions = new ArrayList<>();
-        if (keyword.isEmpty()) {
-            return positions;             // 空欄なら、何も一致しないことにする
-        }
-        int index = text.indexOf(keyword);
-        while (index >= 0) {
-            positions.add(index);
-            index = text.indexOf(keyword, index + keyword.length());
-        }
-        return positions;
-    }
-
-    // from 以上で、一番近い一致を探す。なければ先頭に戻る
-    private int nextIndexFrom(List<Integer> positions, int from) {
-        for (int p : positions) {
-            if (p >= from) {
-                return p;
-            }
-        }
-        return positions.get(0);
-    }
-
-    // from より前で、一番近い一致を探す。なければ最後に戻る
-    private int previousIndexFrom(List<Integer> positions, int from) {
-        for (int i = positions.size() - 1; i >= 0; i--) {
-            if (positions.get(i) < from) {
-                return positions.get(i);
-            }
-        }
-        return positions.get(positions.size() - 1);
-    }
-
-    // 一致した場所をすべて塗る。今いる場所だけ、明るい水色にする
-    private void highlightAll(List<Integer> positions, int length, int currentStart) {
-        area.getHighlighter().removeAllHighlights();
-        try {
-            for (int start : positions) {
-                Color color = (start == currentStart)
-                        ? new Color(0, 200, 255)     // 今いる場所：明るい水色
-                        : new Color(0, 80, 110);      // それ以外：暗い水色
-                area.getHighlighter().addHighlight(start, start + length,
-                        new DefaultHighlighter.DefaultHighlightPainter(color));
-            }
-            area.setCaretPosition(currentStart + length);
-        } catch (BadLocationException ex) {
-            // text.indexOf で得た位置なので、通常は起きない
-        }
+        bar.add(statusLeft, BorderLayout.WEST);
+        bar.add(statusRight, BorderLayout.EAST);
+        return bar;
     }
 
     private JMenuBar createMenuBar() {
         JMenuBar menuBar = new JMenuBar();
-        JMenu fileMenu = new JMenu("ファイル");
-        JMenuItem saveItem = new JMenuItem("保存");
-        JMenuItem newItem = new JMenuItem("新規");
-        JMenuItem saveAsItem = new JMenuItem("名前を付けて保存");
-        JMenuItem openItem = new JMenuItem("開く");
-        JMenuItem exitItem = new JMenuItem("終了");
 
-        saveItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_S, InputEvent.CTRL_DOWN_MASK));
-        saveItem.addActionListener(e -> saveFile());
+        JMenu file = new JMenu("ファイル");
+        file.add(item("新規（テキスト）", key(KeyEvent.VK_N, CTRL), () -> newDocument(EditorPane.Mode.TEXT)));
+        file.add(item("新規（縦書き）", key(KeyEvent.VK_N, CTRL | SHIFT), () -> newDocument(EditorPane.Mode.VERTICAL)));
+        file.add(item("新規（KJ法ボード）", key(KeyEvent.VK_K, CTRL | SHIFT), () -> newDocument(EditorPane.Mode.KJ)));
+        file.addSeparator();
+        file.add(item("開く…", key(KeyEvent.VK_O, CTRL), this::openFile));
+        file.add(item("保存", key(KeyEvent.VK_S, CTRL), () -> save(currentPane())));
+        file.add(item("名前を付けて保存…", key(KeyEvent.VK_S, CTRL | SHIFT), () -> saveAs(currentPane())));
+        file.addSeparator();
+        file.add(item("タブを閉じる", key(KeyEvent.VK_W, CTRL), () -> closePane(activeGroup, currentPane())));
+        file.add(item("終了", key(KeyEvent.VK_Q, CTRL), this::exitApp));
 
-        newItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_N, InputEvent.CTRL_DOWN_MASK));
-        newItem.addActionListener(e -> newFile());
+        JMenu edit = new JMenu("編集");
+        edit.add(item("元に戻す", key(KeyEvent.VK_Z, CTRL), () -> withPane(EditorPane::undo)));
+        edit.add(item("やり直し", key(KeyEvent.VK_Y, CTRL), () -> withPane(EditorPane::redo)));
+        edit.addSeparator();
+        edit.add(item("切り取り", key(KeyEvent.VK_X, CTRL), () -> withPane(EditorPane::cut)));
+        edit.add(item("コピー", key(KeyEvent.VK_C, CTRL), () -> withPane(EditorPane::copy)));
+        edit.add(item("貼り付け", key(KeyEvent.VK_V, CTRL), () -> withPane(EditorPane::paste)));
+        edit.add(item("すべて選択", key(KeyEvent.VK_A, CTRL), () -> withPane(EditorPane::selectAll)));
+        edit.addSeparator();
+        edit.add(item("検索", key(KeyEvent.VK_F, CTRL), () -> findBar.open(false)));
+        edit.add(item("置換", key(KeyEvent.VK_H, CTRL), () -> findBar.open(true)));
 
-        openItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_O, InputEvent.CTRL_DOWN_MASK));
-        openItem.addActionListener(e -> openFile());
+        JMenu format = new JMenu("書式");
+        format.add(item("フォント…", null, this::chooseFont));
+        format.add(item("文字を大きく", key(KeyEvent.VK_SEMICOLON, CTRL), () -> zoom(1)));
+        format.add(item("文字を小さく", key(KeyEvent.VK_MINUS, CTRL), () -> zoom(-1)));
+        format.addSeparator();
+        wrapItem.addActionListener(e -> {
+            if (currentPane() instanceof TextEditorPane text) {
+                text.setWrap(wrapItem.isSelected());
+            } else {
+                wrapItem.setSelected(false);
+                flash("折り返しは、テキスト（横書き）の文書で使えます");
+            }
+        });
+        format.add(wrapItem);
+        format.add(item("横書き ⇔ 縦書き を切り替え", key(KeyEvent.VK_T, CTRL | SHIFT), this::switchWriting));
 
-        exitItem.addActionListener(e -> exitApp());
+        JMenu view = new JMenu("表示");
+        view.add(item("画面を分割 / 分割をやめる", key(KeyEvent.VK_BACK_SLASH, CTRL), this::toggleSplit));
+        view.add(item("分割の向きを切り替え（左右 ⇔ 上下）", null, this::toggleOrientation));
+        view.add(item("タブを反対側へ移動", key(KeyEvent.VK_M, CTRL | SHIFT), this::moveTabToOtherGroup));
+        view.addSeparator();
+        view.add(item("次のタブ", key(KeyEvent.VK_PAGE_DOWN, CTRL), () -> activeGroup.selectNext(1)));
+        view.add(item("前のタブ", key(KeyEvent.VK_PAGE_UP, CTRL), () -> activeGroup.selectNext(-1)));
+        view.addSeparator();
+        JCheckBoxMenuItem stripeItem = new JCheckBoxMenuItem("行の縞模様", Theme.stripes);
+        stripeItem.addActionListener(e -> {
+            Theme.stripes = stripeItem.isSelected();
+            repaint();
+        });
+        view.add(stripeItem);
 
-        fileMenu.setFont(new Font("Dialog", Font.PLAIN, 24));
-        saveItem.setFont(new Font("Dialog", Font.PLAIN, 24));
-        newItem.setFont(new Font("Dialog", Font.PLAIN, 24));
-        saveAsItem.setFont(new Font("Dialog", Font.PLAIN, 24));
-        openItem.setFont(new Font("Dialog", Font.PLAIN, 24));
-        exitItem.setFont(new Font("Dialog", Font.PLAIN, 24));
-
-        setDialogFont(22);
-
-        // メニューバーと、その中の項目を黒地に白文字にする
-        menuBar.setBackground(Color.BLACK);
-        for (JMenuItem item : new JMenuItem[]{fileMenu, saveItem, newItem, saveAsItem, openItem, exitItem}) {
-            item.setBackground(Color.BLACK);
-            item.setForeground(Color.WHITE);
-        }
-
-        menuBar.add(fileMenu);
-        menuBar.add(createEditMenu());
-        menuBar.add(createFormatMenu());
-        fileMenu.add(newItem);
-        fileMenu.add(openItem);
-        fileMenu.add(saveItem);
-        fileMenu.add(saveAsItem);
-        fileMenu.add(exitItem);
-
-        saveAsItem.addActionListener(e -> saveFileAs());
-
+        menuBar.add(file);
+        menuBar.add(edit);
+        menuBar.add(format);
+        menuBar.add(view);
         return menuBar;
     }
 
-    private JMenu createEditMenu() {
-        JMenu editMenu = new JMenu("編集");
-        editMenu.setFont(new Font("Dialog", Font.PLAIN, 24));
-        editMenu.setBackground(Color.BLACK);
-        editMenu.setForeground(Color.WHITE);
-
-        JMenuItem undoItem = new JMenuItem("元に戻す");
-        undoItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_Z, InputEvent.CTRL_DOWN_MASK));
-        undoItem.addActionListener(e -> {
-            if (undoManager.canUndo()) {
-                undoManager.undo();
-        
-            }});
-
-        JMenuItem redoItem = new JMenuItem("やり直し");
-        redoItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_Y, InputEvent.CTRL_DOWN_MASK));
-        redoItem.addActionListener(e -> {
-            if (undoManager.canRedo()) {
-                undoManager.redo();
-        
-            }});
-
-        JMenuItem cutItem = new JMenuItem("切り取り");
-        cutItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_X, InputEvent.CTRL_DOWN_MASK));
-        cutItem.addActionListener(e -> area.cut());
-
-        JMenuItem copyItem = new JMenuItem("コピー");
-        copyItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_C, InputEvent.CTRL_DOWN_MASK));
-        copyItem.addActionListener(e -> area.copy());
-
-        JMenuItem pasteItem = new JMenuItem("貼り付け");
-        pasteItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_V, InputEvent.CTRL_DOWN_MASK));
-        pasteItem.addActionListener(e -> area.paste());
-
-        JMenuItem selectAllItem = new JMenuItem("すべて選択");
-        selectAllItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_A, InputEvent.CTRL_DOWN_MASK));
-        selectAllItem.addActionListener(e -> area.selectAll());
-
-        JMenuItem findItem = new JMenuItem("検索");
-        findItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_F, InputEvent.CTRL_DOWN_MASK));
-        findItem.addActionListener(e -> toggleFindBar());
-
-        JMenuItem replaceItem = new JMenuItem("置換");
-        replaceItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_H, InputEvent.CTRL_DOWN_MASK));
-        replaceItem.addActionListener(e -> toggleReplaceBar());
-
-        for (JMenuItem item : new JMenuItem[]{undoItem, redoItem, cutItem, copyItem, pasteItem, selectAllItem, findItem, replaceItem}) {
-            item.setFont(new Font("Dialog", Font.PLAIN, 24));
-            item.setBackground(Color.BLACK);
-            item.setForeground(Color.WHITE);
-            editMenu.add(item);
-        }
-
-        return editMenu;
+    private static KeyStroke key(int keyCode, int modifiers) {
+        return KeyStroke.getKeyStroke(keyCode, modifiers);
     }
 
-    private JMenu createFormatMenu() {
-        JMenu formatMenu = new JMenu("書式");
-        formatMenu.setFont(new Font("Dialog", Font.PLAIN, 24));
-        formatMenu.setBackground(Color.BLACK);
-        formatMenu.setForeground(Color.WHITE);
+    private static JMenuItem item(String label, KeyStroke accelerator, Runnable action) {
+        JMenuItem item = new JMenuItem(label);
+        if (accelerator != null) {
+            item.setAccelerator(accelerator);
+        }
+        item.addActionListener(e -> action.run());
+        return item;
+    }
 
-        JMenuItem fontItem = new JMenuItem("フォント変更");
-        fontItem.addActionListener(e -> chooseFont());
+    /** メニューには1つしかキーを付けられないので、別のキーでも動くようにする。 */
+    private void installExtraShortcuts() {
+        shortcut(key(KeyEvent.VK_Z, CTRL | SHIFT), "redo2", () -> withPane(EditorPane::redo));
+        shortcut(key(KeyEvent.VK_SEMICOLON, CTRL | SHIFT), "zoomIn2", () -> zoom(1));   // JIS 配列の「+」
+        shortcut(key(KeyEvent.VK_EQUALS, CTRL), "zoomIn3", () -> zoom(1));               // US 配列の「+」
+        shortcut(key(KeyEvent.VK_ADD, CTRL), "zoomIn4", () -> zoom(1));                  // テンキー
+        shortcut(key(KeyEvent.VK_SUBTRACT, CTRL), "zoomOut2", () -> zoom(-1));
+    }
 
-        JCheckBoxMenuItem wrapItem = new JCheckBoxMenuItem("折り返し");
-        wrapItem.addActionListener(e -> {
-            area.setLineWrap(wrapItem.isSelected());
-            area.setWrapStyleWord(true);
+    private void shortcut(KeyStroke keyStroke, String name, Runnable action) {
+        getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(keyStroke, name);
+        getRootPane().getActionMap().put(name, new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                action.run();
+            }
         });
-
-        for (JMenuItem item : new JMenuItem[]{fontItem, wrapItem}) {
-            item.setFont(new Font("Dialog", Font.PLAIN, 24));
-            item.setBackground(Color.BLACK);
-            item.setForeground(Color.WHITE);
-            formatMenu.add(item);
-        }
-        return formatMenu;
     }
 
-    // フォントの種類とサイズを選ぶダイアログ
-    private void chooseFont() {
-        String[] fontNames = {"Monospaced", "SansSerif", "Serif"};
-        Integer[] sizes = {14, 18, 24, 32, 40, 48, 64};
+    // ---------- 今の文書 ----------
 
-        JComboBox<String> nameBox = new JComboBox<>(fontNames);
-        nameBox.setSelectedItem(area.getFont().getFamily());
-        JComboBox<Integer> sizeBox = new JComboBox<>(sizes);
-        sizeBox.setSelectedItem(area.getFont().getSize());
+    private EditorPane currentPane() {
+        return activeGroup == null ? null : activeGroup.getActive();
+    }
+
+    private void withPane(java.util.function.Consumer<EditorPane> action) {
+        EditorPane pane = currentPane();
+        if (pane != null) {
+            action.accept(pane);
+        }
+    }
+
+    private List<EditorPane> allPanes() {
+        List<EditorPane> all = new ArrayList<>(group1.getPanes());
+        all.addAll(group2.getPanes());
+        return all;
+    }
+
+    private EditorGroup groupOf(EditorPane pane) {
+        return group2.getPanes().contains(pane) ? group2 : group1;
+    }
+
+    private void setActiveGroup(EditorGroup group) {
+        if (group == activeGroup) {
+            return;
+        }
+        activeGroup = group;
+        group1.setGroupActive(group == group1);
+        group2.setGroupActive(group == group2);
+        currentPaneChanged();
+    }
+
+    /** 表示している文書が変わったときに、タイトルやステータスバーを合わせる。 */
+    private void currentPaneChanged() {
+        updateTitle();
+        updateStatus();
+        wrapItem.setSelected(currentPane() instanceof TextEditorPane text && text.isWrap());
+        findBar.paneSwitched();
+    }
+
+    private void updateTitle() {
+        EditorPane pane = currentPane();
+        if (pane == null) {
+            setTitle(APP_NAME);
+        } else {
+            setTitle(pane.getTitle() + (pane.isDirty() ? " ●" : "") + " - " + APP_NAME);
+        }
+    }
+
+    private void updateStatus() {
+        EditorPane pane = currentPane();
+        if (pane == null) {
+            statusLeft.setText(message != null ? message : " ");
+            statusRight.setText(" ");
+            return;
+        }
+        statusLeft.setText(message != null ? message : pane.getMode().label);
+        String format;
+        if (pane.getPath() == null) {
+            format = "未保存";
+        } else if (isJsonPath(pane.getPath()) && !pane.isRawFile()) {
+            format = "JSON";
+        } else {
+            format = "テキスト";
+        }
+        statusRight.setText(pane.statusText() + "    UTF-8    " + format);
+    }
+
+    /** ステータスバーに、数秒だけお知らせを出す（ポップアップで作業を止めないため）。 */
+    private void flash(String text) {
+        message = text;
+        updateStatus();
+        messageTimer.restart();
+    }
+
+    // ---------- EditorPane.Listener（文書からの知らせ） ----------
+
+    @Override
+    public void contentChanged(EditorPane pane) {
+        findBar.contentChanged(pane);
+    }
+
+    @Override
+    public void titleChanged(EditorPane pane) {
+        groupOf(pane).refreshTabs();
+        if (pane == currentPane()) {
+            updateTitle();
+        }
+    }
+
+    @Override
+    public void statusChanged(EditorPane pane) {
+        if (pane == currentPane()) {
+            updateStatus();
+        }
+    }
+
+    // ---------- EditorGroup.Host（タブからの知らせ） ----------
+
+    @Override
+    public void groupActivated(EditorGroup group) {
+        setActiveGroup(group);
+    }
+
+    @Override
+    public void paneSelected(EditorGroup group, EditorPane pane) {
+        if (group == activeGroup) {
+            currentPaneChanged();
+        }
+    }
+
+    @Override
+    public void closeRequested(EditorGroup group, EditorPane pane) {
+        closePane(group, pane);
+    }
+
+    @Override
+    public void newRequested(EditorGroup group) {
+        setActiveGroup(group);
+        newDocument(EditorPane.Mode.TEXT);
+    }
+
+    // ---------- 新規・開く・保存・閉じる ----------
+
+    private EditorPane createPane(EditorPane.Mode mode) {
+        return switch (mode) {
+            case TEXT -> new TextEditorPane(Theme.editorFont());
+            case VERTICAL -> new VerticalTextPane(Theme.editorFont());
+            case KJ -> new KjPane();
+        };
+    }
+
+    private void addPane(EditorGroup group, EditorPane pane) {
+        pane.setListener(this);
+        group.addPane(pane);
+        SwingUtilities.invokeLater(pane::focusEditor);
+    }
+
+    private void newDocument(EditorPane.Mode mode) {
+        addPane(activeGroup, createPane(mode));
+    }
+
+    private void openFile() {
+        JFileChooser chooser = new JFileChooser();
+        chooser.addChoosableFileFilter(new FileNameExtensionFilter("テキスト / JSON (*.txt, *.json)", "txt", "json"));
+        if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+        Path path = chooser.getSelectedFile().toPath().toAbsolutePath();
+
+        // すでに開いているファイルなら、そのタブを表示するだけにする
+        for (EditorPane open : allPanes()) {
+            if (path.equals(open.getPath())) {
+                setActiveGroup(groupOf(open));
+                activeGroup.select(open);
+                open.focusEditor();
+                return;
+            }
+        }
+
+        try {
+            EditorPane pane = paneFromFile(path, fileService.read(path));
+            EditorPane previous = currentPane();
+            pane.setPath(path);
+            addPane(activeGroup, pane);
+            // 何も書いていない「無題」のタブが残っていたら、片付ける
+            if (previous != null && previous.getPath() == null && !previous.isDirty() && previous.isEmpty()) {
+                activeGroup.removePane(previous);
+            }
+        } catch (IOException ex) {
+            JOptionPane.showMessageDialog(this, "開けませんでした: " + ex.getMessage(),
+                    "エラー", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    /** ファイルの中身から、合う種類の文書を作る。 */
+    @SuppressWarnings("unchecked")
+    private EditorPane paneFromFile(Path path, String content) {
+        if (isJsonPath(path)) {
+            try {
+                if (Json.parse(content) instanceof Map<?, ?> raw
+                        && EditorPane.FORMAT_NAME.equals(raw.get("format"))) {
+                    Map<String, Object> json = (Map<String, Object>) raw;
+                    return switch (EditorPane.Mode.fromId(Json.str(json, "mode", "text"))) {
+                        case TEXT -> TextEditorPane.fromJson(json);
+                        case VERTICAL -> VerticalTextPane.fromJson(json);
+                        case KJ -> KjPane.fromJson(json);
+                    };
+                }
+            } catch (Json.JsonException ex) {
+                flash("JSON として読めなかったので、テキストとして開きました");
+            }
+        }
+        // このアプリの形式ではないファイルは、中身をそのままテキストとして開く
+        TextEditorPane pane = new TextEditorPane(Theme.editorFont());
+        pane.loadText(content);
+        pane.setRawFile(isJsonPath(path));
+        return pane;
+    }
+
+    private static boolean isJsonPath(Path path) {
+        return path.getFileName().toString().toLowerCase().endsWith(".json");
+    }
+
+    /** 保存する。成功したら true。保存先が決まっていなければ「名前を付けて保存」になる。 */
+    private boolean save(EditorPane pane) {
+        if (pane == null) {
+            return false;
+        }
+        if (pane.getPath() == null) {
+            return saveAs(pane);
+        }
+        return write(pane, pane.getPath());
+    }
+
+    private boolean saveAs(EditorPane pane) {
+        if (pane == null) {
+            return false;
+        }
+        JFileChooser chooser = new JFileChooser();
+        FileNameExtensionFilter txtFilter = new FileNameExtensionFilter("テキスト (*.txt)", "txt");
+        FileNameExtensionFilter jsonFilter = new FileNameExtensionFilter("JSON：設定や配置も保存 (*.json)", "json");
+        chooser.setAcceptAllFileFilterUsed(false);
+        boolean kj = pane.getMode() == EditorPane.Mode.KJ;
+        if (!kj) {
+            chooser.addChoosableFileFilter(txtFilter);     // KJ法はカードの位置があるので、JSON だけにする
+        }
+        chooser.addChoosableFileFilter(jsonFilter);
+        boolean preferJson = kj || (pane.getPath() != null && isJsonPath(pane.getPath()) && !pane.isRawFile());
+        chooser.setFileFilter(preferJson ? jsonFilter : txtFilter);
+        if (pane.getPath() != null) {
+            chooser.setSelectedFile(pane.getPath().toFile());
+        }
+        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
+            return false;
+        }
+
+        // 選んだ形式の拡張子が付いていなければ、付け足す
+        String extension = ((FileNameExtensionFilter) chooser.getFileFilter()).getExtensions()[0];
+        String name = chooser.getSelectedFile().toString();
+        if (!name.toLowerCase().endsWith("." + extension)) {
+            name = name + "." + extension;
+        }
+        Path path = Path.of(name).toAbsolutePath();
+        if (!path.equals(pane.getPath()) && !confirmOverwrite(path)) {
+            return false;
+        }
+
+        boolean wasRaw = pane.isRawFile();
+        pane.setRawFile(false);         // 自分で形式を選んだので、このアプリの形式で保存する
+        if (write(pane, path)) {
+            pane.setPath(path);
+            updateStatus();
+            return true;
+        }
+        pane.setRawFile(wasRaw);
+        return false;
+    }
+
+    /** 実際にファイルへ書く。拡張子が .json なら JSON、それ以外は本文だけを書く。 */
+    private boolean write(EditorPane pane, Path path) {
+        String content = isJsonPath(path) && !pane.isRawFile()
+                ? Json.write(pane.toJson())
+                : pane.toPlainText();
+        try {
+            fileService.save(content, path);
+            pane.setDirty(false);
+            flash("保存しました: " + path);
+            return true;
+        } catch (IOException ex) {
+            // 失敗は握りつぶさず、ダイアログで知らせる
+            JOptionPane.showMessageDialog(this, "保存できませんでした: " + ex.getMessage(),
+                    "エラー", JOptionPane.ERROR_MESSAGE);
+            return false;
+        }
+    }
+
+    private boolean confirmOverwrite(Path path) {
+        if (!path.toFile().exists()) {
+            return true;
+        }
+        int answer = JOptionPane.showConfirmDialog(this,
+                path.getFileName() + " は既にあります。上書きしますか？",
+                "上書きの確認", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+        return answer == JOptionPane.YES_OPTION;
+    }
+
+    /** 未保存の変更を捨ててよいか確認する。true なら、閉じてよい。 */
+    private boolean confirmDiscard(EditorPane pane) {
+        if (!pane.isDirty()) {
+            return true;
+        }
+        // どの文書の話かわかるように、そのタブを表示してから聞く
+        setActiveGroup(groupOf(pane));
+        activeGroup.select(pane);
+        int answer = JOptionPane.showConfirmDialog(this,
+                "「" + pane.getTitle() + "」の変更を保存しますか？",
+                "確認", JOptionPane.YES_NO_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
+        if (answer == JOptionPane.YES_OPTION) {
+            return save(pane);          // 保存に失敗、または保存をやめた場合は閉じない
+        }
+        return answer == JOptionPane.NO_OPTION;
+    }
+
+    private void closePane(EditorGroup group, EditorPane pane) {
+        if (pane == null || !confirmDiscard(pane)) {
+            return;
+        }
+        group.removePane(pane);
+        tidyGroups();
+    }
+
+    /** タブがなくなったグループを片付ける。 */
+    private void tidyGroups() {
+        if (group1.isEmpty() && !group2.isEmpty()) {
+            for (EditorPane pane : new ArrayList<>(group2.getPanes())) {
+                group2.removePane(pane);
+                group1.addPane(pane);
+            }
+        }
+        if (split && group2.isEmpty()) {
+            split = false;
+            layoutGroups();
+        }
+        if (!split) {
+            setActiveGroup(group1);
+        }
+        if (group1.isEmpty()) {
+            newDocument(EditorPane.Mode.TEXT);     // タブが1枚もなくなったら、新しい文書を出す
+        }
+        currentPaneChanged();
+        withPane(pane -> SwingUtilities.invokeLater(pane::focusEditor));
+    }
+
+    private void exitApp() {
+        for (EditorPane pane : allPanes()) {
+            if (!confirmDiscard(pane)) {
+                return;                 // 1つでも「キャンセル」なら、終了をやめる
+            }
+        }
+        System.exit(0);
+    }
+
+    // ---------- 分割 ----------
+
+    /** グループを画面に置き直す。分割中は2つを並べ、そうでなければ1つだけ置く。 */
+    private void layoutGroups() {
+        editorArea.removeAll();
+        if (split) {
+            JSplitPane splitPane = new JSplitPane(splitOrientation, group1, group2);
+            splitPane.setUI(new BasicSplitPaneUI());
+            splitPane.setBorder(null);
+            splitPane.setBackground(Theme.BORDER);  // 境目の線の色になる
+            splitPane.setDividerSize(4);
+            splitPane.setResizeWeight(0.5);
+            splitPane.setContinuousLayout(true);
+            editorArea.add(splitPane, BorderLayout.CENTER);
+            SwingUtilities.invokeLater(() -> splitPane.setDividerLocation(0.5));
+        } else {
+            editorArea.add(group1, BorderLayout.CENTER);
+        }
+        editorArea.revalidate();
+        editorArea.repaint();
+    }
+
+    private void toggleSplit() {
+        if (split) {
+            // 分割をやめるときは、右（下）側のタブを左（上）側へ移す
+            for (EditorPane pane : new ArrayList<>(group2.getPanes())) {
+                group2.removePane(pane);
+                group1.addPane(pane);
+            }
+            tidyGroups();
+            return;
+        }
+        split = true;
+        layoutGroups();
+        setActiveGroup(group2);
+        if (group2.isEmpty()) {
+            newDocument(EditorPane.Mode.TEXT);
+        }
+    }
+
+    private void toggleOrientation() {
+        splitOrientation = (splitOrientation == JSplitPane.HORIZONTAL_SPLIT)
+                ? JSplitPane.VERTICAL_SPLIT : JSplitPane.HORIZONTAL_SPLIT;
+        if (split) {
+            layoutGroups();
+        } else {
+            toggleSplit();
+        }
+    }
+
+    private void moveTabToOtherGroup() {
+        EditorPane pane = currentPane();
+        if (pane == null) {
+            return;
+        }
+        EditorGroup from = activeGroup;
+        EditorGroup to = (from == group1) ? group2 : group1;
+        if (!split && from.getPanes().size() < 2) {
+            flash("タブが1枚だけのときは移動できません（先に「画面を分割」をどうぞ）");
+            return;
+        }
+        from.removePane(pane);
+        if (!split) {
+            split = true;
+            layoutGroups();
+        }
+        to.addPane(pane);
+        setActiveGroup(to);
+        tidyGroups();
+    }
+
+    // ---------- 書式 ----------
+
+    /** 横書きと縦書きを入れ替える。文章・保存先・未保存の状態は引き継ぐ。 */
+    private void switchWriting() {
+        EditorPane old = currentPane();
+        if (old == null || old.getMode() == EditorPane.Mode.KJ) {
+            flash("KJ法ボードは、縦書き・横書きに切り替えられません");
+            return;
+        }
+        EditorPane fresh;
+        if (old.getMode() == EditorPane.Mode.TEXT) {
+            VerticalTextPane vertical = new VerticalTextPane(old.getEditorFont());
+            vertical.loadText(old.toPlainText());
+            fresh = vertical;
+        } else {
+            TextEditorPane text = new TextEditorPane(old.getEditorFont());
+            text.loadText(old.toPlainText());
+            fresh = text;
+        }
+        fresh.setListener(this);
+        fresh.setRawFile(old.isRawFile());
+        fresh.setPath(old.getPath());
+        fresh.setDirty(old.isDirty());
+        activeGroup.replacePane(old, fresh);
+        SwingUtilities.invokeLater(fresh::focusEditor);
+    }
+
+    private void zoom(int direction) {
+        EditorPane pane = currentPane();
+        if (pane == null) {
+            return;
+        }
+        Font font = pane.getEditorFont();
+        int step = Math.max(2, font.getSize() / 8);
+        int size = Math.max(10, Math.min(160, font.getSize() + direction * step));
+        pane.setEditorFont(font.deriveFont((float) size));
+        flash("文字の大きさ: " + size);
+    }
+
+    private void chooseFont() {
+        EditorPane pane = currentPane();
+        if (pane == null) {
+            return;
+        }
+        Font current = pane.getEditorFont();
+
+        // Java がどの環境でも持っている名前と、このパソコンに入っている日本語フォントを候補にする
+        Set<String> names = new LinkedHashSet<>(List.of("Monospaced", "SansSerif", "Serif", "Dialog"));
+        Set<String> installed = new LinkedHashSet<>(Arrays.asList(
+                GraphicsEnvironment.getLocalGraphicsEnvironment().getAvailableFontFamilyNames()));
+        for (String candidate : new String[]{"Noto Sans CJK JP", "Noto Serif CJK JP", "Noto Sans Mono CJK JP",
+            "IPAGothic", "IPAMincho", "Yu Gothic", "Yu Mincho", "MS Gothic", "MS Mincho", "Hiragino Sans"}) {
+            if (installed.contains(candidate)) {
+                names.add(candidate);
+            }
+        }
+        names.add(current.getFamily());
+
+        Set<Integer> sizes = new java.util.TreeSet<>(List.of(14, 18, 24, 32, 40, 48, 64, 80));
+        sizes.add(current.getSize());
+
+        JComboBox<String> nameBox = new JComboBox<>(names.toArray(new String[0]));
+        nameBox.setSelectedItem(current.getFamily());
+        JComboBox<Integer> sizeBox = new JComboBox<>(sizes.toArray(new Integer[0]));
+        sizeBox.setSelectedItem(current.getSize());
 
         JPanel panel = new JPanel();
         panel.add(new JLabel("フォント:"));
@@ -577,165 +713,12 @@ public class EditorFrame extends JFrame {
         panel.add(new JLabel("サイズ:"));
         panel.add(sizeBox);
 
-        int result = JOptionPane.showConfirmDialog(this, panel, "フォント変更",
+        int result = JOptionPane.showConfirmDialog(this, panel, "フォント",
                 JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
         if (result == JOptionPane.OK_OPTION) {
-            String name = (String) nameBox.getSelectedItem();
-            int size = (Integer) sizeBox.getSelectedItem();
-            area.setFont(new Font(name, Font.PLAIN, size));
+            pane.setEditorFont(new Font((String) nameBox.getSelectedItem(), Font.PLAIN,
+                    (Integer) sizeBox.getSelectedItem()));
         }
-    }
-
-    private void setDialogFont(int size) {
-        Font font = new Font("Dialog", Font.PLAIN, size);
-        UIManager.put("OptionPane.messageFont", font);   // 確認・エラーダイアログの本文
-        UIManager.put("OptionPane.buttonFont", font);    // ダイアログのボタン
-        UIManager.put("Label.font", font);               // ラベル（「ファイル名」「ファイルの種類」など）
-        UIManager.put("Button.font", font);              // 「保存」「キャンセル」などのボタン
-        UIManager.put("ComboBox.font", font);            // ファイルの種類の選択欄
-        UIManager.put("List.font", font);                // ファイル一覧
-        UIManager.put("Table.font", font);               // 詳細表示のファイル一覧
-        UIManager.put("TextField.font", font);           // ファイル名の入力欄
-        UIManager.put("Menu.font", font);                // メニューの文字
-    }
-
-    private void markDirty() {
-        dirty = true;
-        updateTitle();
-    }
-
-    private void markSaved() {
-        dirty = false;
-        updateTitle();
-    }
-
-    private void updateTitle() {
-        String name = (currentPath == null) ? "無題" : currentPath.getFileName().toString();
-        String mark = dirty ? " *" : "";
-        setTitle(name + mark + " - DATUM-Editor");
-    }
-
-    private void newFile() {
-        if (!confirmDiscardChanges()) {
-            return;                     // 「キャンセル」なら何もしない
-        }
-        area.setText("");               // テキストを空にする
-        undoManager.discardAllEdits();  // 入れ替えた操作は、元に戻す対象から外す
-        currentPath = null;             // 保存先をリセットする（次の保存は名前を付けて保存になる）
-        markSaved();                    // 未保存マークを消す（setText で dirty が立つので、最後に戻す）
-    }
-
-    private void openFile() {
-        if (!confirmDiscardChanges()) {
-            return;
-        }
-
-        JFileChooser fileChooser = new JFileChooser();
-        int result = fileChooser.showOpenDialog(this);
-        if (result != JFileChooser.APPROVE_OPTION) {
-            return;
-        }
-
-        Path path = fileChooser.getSelectedFile().toPath();
-        try {
-            String text = fileService.read(path);
-            area.setText(text);                 // 中身をテキストエリアに入れる
-            undoManager.discardAllEdits();      // 入れ替えた操作は、元に戻す対象から外す
-            currentPath = path;                 // 開いたファイルを保存先として覚える
-            markSaved();                        // setText で dirty が立つので、最後に戻す
-        } catch (IOException ex) {
-            JOptionPane.showMessageDialog(this,
-                    "開けませんでした: " + ex.getMessage(),
-                    "エラー",
-                    JOptionPane.ERROR_MESSAGE);
-        }
-    }
-
-    private void saveFile() {
-        if (currentPath == null) {
-            saveFileAs();
-            return;
-        }
-
-        try {
-            fileService.save(area.getText(), currentPath);
-            markSaved();
-            JOptionPane.showMessageDialog(this, "保存しました: " + currentPath.toAbsolutePath());
-        } catch (IOException ex) {
-            JOptionPane.showMessageDialog(this, "保存できませんでした: " + ex.getMessage(),
-                    "エラー", JOptionPane.ERROR_MESSAGE);
-        }
-    }
-
-    // 保存に関するUIと振る舞いの記述
-    private void saveFileAs() {
-        JFileChooser fileChooser = new JFileChooser();
-        FileNameExtensionFilter txtFilter = new FileNameExtensionFilter("テキスト(*.txt)", "txt");
-        FileNameExtensionFilter jsonFilter = new FileNameExtensionFilter("JSON(*.json)", "json");
-
-        fileChooser.addChoosableFileFilter(txtFilter);
-        fileChooser.addChoosableFileFilter(jsonFilter);
-        fileChooser.setFileFilter(txtFilter);               // 初期の形式
-        fileChooser.setAcceptAllFileFilterUsed(false);      // すべてのファイルは出さない
-
-        int result = fileChooser.showSaveDialog(this);
-        if (result != JFileChooser.APPROVE_OPTION) {
-            return;
-        }
-
-        FileNameExtensionFilter selected = (FileNameExtensionFilter) fileChooser.getFileFilter();
-        String ext = selected.getExtensions()[0];
-        String name = fileChooser.getSelectedFile().toString();
-        if (!name.toLowerCase().endsWith("." + ext)) {
-            name = name + "." + ext;
-        }
-
-        Path path = Path.of(name);
-        if (!confirmOverwrite(path)) {
-            return;
-        }
-        // 中身を保存する。失敗したらエラーを表示する
-        try {
-            fileService.save(area.getText(), path);
-            currentPath = path;
-            markSaved();
-            JOptionPane.showMessageDialog(this, "保存しました: " + path.toAbsolutePath());
-        } catch (IOException ex) {
-            JOptionPane.showMessageDialog(this, "保存できませんでした: " + ex.getMessage(),
-                    "エラー", JOptionPane.ERROR_MESSAGE);
-        }
-    }
-
-    // 保存の際同じ名前のファイルがないかの判定
-    private boolean confirmOverwrite(Path path) {
-        if (!path.toFile().exists()) {
-            return true;            // 同名なし　判定OK
-        }
-        int answer = JOptionPane.showConfirmDialog(this,
-                path.getFileName() + " は既にあります。上書きしますか？",
-                "上書きの確認",
-                JOptionPane.YES_NO_OPTION,
-                JOptionPane.WARNING_MESSAGE);
-        return answer == JOptionPane.YES_OPTION;    // はい の場合だけ true
-    }
-
-    private boolean confirmDiscardChanges() {
-        if (!dirty) {
-            return true;
-        }
-        int answer = JOptionPane.showConfirmDialog(this,
-                "変更を保存しますか？",
-                "確認",
-                JOptionPane.YES_NO_CANCEL_OPTION,
-                JOptionPane.WARNING_MESSAGE);
-
-        if (answer == JOptionPane.YES_OPTION) {
-            saveFile();         // 保存する
-            return !dirty;      // 保存に成功して dirty が false になったときだけ閉じる
-        }
-        if (answer == JOptionPane.NO_OPTION) {
-            return true;        // 保存せずに閉じる
-        }
-        return false;           // キャンセル、またはダイアログを閉じた場合は閉じない
+        pane.focusEditor();
     }
 }

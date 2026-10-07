@@ -2,51 +2,68 @@ package com.example.minieditor;
 
 import java.awt.Color;
 import java.awt.Graphics;
+import java.awt.Insets;
 import java.awt.Rectangle;
+import java.awt.geom.Rectangle2D;
 
 import javax.swing.JTextArea;
+import javax.swing.text.BadLocationException;
 
 /**
- * 1行ごとに、背景を基本色と縞の色で交互に塗るテキストエリア。
- * JTextArea 自体には「行ごとの背景色」という機能がないため、
- * paintComponent を上書きして、文字を描く前に縞模様を描いている。
+ * 背景を自分で描くテキストエリア。
+ * 1行おきの縞模様と、カーソルのある行の強調を、文字より先に描いている。
+ * （JTextArea には「行ごとの背景色」という機能がないため、paintComponent を上書きする）
  */
 public class StripedTextArea extends JTextArea {
 
-    private final Color stripeColor;
-
-    public StripedTextArea(Color backgroundColor, Color stripeColor) {
-        this.stripeColor = stripeColor;
-        setOpaque(false);              // 自動の塗りつぶしを止めて、自分で背景を描く
-        setBackground(backgroundColor);
+    public StripedTextArea() {
+        setOpaque(false);                       // 自動の塗りつぶしを止めて、自分で背景を描く
+        setBackground(Theme.BG);
+        setForeground(Theme.FG);
+        setCaretColor(Color.WHITE);
+        setSelectionColor(Theme.SELECTION);
+        setSelectedTextColor(Color.WHITE);
+        setMargin(new Insets(4, 12, 4, 12));
     }
 
     @Override
     protected void paintComponent(Graphics g) {
-        paintStripes(g);
-        super.paintComponent(g);        // 縞の上に、文字やハイライトを描かせる
+        paintBackground(g);
+        super.paintComponent(g);                // 背景の上に、文字やハイライトを描かせる
     }
 
-    private void paintStripes(Graphics g) {
+    private void paintBackground(Graphics g) {
         Rectangle visible = getVisibleRect();
-
-        // まず全体を基本色で塗る
         g.setColor(getBackground());
         g.fillRect(visible.x, visible.y, visible.width, visible.height);
 
-        int lineHeight = getRowHeight();
-        if (lineHeight <= 0) {
+        int rowHeight = getRowHeight();
+        if (rowHeight <= 0) {
             return;
         }
+        int top = getInsets().top;
 
-        int lastLine = Math.max(getLineCount() - 1, 0);
-        int startLine = visible.y / lineHeight;
-        int endLine = Math.min((visible.y + visible.height) / lineHeight, lastLine);
+        if (Theme.stripes) {
+            g.setColor(Theme.BG_STRIPE);
+            int first = Math.max((visible.y - top) / rowHeight, 0);
+            int last = (visible.y + visible.height - top) / rowHeight;
+            for (int row = first; row <= last; row++) {
+                if (row % 2 == 1) {
+                    g.fillRect(visible.x, top + row * rowHeight, visible.width, rowHeight);
+                }
+            }
+        }
 
-        g.setColor(stripeColor);
-        for (int line = startLine; line <= endLine; line++) {
-            if (line % 2 == 1) {
-                g.fillRect(visible.x, line * lineHeight, visible.width, lineHeight);
+        // カーソルのある行を、少し明るくする（範囲選択中は、選択の色を優先する）
+        if (getSelectionStart() == getSelectionEnd()) {
+            try {
+                Rectangle2D caret = modelToView2D(getCaretPosition());
+                if (caret != null) {
+                    g.setColor(Theme.CURRENT_LINE);
+                    g.fillRect(visible.x, (int) caret.getY(), visible.width, (int) caret.getHeight());
+                }
+            } catch (BadLocationException ex) {
+                // カーソル位置は必ず文書の中にあるので、通常は起きない
             }
         }
     }

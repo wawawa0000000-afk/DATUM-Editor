@@ -12,8 +12,9 @@ public class Main {
         // Swing の部品は必ず「イベントディスパッチスレッド（EDT）」で作る必要がある。
         // invokeLater でその手順を予約し、画面を作って表示する。
         SwingUtilities.invokeLater(() -> {
+            Theme.apply();              // 色とフォントは、部品を作る前に決めておく
             EditorFrame frame = new EditorFrame();
-            frame.setVisible(true); 
+            frame.setVisible(true);
         });
     }
 }
