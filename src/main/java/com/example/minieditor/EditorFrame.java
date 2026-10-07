@@ -66,6 +66,17 @@ public class EditorFrame extends JFrame {
         // テキストを入力する部品。フォントは部品（JTextArea）ごとに設定する。               
         area.setFont(new Font("Monospaced", Font.PLAIN, 48));
         area.setForeground(Color.WHITE);    // 文字の色を白にする
+
+        // JTextArea は Ctrl+H に「1文字削除」が既定で割り当てられているため、
+        // 本文にカーソルがあっても置換バーが開くように、上書きする。
+        area.getInputMap(JComponent.WHEN_FOCUSED).put(
+                KeyStroke.getKeyStroke(KeyEvent.VK_H, InputEvent.CTRL_DOWN_MASK), "toggleReplace");
+        area.getActionMap().put("toggleReplace", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                toggleReplaceBar();
+            }
+        });
         area.setCaretColor(Color.WHITE);    // カーソルの色も白にする（黒背景だと見えなくなるため）
 
         area.getDocument().addDocumentListener(new DocumentListener() {
@@ -147,6 +158,7 @@ public class EditorFrame extends JFrame {
     private void createFindBar() {
         JButton closeButton = new JButton("X");
         closeButton.addActionListener(e -> hideFindBar());
+        bindEnterToClick(closeButton);
 
         JLabel findLabel = new JLabel("検索:");
         findLabel.setForeground(Color.WHITE);
@@ -190,9 +202,11 @@ public class EditorFrame extends JFrame {
 
         JButton replaceOneButton = new JButton("置換");
         replaceOneButton.addActionListener(e -> replaceOne());
+        bindEnterToClick(replaceOneButton);
 
         JButton replaceAllButton = new JButton("すべて置換");
         replaceAllButton.addActionListener(e -> replaceAll());
+        bindEnterToClick(replaceAllButton);
 
         replaceBar.setBackground(Color.BLACK);
         replaceBar.add(replaceLabel);
@@ -243,11 +257,20 @@ public class EditorFrame extends JFrame {
     private void toggleReplaceBar() {
         searchPanel.setVisible(true);
         replaceBar.setVisible(!replaceBar.isVisible());
-        if (replaceBar.isVisible()) {
-            replaceField.requestFocusInWindow();
-        } else {
-            findField.requestFocusInWindow();
-        }
+        findField.requestFocusInWindow();   // まず「検索」欄から入力してもらう
+    }
+
+    // ボタンにカーソルが合っているとき、Enter でも押せるようにする
+    // （JButton は既定では Space にしか反応しないため）
+    private void bindEnterToClick(JButton button) {
+        button.getInputMap(JComponent.WHEN_FOCUSED)
+                .put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "pressButton");
+        button.getActionMap().put("pressButton", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                button.doClick();
+            }
+        });
     }
 
     // 今、ハイライトしている場所を、置換欄の文字で置き換える
@@ -267,9 +290,13 @@ public class EditorFrame extends JFrame {
         }
 
         String replacement = replaceField.getText();
+        int replacedStart = lastMatchStart;
         area.replaceRange(replacement, lastMatchStart, lastMatchEnd);
-        lastMatchEnd = lastMatchStart + replacement.length();
-        findNext();              // 置換した続きから、次を探す
+        int replacedEnd = replacedStart + replacement.length();
+        lastMatchEnd = replacedEnd;
+
+        findNext();                                     // 次の一致を探して、色を塗り直す
+        highlightReplaced(replacedStart, replacedEnd);   // 置き換えた場所も、色を足す
     }
 
     // 一致するものを、すべて置き換える
@@ -286,10 +313,40 @@ public class EditorFrame extends JFrame {
         }
 
         String replacement = replaceField.getText();
-        area.setText(text.replace(keyword, replacement));
+
+        // 置き換えながら、新しい文章の中で「置き換えた場所」を覚えておく
+        StringBuilder result = new StringBuilder();
+        List<Integer> replacedPositions = new ArrayList<>();
+        int cursor = 0;
+        for (int pos : positions) {
+            result.append(text, cursor, pos);           // 一致の前の部分はそのまま
+            replacedPositions.add(result.length());     // 今から置き換える場所を覚える
+            result.append(replacement);
+            cursor = pos + keyword.length();
+        }
+        result.append(text.substring(cursor));           // 最後の一致より後ろの部分
+
+        area.setText(result.toString());
         countLabel.setText(positions.size() + " 件を置換しました");
         lastMatchStart = 0;
         lastMatchEnd = 0;
+
+        for (int start : replacedPositions) {
+            highlightReplaced(start, start + replacement.length());
+        }
+    }
+
+    // 置き換えた場所を、緑で色づける（検索のハイライトは消さず、足す）
+    private void highlightReplaced(int start, int end) {
+        if (start >= end) {
+            return;          // 空文字に置き換えたときは、塗る範囲がない
+        }
+        try {
+            area.getHighlighter().addHighlight(start, end,
+                    new DefaultHighlighter.DefaultHighlightPainter(new Color(0, 160, 0))); // 緑
+        } catch (BadLocationException ex) {
+            // 通常は起きない
+        }
     }
 
     private void findNext() {
@@ -320,7 +377,7 @@ public class EditorFrame extends JFrame {
 
         lastMatchStart = index;
         lastMatchEnd = index + keyword.length();
-        highlightMatch(lastMatchStart, lastMatchEnd);
+        highlightAll(positions, keyword.length(), lastMatchStart);
     }
 
     // 一致する場所を、すべて先頭から順に集める
@@ -357,13 +414,18 @@ public class EditorFrame extends JFrame {
         return positions.get(positions.size() - 1);
     }
 
-    // 見つかった場所に、直接色を塗る
-    private void highlightMatch(int start, int end) {
+    // 一致した場所をすべて塗る。今いる場所だけ、明るい水色にする
+    private void highlightAll(List<Integer> positions, int length, int currentStart) {
+        area.getHighlighter().removeAllHighlights();
         try {
-            area.getHighlighter().removeAllHighlights();
-            area.getHighlighter().addHighlight(start, end,
-                    new DefaultHighlighter.DefaultHighlightPainter(new Color(0, 200, 255))); // 水色
-            area.setCaretPosition(end);
+            for (int start : positions) {
+                Color color = (start == currentStart)
+                        ? new Color(0, 200, 255)     // 今いる場所：明るい水色
+                        : new Color(0, 80, 110);      // それ以外：暗い水色
+                area.getHighlighter().addHighlight(start, start + length,
+                        new DefaultHighlighter.DefaultHighlightPainter(color));
+            }
+            area.setCaretPosition(currentStart + length);
         } catch (BadLocationException ex) {
             // text.indexOf で得た位置なので、通常は起きない
         }
