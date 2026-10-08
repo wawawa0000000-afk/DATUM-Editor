@@ -1,0 +1,29 @@
+﻿DATUM-Editor の起動のしかた
+============================
+
+■ 必要なもの
+Java（JDK 17 以上）。入っていない場合は https://adoptium.net/ から入れてください。
+
+■ Windows
+「DATUM-Editor.bat」をダブルクリックします。
+・「Windows によって PC が保護されました」と出たら、「詳細情報」→「実行」を選びます。
+・「DATUM-Editor.sh」は Linux 用です。Windows では使いません。
+
+■ Linux
+ターミナルを開いて、このフォルダで次を実行します。
+
+    sh DATUM-Editor.sh
+
+・ファイル管理ソフトで「DATUM-Editor.sh」をダブルクリックすると、
+  実行されずに中身が表示されることがあります。その場合は、上のようにターミナルから実行してください。
+
+■ うまくいかないとき（Windows / Linux 共通）
+このフォルダで、次を実行してください。
+
+    java -jar minieditor.jar
+
+「java が見つからない」という意味のメッセージが出たら、Java が入っていません。
+
+■ そのほか
+使い方は README.md、利用条件は LICENSE をご覧ください。
+連絡先: wazaseisakujo@gmail.com

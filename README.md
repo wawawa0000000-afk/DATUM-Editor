@@ -33,6 +33,21 @@ Java で書いてあるので、同じ `minieditor.jar` が Windows・macOS・Li
 
 `~/Desktop/DATUM-Editor.desktop` のようなランチャーを置き、`Exec=` に `java -jar <minieditor.jar の場所>` を書きます。
 
+### 配布用のファイルを作る
+
+先に `mvn package` をしてから、次のスクリプトを実行すると、`dist/` に配布用のファイルができます。どれも Linux の上で作れます。
+
+| 作るもの | スクリプト | 使う人の側 |
+|---|---|---|
+| Windows 用 ZIP（Java 同梱） | `sh packaging/build-windows-zip.sh` | 展開して `DATUM-Editor.bat` をダブルクリック。`Create-Desktop-Shortcut.bat` でデスクトップにアイコン |
+| Linux 用 `.deb`（Java 同梱） | `sh packaging/build-linux-deb.sh` | `sudo apt install ./ファイル名.deb`。アプリのメニューに登録される |
+| Linux 用 `.tar.gz`（Java 同梱） | `sh packaging/build-linux-portable.sh` | 展開して `./bin/DATUM-Editor`。`sh Add-To-Menu.sh` でメニューとデスクトップにアイコン |
+| どの OS でも使える ZIP（Java は別に必要） | `minieditor.jar` と起動ファイルをまとめる | `START-HERE.txt` のとおり |
+
+- Windows 用 ZIP は、Windows 向けの Java 実行環境（Eclipse Temurin の JRE）をダウンロードして同梱します。ダウンロードしたファイルは、公開されている検証値（SHA-256）と照らしてから使います。
+- Linux 用は、JDK に入っている `jpackage` で、ビルドに使った JDK の実行環境を同梱します。
+- 同梱する Java 実行環境は OpenJDK で、GPLv2（クラスパス例外付き）です。利用条件のファイルは、配布物の中の `runtime`（または `lib/runtime`）フォルダに入っています。DATUM-Editor 自体のコードは MIT ライセンスのままです。
+
 ## 機能一覧
 
 ### 文書の種類
@@ -189,7 +204,9 @@ src/main/java/com/example/minieditor/
 └── FlatScrollBarUI.java    細いスクロールバー
 
 src/main/resources/icon.png  アイコン
-DATUM-Editor.bat             Windows 用の起動ファイル
+DATUM-Editor.bat / .sh       起動ファイル（Windows / Linux）
+START-HERE.txt               ZIP に入れる、起動のしかたの説明
+packaging/                   配布用のファイル（Java 同梱）を作るスクリプトと、同梱する起動ファイル・説明・アイコン
 ```
 
 ## JSON の形式
