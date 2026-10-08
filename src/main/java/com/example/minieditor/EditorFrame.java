@@ -71,6 +71,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     private final JLabel statusLeft = new JLabel(" ");
     private final JLabel statusRight = new JLabel(" ");
     private final JCheckBoxMenuItem wrapItem = new JCheckBoxMenuItem("折り返し");
+    private final JCheckBoxMenuItem manuscriptItem = new JCheckBoxMenuItem("原稿用紙（20字×20行）", true);
     private String message;                     // ステータスバーに一時的に出す文
     private final Timer messageTimer = new Timer(4000, e -> {
         message = null;
@@ -145,9 +146,10 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         JMenu file = new JMenu("ファイル");
         file.add(item("新規（テキスト）", key(KeyEvent.VK_N, CTRL), () -> newDocument(EditorPane.Mode.TEXT)));
         file.add(item("新規（縦書き）", key(KeyEvent.VK_N, CTRL | SHIFT), () -> newDocument(EditorPane.Mode.VERTICAL)));
-        file.add(item("新規（KJ法ボード）", key(KeyEvent.VK_K, CTRL | SHIFT), () -> newDocument(EditorPane.Mode.KJ)));
+        file.add(item("新規（カードボード）", key(KeyEvent.VK_K, CTRL | SHIFT), () -> newDocument(EditorPane.Mode.BOARD)));
         file.addSeparator();
-        file.add(item("開く…", key(KeyEvent.VK_O, CTRL), this::openFile));
+        file.add(item("開く…", key(KeyEvent.VK_O, CTRL), () -> openFile(false)));
+        file.add(item("縦書きで開く…", key(KeyEvent.VK_O, CTRL | SHIFT), () -> openFile(true)));
         file.add(item("保存", key(KeyEvent.VK_S, CTRL), () -> save(currentPane())));
         file.add(item("名前を付けて保存…", key(KeyEvent.VK_S, CTRL | SHIFT), () -> saveAs(currentPane())));
         file.add(item("PDF として書き出す…", key(KeyEvent.VK_P, CTRL | SHIFT), this::exportPdf));
@@ -182,6 +184,20 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         });
         format.add(wrapItem);
         format.add(item("横書き ⇔ 縦書き を切り替え", key(KeyEvent.VK_T, CTRL | SHIFT), this::switchWriting));
+        manuscriptItem.setAccelerator(key(KeyEvent.VK_G, CTRL | SHIFT));
+        manuscriptItem.addActionListener(e -> {
+            if (currentPane() instanceof VerticalTextPane vertical) {
+                vertical.setManuscript(manuscriptItem.isSelected());
+            } else {
+                manuscriptItem.setSelected(true);
+                flash("原稿用紙の表示は、縦書きの文書で使えます");
+            }
+        });
+        format.add(manuscriptItem);
+        format.addSeparator();
+        format.add(item("ルビ（ふりがな）を振る…", key(KeyEvent.VK_R, CTRL), this::editRuby));
+        format.add(item("傍点を付ける", key(KeyEvent.VK_R, CTRL | SHIFT), this::addEmphasis));
+        format.add(item("ルビ・傍点を外す", null, this::removeRuby));
 
         JMenu view = new JMenu("表示");
         view.add(item("画面を分割 / 分割をやめる", key(KeyEvent.VK_BACK_SLASH, CTRL), this::toggleSplit));
@@ -198,22 +214,22 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         });
         view.add(stripeItem);
 
-        // KJ法ボード専用の操作。ほかの種類の文書を開いているときは、案内を出すだけにする
+        // カードボード専用の操作。ほかの種類の文書を開いているときは、案内を出すだけにする
         JMenu boardMenu = new JMenu("ボード");
         boardMenu.add(item("カードを一括追加…", key(KeyEvent.VK_B, CTRL | SHIFT), this::bulkAddCards));
-        boardMenu.add(item("複製", key(KeyEvent.VK_D, CTRL), () -> withBoard(KjPane::duplicateSelected)));
-        boardMenu.add(item("削除", null, () -> withBoard(KjPane::deleteSelected)));
+        boardMenu.add(item("複製", key(KeyEvent.VK_D, CTRL), () -> withBoard(BoardPane::duplicateSelected)));
+        boardMenu.add(item("削除", null, () -> withBoard(BoardPane::deleteSelected)));
         boardMenu.addSeparator();
-        boardMenu.add(item("選んだカードをグループ枠で囲む", key(KeyEvent.VK_G, CTRL), () -> withBoard(KjPane::groupSelected)));
-        boardMenu.add(item("整列", key(KeyEvent.VK_L, CTRL | SHIFT), () -> withBoard(KjPane::tidy)));
-        boardMenu.add(item("色ごとに並べる", null, () -> withBoard(KjPane::arrangeByColor)));
+        boardMenu.add(item("選んだカードをグループ枠で囲む", key(KeyEvent.VK_G, CTRL), () -> withBoard(BoardPane::groupSelected)));
+        boardMenu.add(item("整列", key(KeyEvent.VK_L, CTRL | SHIFT), () -> withBoard(BoardPane::tidy)));
+        boardMenu.add(item("色ごとに並べる", null, () -> withBoard(BoardPane::arrangeByColor)));
         boardMenu.addSeparator();
         boardMenu.add(item("投票する（+1）", key(KeyEvent.VK_UP, CTRL | SHIFT), () -> withBoard(board -> board.vote(1))));
         boardMenu.add(item("投票を取り消す（−1）", key(KeyEvent.VK_DOWN, CTRL | SHIFT), () -> withBoard(board -> board.vote(-1))));
         boardMenu.addSeparator();
         boardMenu.add(item("拡大", null, () -> withBoard(board -> board.zoomBy(1.25))));
         boardMenu.add(item("縮小", null, () -> withBoard(board -> board.zoomBy(0.8))));
-        boardMenu.add(item("全体を表示", key(KeyEvent.VK_0, CTRL), () -> withBoard(KjPane::fitAll)));
+        boardMenu.add(item("全体を表示", key(KeyEvent.VK_0, CTRL), () -> withBoard(BoardPane::fitAll)));
         boardMenu.addSeparator();
         boardMenu.add(item("画像として書き出す（PNG）…", key(KeyEvent.VK_E, CTRL | SHIFT), this::exportBoardImage));
 
@@ -270,20 +286,20 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         }
     }
 
-    /** 今の文書が KJ法ボードのときだけ、操作を実行する。 */
-    private void withBoard(java.util.function.Consumer<KjPane> action) {
-        if (currentPane() instanceof KjPane board) {
+    /** 今の文書が カードボードのときだけ、操作を実行する。 */
+    private void withBoard(java.util.function.Consumer<BoardPane> action) {
+        if (currentPane() instanceof BoardPane board) {
             action.accept(board);
             updateStatus();
         } else {
-            flash("この操作は、KJ法ボードで使えます（ファイル → 新規（KJ法ボード））");
+            flash("この操作は、カードボードで使えます（ファイル → 新規（カードボード））");
         }
     }
 
     /** 複数行をまとめて入力し、1行につき1枚のカードにする。 */
     private void bulkAddCards() {
-        if (!(currentPane() instanceof KjPane board)) {
-            flash("この操作は、KJ法ボードで使えます（ファイル → 新規（KJ法ボード））");
+        if (!(currentPane() instanceof BoardPane board)) {
+            flash("この操作は、カードボードで使えます（ファイル → 新規（カードボード））");
             return;
         }
         JTextArea input = new JTextArea(10, 30);
@@ -302,10 +318,10 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         board.focusEditor();
     }
 
-    /** KJ法ボードを、PNG 画像のファイルに書き出す。 */
+    /** カードボードを、PNG 画像のファイルに書き出す。 */
     private void exportBoardImage() {
-        if (!(currentPane() instanceof KjPane board)) {
-            flash("この操作は、KJ法ボードで使えます（ファイル → 新規（KJ法ボード））");
+        if (!(currentPane() instanceof BoardPane board)) {
+            flash("この操作は、カードボードで使えます（ファイル → 新規（カードボード））");
             return;
         }
         BufferedImage image = board.renderImage();
@@ -368,6 +384,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         updateTitle();
         updateStatus();
         wrapItem.setSelected(currentPane() instanceof TextEditorPane text && text.isWrap());
+        manuscriptItem.setSelected(!(currentPane() instanceof VerticalTextPane vertical) || vertical.isManuscript());
         findBar.paneSwitched();
     }
 
@@ -422,6 +439,11 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     }
 
     @Override
+    public void message(EditorPane pane, String text) {
+        flash(text);
+    }
+
+    @Override
     public void statusChanged(EditorPane pane) {
         if (pane == currentPane()) {
             updateStatus();
@@ -459,7 +481,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         return switch (mode) {
             case TEXT -> new TextEditorPane(Theme.editorFont());
             case VERTICAL -> new VerticalTextPane(Theme.editorFont());
-            case KJ -> new KjPane();
+            case BOARD -> new BoardPane();
         };
     }
 
@@ -473,26 +495,34 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         addPane(activeGroup, createPane(mode));
     }
 
-    private void openFile() {
+    /**
+     * ファイルを選んで開く。
+     * .txt には「縦書きか横書きか」の情報がないので、次のように決める：
+     *   「縦書きで開く」から来たとき、または、今見ている文書が縦書きのとき … 縦書き（原稿用紙）
+     *   それ以外 … 横書き
+     * .json（このアプリの形式）は、保存したときの種類のまま開く。
+     */
+    private void openFile(boolean forceVertical) {
+        boolean vertical = forceVertical || currentPane() instanceof VerticalTextPane;
         JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle(vertical ? "縦書きで開く" : "開く");
         chooser.addChoosableFileFilter(new FileNameExtensionFilter("テキスト / JSON (*.txt, *.json)", "txt", "json"));
         if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
             return;
         }
         Path path = chooser.getSelectedFile().toPath().toAbsolutePath();
 
-        // すでに開いているファイルなら、そのタブを表示するだけにする
+        // すでに開いているファイルは、もう1つ開かずに、そのタブを使う。
+        // （同じファイルを2つのタブで別々に編集すると、後から保存したほうが、先の変更を消してしまうため）
         for (EditorPane open : allPanes()) {
             if (path.equals(open.getPath())) {
-                setActiveGroup(groupOf(open));
-                activeGroup.select(open);
-                open.focusEditor();
+                showAlreadyOpen(open, forceVertical);
                 return;
             }
         }
 
         try {
-            EditorPane pane = paneFromFile(path, fileService.read(path));
+            EditorPane pane = paneFromFile(path, fileService.read(path), vertical);
             EditorPane previous = currentPane();
             pane.setPath(path);
             addPane(activeGroup, pane);
@@ -506,9 +536,31 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         }
     }
 
+    /**
+     * すでに開いているタブを表示する。
+     * 「縦書きで開く」から来たときは、そのタブをその場で縦書きに切り替えて、頼まれたことに応える。
+     * タブは1つのままで、未保存の変更もそのまま引き継がれる（ファイルを読み直さない）。
+     */
+    private void showAlreadyOpen(EditorPane open, boolean wantVertical) {
+        setActiveGroup(groupOf(open));
+        activeGroup.select(open);
+        if (!wantVertical) {
+            // ふつうの「開く」は向きを指定していないので、今の表示のまま見せる
+            flash("すでに開いているので、そのタブを表示しました");
+        } else if (open instanceof VerticalTextPane) {
+            flash("すでに縦書きで開いています");
+        } else if (open instanceof TextEditorPane && !open.isRawFile()) {
+            switchWriting();
+            flash("すでに開いていたので、そのタブを縦書きに切り替えました");
+        } else {
+            flash("このタブは「" + open.getMode().label + "」として開いているので、縦書きにはできません");
+        }
+        withPane(EditorPane::focusEditor);
+    }
+
     /** ファイルの中身から、合う種類の文書を作る。 */
     @SuppressWarnings("unchecked")
-    private EditorPane paneFromFile(Path path, String content) {
+    private EditorPane paneFromFile(Path path, String content, boolean vertical) {
         if (isJsonPath(path)) {
             try {
                 if (Json.parse(content) instanceof Map<?, ?> raw
@@ -517,14 +569,20 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
                     return switch (EditorPane.Mode.fromId(Json.str(json, "mode", "text"))) {
                         case TEXT -> TextEditorPane.fromJson(json);
                         case VERTICAL -> VerticalTextPane.fromJson(json);
-                        case KJ -> KjPane.fromJson(json);
+                        case BOARD -> BoardPane.fromJson(json);
                     };
                 }
             } catch (Json.JsonException ex) {
                 flash("JSON として読めなかったので、テキストとして開きました");
             }
         }
-        // このアプリの形式ではないファイルは、中身をそのままテキストとして開く
+        // このアプリの形式ではないファイルは、中身をそのまま文章として開く
+        if (vertical && !isJsonPath(path)) {
+            // 縦書き：「小説家になろう」の記法があれば、ルビとして読み取られる
+            VerticalTextPane pane = new VerticalTextPane(Theme.editorFont());
+            pane.loadText(content);
+            return pane;
+        }
         TextEditorPane pane = new TextEditorPane(Theme.editorFont());
         pane.loadText(content);
         pane.setRawFile(isJsonPath(path));
@@ -554,12 +612,12 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         FileNameExtensionFilter txtFilter = new FileNameExtensionFilter("テキスト (*.txt)", "txt");
         FileNameExtensionFilter jsonFilter = new FileNameExtensionFilter("JSON：設定や配置も保存 (*.json)", "json");
         chooser.setAcceptAllFileFilterUsed(false);
-        boolean kj = pane.getMode() == EditorPane.Mode.KJ;
-        if (!kj) {
-            chooser.addChoosableFileFilter(txtFilter);     // KJ法はカードの位置があるので、JSON だけにする
+        boolean cardBoard = pane.getMode() == EditorPane.Mode.BOARD;
+        if (!cardBoard) {
+            chooser.addChoosableFileFilter(txtFilter);     // カードボードはカードの位置があるので、JSON だけにする
         }
         chooser.addChoosableFileFilter(jsonFilter);
-        boolean preferJson = kj || (pane.getPath() != null && isJsonPath(pane.getPath()) && !pane.isRawFile());
+        boolean preferJson = cardBoard || (pane.getPath() != null && isJsonPath(pane.getPath()) && !pane.isRawFile());
         chooser.setFileFilter(preferJson ? jsonFilter : txtFilter);
         if (pane.getPath() != null) {
             chooser.setSelectedFile(pane.getPath().toFile());
@@ -596,7 +654,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         if (pane == null) {
             return;
         }
-        if (pane.getMode() == EditorPane.Mode.KJ && pane.isEmpty()) {
+        if (pane.getMode() == EditorPane.Mode.BOARD && pane.isEmpty()) {
             flash("カードがないので、書き出すものがありません");
             return;
         }
@@ -801,8 +859,8 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     /** 横書きと縦書きを入れ替える。文章・保存先・未保存の状態は引き継ぐ。 */
     private void switchWriting() {
         EditorPane old = currentPane();
-        if (old == null || old.getMode() == EditorPane.Mode.KJ) {
-            flash("KJ法ボードは、縦書き・横書きに切り替えられません");
+        if (old == null || old.getMode() == EditorPane.Mode.BOARD) {
+            flash("カードボードは、縦書き・横書きに切り替えられません");
             return;
         }
         EditorPane fresh;
@@ -823,9 +881,136 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         SwingUtilities.invokeLater(fresh::focusEditor);
     }
 
+    // ---------- ルビ ----------
+    // 縦書きでは、ルビを文字の属性として持つ（VerticalTextPane に任せる）。
+    // 横書きは文字だけを扱う画面なので、「小説家になろう」の記法を文章の中に書き込む。
+
+    /** 今の文書が、文章（横書き・縦書き）のときだけ返す。カードボードなら、案内を出して null。 */
+    private Searchable textTarget() {
+        if (currentPane() instanceof Searchable s) {
+            return s;
+        }
+        flash("ルビは、テキストと縦書きの文書で使えます");
+        return null;
+    }
+
+    /** position を含んでいるルビを探す（前後の端に接している場合も含む）。 */
+    private static NarouRuby.Span rubyAt(String text, int position) {
+        for (NarouRuby.Span span : NarouRuby.parse(text)) {
+            if (span.start() <= position && position <= span.end()) {
+                return span;
+            }
+        }
+        return null;
+    }
+
+    private static int length(String s) {
+        return s.codePointCount(0, s.length());
+    }
+
+    /** 選んだ文字にルビを振る。何も選ばずにルビの上で実行したときは、そのルビを書き直す。 */
+    private void editRuby() {
+        if (currentPane() instanceof VerticalTextPane vertical) {
+            vertical.beginRubyEdit();   // 縦書きでは、文字のすぐ横に入力欄を出す
+            return;
+        }
+        Searchable target = textTarget();
+        if (target == null) {
+            return;
+        }
+        String text = target.getText();
+        int start = target.getSelectionStart();
+        int end = target.getSelectionEnd();
+        String current = "";
+        if (start == end) {
+            NarouRuby.Span span = rubyAt(text, start);
+            if (span == null) {
+                flash("ルビを振る文字を選んでから、もう一度どうぞ");
+                return;
+            }
+            start = span.start();
+            end = span.end();
+            current = text.substring(span.rubyStart(), span.rubyEnd());
+        }
+        String base = NarouRuby.strip(text.substring(start, end));     // 元から付いていたルビは、いったん外す
+        if (base.isBlank() || base.contains("\n")) {
+            flash("ルビは、1行の中の文字に振れます");
+            return;
+        }
+        if (length(base) > NarouRuby.MAX_LENGTH) {
+            flash("ルビを振れるのは " + NarouRuby.MAX_LENGTH + " 文字までです（小説家になろうの決まり）");
+            return;
+        }
+        Object answer = JOptionPane.showInputDialog(this, "「" + base + "」のふりがな（空にすると、ルビを外します）",
+                "ルビを振る", JOptionPane.PLAIN_MESSAGE, null, null, current);
+        currentPane().focusEditor();
+        if (answer == null) {
+            return;                     // キャンセル
+        }
+        String ruby = answer.toString().strip();
+        if (length(ruby) > NarouRuby.MAX_LENGTH || ruby.contains("》") || ruby.contains("《")) {
+            flash("ふりがなは " + NarouRuby.MAX_LENGTH + " 文字までで、《 》 は使えません");
+            return;
+        }
+        target.replaceRange(ruby.isEmpty() ? base : NarouRuby.format(base, ruby), start, end);
+    }
+
+    /** 選んだ文字に、1文字ずつ傍点（・）を付ける。 */
+    private void addEmphasis() {
+        if (currentPane() instanceof VerticalTextPane vertical) {
+            vertical.emphasizeSelection();
+            return;
+        }
+        Searchable target = textTarget();
+        if (target == null) {
+            return;
+        }
+        int start = target.getSelectionStart();
+        int end = target.getSelectionEnd();
+        if (start == end) {
+            flash("傍点を付ける文字を選んでから、もう一度どうぞ");
+            return;
+        }
+        String base = NarouRuby.strip(target.getText().substring(start, end));
+        target.replaceRange(NarouRuby.emphasize(base), start, end);
+    }
+
+    /** 選んだ範囲（選んでいなければ、カーソルのあるルビ）から、ルビと傍点を外す。 */
+    private void removeRuby() {
+        if (currentPane() instanceof VerticalTextPane vertical) {
+            vertical.removeRubyAtSelection();
+            return;
+        }
+        Searchable target = textTarget();
+        if (target == null) {
+            return;
+        }
+        String text = target.getText();
+        int start = target.getSelectionStart();
+        int end = target.getSelectionEnd();
+        if (start == end) {
+            NarouRuby.Span span = rubyAt(text, start);
+            if (span == null) {
+                flash("外すルビが、カーソルの位置にありません");
+                return;
+            }
+            start = span.start();
+            end = span.end();
+        }
+        String original = text.substring(start, end);
+        String stripped = NarouRuby.strip(original);
+        if (!stripped.equals(original)) {
+            target.replaceRange(stripped, start, end);
+        }
+    }
+
     private void zoom(int direction) {
         EditorPane pane = currentPane();
         if (pane == null) {
+            return;
+        }
+        if (pane instanceof VerticalTextPane vertical && vertical.isManuscript()) {
+            flash("原稿用紙では、マスの大きさはウィンドウの高さに合わせて決まります（大きさを変えるには、原稿用紙の表示を切ってください）");
             return;
         }
         Font font = pane.getEditorFont();

@@ -10,7 +10,7 @@ import java.util.Map;
 import javax.swing.JPanel;
 
 /**
- * タブ1枚ぶんの「文書」。横書き・縦書き・KJ法の3種類が、このクラスを継承する。
+ * タブ1枚ぶんの「文書」。横書き・縦書き・カードボードの3種類が、このクラスを継承する。
  * 保存先（path）と、未保存かどうか（dirty）は、どの種類でも共通なのでここで持つ。
  */
 public abstract class EditorPane extends JPanel {
@@ -19,7 +19,7 @@ public abstract class EditorPane extends JPanel {
     public enum Mode {
         TEXT("text", "テキスト", "文"),
         VERTICAL("vertical", "縦書き", "縦"),
-        KJ("kj", "KJ法", "KJ");
+        BOARD("board", "カードボード", "板");
 
         public final String id;      // JSON に書く名前
         public final String label;   // 画面に出す名前
@@ -32,6 +32,9 @@ public abstract class EditorPane extends JPanel {
         }
 
         public static Mode fromId(String id) {
+            if ("kj".equals(id)) {
+                return BOARD;           // 以前の版で保存したファイルは、この名前で書かれている
+            }
             for (Mode mode : values()) {
                 if (mode.id.equals(id)) {
                     return mode;
@@ -52,6 +55,10 @@ public abstract class EditorPane extends JPanel {
         void titleChanged(EditorPane pane);     // タブの表示（名前・未保存マーク）が変わった
 
         void statusChanged(EditorPane pane);    // カーソル位置などが変わった
+
+        /** 使う人への短いお知らせ（ステータスバーに出す）。 */
+        default void message(EditorPane pane, String text) {
+        }
     }
 
     public static final String FORMAT_NAME = "datum-editor";
@@ -117,6 +124,12 @@ public abstract class EditorPane extends JPanel {
             }
             listener.contentChanged(this);
             listener.statusChanged(this);
+        }
+    }
+
+    protected void fireMessage(String text) {
+        if (listener != null) {
+            listener.message(this, text);
         }
     }
 

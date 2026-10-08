@@ -252,6 +252,16 @@ public class TextEditorPane extends EditorPane implements Searchable {
     }
 
     @Override
+    public int getSelectionStart() {
+        return area.getSelectionStart();
+    }
+
+    @Override
+    public int getSelectionEnd() {
+        return area.getSelectionEnd();
+    }
+
+    @Override
     public void replaceAllText(String text) {
         compound = new CompoundEdit();
         area.setText(text);

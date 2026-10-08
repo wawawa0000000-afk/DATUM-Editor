@@ -18,6 +18,12 @@ public interface Searchable {
 
     void replaceRange(String replacement, int start, int end);
 
+    /** 選んでいる範囲の始まり。選んでいないときは、カーソルの位置。 */
+    int getSelectionStart();
+
+    /** 選んでいる範囲の終わり。選んでいないときは、カーソルの位置。 */
+    int getSelectionEnd();
+
     /** 全文を入れ替える（「元に戻す」1回で戻せるようにする）。 */
     void replaceAllText(String text);
 }

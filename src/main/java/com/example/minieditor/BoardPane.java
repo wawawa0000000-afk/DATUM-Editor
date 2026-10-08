@@ -50,7 +50,7 @@ import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 
 /**
- * KJ法のボード。付箋（カード）を並べ、グループの枠で囲み、矢印でつなぐ。
+ * カードボード。付箋（カード）を並べ、グループの枠で囲み、矢印でつなぐ。
  * Miro や FigJam などのオンラインのボードにある機能を参考にしている。
  *
  * 操作：
@@ -62,7 +62,7 @@ import javax.swing.SwingUtilities;
  *   Ctrl+ホイール              … 拡大・縮小　／　中ボタンでドラッグ … 表示位置を動かす
  *   右クリック                 … 色・投票・矢印・整列・グループ化など
  */
-public class KjPane extends EditorPane {
+public class BoardPane extends EditorPane {
 
     /** カード1枚（グループ枠も、group が true のカードとして扱う）。 */
     private static final class Card {
@@ -114,15 +114,15 @@ public class KjPane extends EditorPane {
     private JTextArea editor;                   // 文字を編集している間だけ出す入力欄
     private Card editingCard;
 
-    public KjPane() {
+    public BoardPane() {
         scrollPane.setBorder(null);
         scrollPane.getViewport().setBackground(Theme.BG);
         scrollPane.setWheelScrollingEnabled(false);     // ホイールは Board 側で受け取る（拡大・縮小のため）
         add(scrollPane, BorderLayout.CENTER);
     }
 
-    public static KjPane fromJson(Map<String, Object> json) {
-        KjPane pane = new KjPane();
+    public static BoardPane fromJson(Map<String, Object> json) {
+        BoardPane pane = new BoardPane();
         pane.load(json);
         pane.setDirty(false);
         return pane;
@@ -712,7 +712,7 @@ public class KjPane extends EditorPane {
 
     @Override
     public Mode getMode() {
-        return Mode.KJ;
+        return Mode.BOARD;
     }
 
     @Override
@@ -1153,11 +1153,11 @@ public class KjPane extends EditorPane {
             if (card == null) {
                 menu.add(item("カードを追加", () -> startEditing(addCard(modelPoint, false))));
                 menu.add(item("グループ枠を追加", () -> startEditing(addCard(modelPoint, true))));
-                menu.add(item("貼り付け（1行につき1枚）", KjPane.this::paste));
+                menu.add(item("貼り付け（1行につき1枚）", BoardPane.this::paste));
                 menu.addSeparator();
-                menu.add(item("すべてのカードを整列", KjPane.this::tidy));
-                menu.add(item("色ごとに並べる", KjPane.this::arrangeByColor));
-                menu.add(item("全体を表示", KjPane.this::fitAll));
+                menu.add(item("すべてのカードを整列", BoardPane.this::tidy));
+                menu.add(item("色ごとに並べる", BoardPane.this::arrangeByColor));
+                menu.add(item("全体を表示", BoardPane.this::fitAll));
             } else {
                 if (only != null) {
                     menu.add(item("文字を編集", () -> startEditing(only)));
@@ -1193,14 +1193,14 @@ public class KjPane extends EditorPane {
                 }
                 menu.addSeparator();
                 if (!selectedNotes().isEmpty()) {
-                    menu.add(item("グループ枠で囲む", KjPane.this::groupSelected));
+                    menu.add(item("グループ枠で囲む", BoardPane.this::groupSelected));
                 }
                 if (selectedNotes().size() >= 2) {
-                    menu.add(item("選んだカードを整列", KjPane.this::tidy));
-                    menu.add(item("選んだカードを色ごとに並べる", KjPane.this::arrangeByColor));
+                    menu.add(item("選んだカードを整列", BoardPane.this::tidy));
+                    menu.add(item("選んだカードを色ごとに並べる", BoardPane.this::arrangeByColor));
                 }
-                menu.add(item("複製", KjPane.this::duplicateSelected));
-                menu.add(item("削除", KjPane.this::deleteSelected));
+                menu.add(item("複製", BoardPane.this::duplicateSelected));
+                menu.add(item("削除", BoardPane.this::deleteSelected));
             }
             menu.show(this, viewPoint.x, viewPoint.y);
         }

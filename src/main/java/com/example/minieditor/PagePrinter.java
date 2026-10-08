@@ -32,11 +32,22 @@ public final class PagePrinter {
 
     /** 作業中の1ページ。画像と、それに描くための Graphics2D をまとめて持つ。 */
     private static final class Sheet {
-        final BufferedImage image = new BufferedImage((int) Math.round(PAGE_WIDTH * PIXELS_PER_POINT),
-                (int) Math.round(PAGE_HEIGHT * PIXELS_PER_POINT), BufferedImage.TYPE_INT_RGB);
-        final Graphics2D g = image.createGraphics();
+        final double width;
+        final double height;
+        final BufferedImage image;
+        final Graphics2D g;
 
         Sheet(Font font) {
+            this(font, PAGE_WIDTH, PAGE_HEIGHT);
+        }
+
+        /** 紙の向きを変えたいとき（原稿用紙は横向き）は、幅と高さを指定する。 */
+        Sheet(Font font, double width, double height) {
+            this.width = width;
+            this.height = height;
+            image = new BufferedImage((int) Math.round(width * PIXELS_PER_POINT),
+                    (int) Math.round(height * PIXELS_PER_POINT), BufferedImage.TYPE_INT_RGB);
+            g = image.createGraphics();
             g.setColor(Color.WHITE);
             g.fillRect(0, 0, image.getWidth(), image.getHeight());
             g.scale(PIXELS_PER_POINT, PIXELS_PER_POINT);    // 以降は、ポイント単位の座標で描ける
@@ -53,9 +64,9 @@ public final class PagePrinter {
             g.setFont(new Font("SansSerif", Font.PLAIN, 9));
             g.setColor(PAGE_NUMBER);
             float width = (float) g.getFont().getStringBounds(number, g.getFontRenderContext()).getWidth();
-            g.drawString(number, (float) (PAGE_WIDTH - width) / 2, (float) (PAGE_HEIGHT - 28));
+            g.drawString(number, (float) (this.width - width) / 2, (float) (this.height - 22));
             g.dispose();
-            writer.addPage(image, PAGE_WIDTH, PAGE_HEIGHT);
+            writer.addPage(image, this.width, this.height);
         }
     }
 
@@ -112,44 +123,111 @@ public final class PagePrinter {
 
     // ---------- 縦書き ----------
 
-    public static void printVertical(String text, String fontFamily, PdfWriter writer) throws IOException {
+    public static void printVertical(String text, List<VerticalLayout.RubyRun> rubies, String fontFamily,
+            PdfWriter writer) throws IOException {
         int size = 12;
         Font font = new Font(fontFamily, Font.PLAIN, size);
         double cellHeight = size * 1.12;                    // 1文字ぶんの高さ
-        double columnWidth = size * 1.8;                    // 1行ぶんの幅（行間を含む）
-        int rowsPerColumn = (int) ((PAGE_HEIGHT - 2 * MARGIN) / cellHeight);
+        double columnWidth = size * 1.9;                    // 1行ぶんの幅（行間とルビのぶんを含む）
+        // 一番下の1文字ぶんは、句読点の「ぶら下げ」用に空けておく
+        int rowsPerColumn = (int) ((PAGE_HEIGHT - 2 * MARGIN) / cellHeight) - 1;
         int columnsPerPage = (int) ((PAGE_WIDTH - 2 * MARGIN) / columnWidth);
 
-        Sheet sheet = new Sheet(font);
-        FontMetrics fm = sheet.g.getFontMetrics();
-        String body = text.replace("\r", "");
-        int column = 0;
-        int row = 0;
-        for (int i = 0; i < body.length(); ) {
-            int codePoint = body.codePointAt(i);
-            String character = new String(Character.toChars(codePoint));
-            i += character.length();
+        // 配置は画面と同じ計算を使う
+        String body = text;
+        VerticalLayout layout = new VerticalLayout(body, rowsPerColumn, rubies);
+        int pages = (layout.totalColumns + columnsPerPage - 1) / columnsPerPage;
 
-            if (column == columnsPerPage) {                 // 左端まで来たら、次の紙の右端から
-                sheet.finish(writer);
-                sheet = new Sheet(font);
-                fm = sheet.g.getFontMetrics();
-                column = 0;
+        int next = 0;                                       // 次に描く文字
+        for (int page = 0; page < pages; page++) {
+            int firstColumn = page * columnsPerPage;
+            int lastColumn = firstColumn + columnsPerPage - 1;
+            Sheet sheet = new Sheet(font);
+            FontMetrics fm = sheet.g.getFontMetrics();
+            VerticalLayout.Place place = new VerticalLayout.Place() {
+                public double centerX(int column) {
+                    return PAGE_WIDTH - MARGIN - (column - firstColumn + 0.5) * columnWidth;
+                }
+
+                public double centerY(int row) {
+                    return MARGIN + (row + 0.5) * cellHeight;
+                }
+            };
+            // 文字は列の順に並んでいるので、このページの最後の列を過ぎたら次のページへ
+            while (next < body.length() && layout.col[next] <= lastColumn) {
+                layout.drawCharacter(sheet.g, fm, next, place.centerX(layout.col[next]),
+                        place.centerY(layout.row[next]), size);
+                next++;
             }
-            if (codePoint == '\n') {
-                column++;
-                row = 0;
-                continue;
-            }
-            double centerX = PAGE_WIDTH - MARGIN - (column + 0.5) * columnWidth;
-            double centerY = MARGIN + (row + 0.5) * cellHeight;
-            VerticalTextPane.drawVerticalCharacter(sheet.g, fm, character, centerX, centerY, size);
-            row++;
-            if (row >= rowsPerColumn) {
-                column++;
-                row = 0;
-            }
+            sheet.g.setColor(INK);
+            layout.drawRubies(sheet.g, font, place, cellHeight, size, size * 0.77, firstColumn, lastColumn);
+            sheet.finish(writer);
         }
-        sheet.finish(writer);
+    }
+
+    // ---------- 原稿用紙（20字×20行） ----------
+
+    /** A4 を横向きにして、400字詰めの原稿用紙として書き出す。1ページが、原稿用紙1枚。 */
+    public static void printManuscript(String text, List<VerticalLayout.RubyRun> rubies, String fontFamily,
+            PdfWriter writer) throws IOException {
+        final int rows = VerticalTextPane.SHEET_ROWS;
+        final int columns = VerticalTextPane.SHEET_COLUMNS;
+        final double width = PAGE_HEIGHT;                   // 横向きなので、幅と高さを入れ替える
+        final double height = PAGE_WIDTH;
+        final double cell = 25;                             // マス1つの大きさ
+        final double strip = 12;                            // ルビ欄の幅
+        final double fold = 14;                             // 中央（10行目と11行目のあいだ）の空き
+        final double pitch = cell + strip;
+        final double side = (width - columns * pitch - fold) / 2;
+        final double top = 34;
+        final Color gridColor = new Color(0xB08D6A);        // マス目の線（茶色）
+        int size = 19;
+        Font font = new Font(fontFamily, Font.PLAIN, size);
+
+        VerticalLayout layout = new VerticalLayout(text, rows, rubies);
+        int pages = Math.max(1, (layout.totalColumns + columns - 1) / columns);
+
+        int next = 0;
+        for (int page = 0; page < pages; page++) {
+            int firstColumn = page * columns;
+            int lastColumn = firstColumn + columns - 1;
+            Sheet sheet = new Sheet(font, width, height);
+            Graphics2D g = sheet.g;
+            VerticalLayout.Place place = new VerticalLayout.Place() {
+                public double centerX(int column) {
+                    int c = column - firstColumn;
+                    return width - side - (c + 1) * pitch - (c >= columns / 2 ? fold : 0) + cell / 2;
+                }
+
+                public double centerY(int row) {
+                    return top + (row + 0.5) * cell;
+                }
+            };
+
+            // マス目とルビ欄
+            g.setColor(gridColor);
+            g.setStroke(new java.awt.BasicStroke(0.6f));
+            for (int c = firstColumn; c <= lastColumn; c++) {
+                double left = place.centerX(c) - cell / 2;
+                for (int r = 0; r < rows; r++) {
+                    g.draw(new java.awt.geom.Rectangle2D.Double(left, top + r * cell, cell, cell));
+                }
+                g.draw(new java.awt.geom.Rectangle2D.Double(left + cell, top, strip, rows * cell));
+            }
+            g.setFont(new Font("SansSerif", Font.PLAIN, 8));
+            g.drawString(rows + "×" + columns, (float) side, (float) (height - 22));
+
+            // 文字とルビ
+            g.setFont(font);
+            g.setColor(INK);
+            FontMetrics fm = g.getFontMetrics();
+            while (next < text.length() && layout.col[next] <= lastColumn) {
+                layout.drawCharacter(g, fm, next, place.centerX(layout.col[next]),
+                        place.centerY(layout.row[next]), size);
+                next++;
+            }
+            layout.drawRubies(g, font, place, cell, size, cell / 2 + strip / 2, firstColumn, lastColumn);
+            sheet.finish(writer);
+        }
     }
 }
