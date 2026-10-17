@@ -101,6 +101,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     private final JCheckBoxMenuItem manuscriptItem = new JCheckBoxMenuItem("原稿用紙（20字×20行）", true);
     private final AppSettings appSettings = AppSettings.load();  // 最後に保存したフォルダなど
     private final WritingStats stats = new WritingStats(appSettings);   // 1日に書いた字数
+    private final GoalMeter goalMeter = new GoalMeter(stats, appSettings, this::updateStatus);  // 目標の進み具合（マス目）
     private final VersionHistory history = new VersionHistory();       // 保存した版の履歴
     private final Map<Path, Instant> lastHistory = new HashMap<>();     // 自動保存で履歴を残した時刻（残しすぎないように）
     private final Recovery recovery = new Recovery();                   // 異常終了に備えた、未保存の文書の控え
@@ -191,7 +192,11 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             label.setForeground(Color.WHITE);
         }
         bar.add(statusLeft, BorderLayout.WEST);
-        bar.add(statusRight, BorderLayout.EAST);
+        JPanel right = new JPanel(new BorderLayout(24, 0));
+        right.setOpaque(false);
+        right.add(statusRight, BorderLayout.CENTER);
+        right.add(goalMeter, BorderLayout.EAST);
+        bar.add(right, BorderLayout.EAST);
         return bar;
     }
 
@@ -1151,6 +1156,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
 
     private void updateStatus() {
         EditorPane pane = currentPane();
+        goalMeter.refresh();
         if (pane == null) {
             statusLeft.setText(message != null ? message : " ");
             statusRight.setText(" ");
@@ -1167,7 +1173,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         }
         String sheets = pane instanceof TextEditorPane text
                 ? "    原稿用紙換算 " + WritingStats.manuscriptSheets(text.getText()) + " 枚" : "";
-        statusRight.setText(pane.statusText() + sheets + "    " + stats.statusText() + "    UTF-8    " + format
+        statusRight.setText(pane.statusText() + sheets + "    UTF-8    " + format
                 + (mcp.isRunning() ? "    AI 連携中" : ""));
     }
 
