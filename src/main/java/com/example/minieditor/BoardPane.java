@@ -647,8 +647,8 @@ public class BoardPane extends EditorPane {
         editor.setLineWrap(true);
         editor.setWrapStyleWord(true);
         editor.setBackground(card.group ? Theme.INPUT : PALETTE[card.color]);
-        editor.setForeground(card.group ? Color.WHITE : new Color(0x1E1E1E));
-        editor.setCaretColor(card.group ? Color.WHITE : Color.BLACK);
+        editor.setForeground(card.group ? Theme.FG_STRONG : new Color(0x1E1E1E));
+        editor.setCaretColor(card.group ? Theme.FG_STRONG : Color.BLACK);
         int pad = (int) Math.round(8 * scale);
         editor.setBorder(BorderFactory.createEmptyBorder(pad, pad, pad, pad));
         // 入力欄は拡大・縮小の外にあるので、位置と大きさに倍率を掛けて合わせる
@@ -1239,7 +1239,7 @@ public class BoardPane extends EditorPane {
             g2.fillRect(clip.x, clip.y, clip.width, clip.height);
 
             // 背景の点（位置の目安）
-            g2.setColor(new Color(0x3A3A3A));
+            g2.setColor(Theme.BOARD_DOT);
             for (int x = clip.x - Math.floorMod(clip.x, 32); x < clip.x + clip.width; x += 32) {
                 for (int y = clip.y - Math.floorMod(clip.y, 32); y < clip.y + clip.height; y += 32) {
                     g2.fillRect(x, y, 2, 2);

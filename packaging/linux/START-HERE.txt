@@ -23,6 +23,10 @@ Java を入れる必要はありません（このフォルダの lib/runtime �
   ~/.local/share/applications/datum-editor.desktop
   デスクトップの DATUM-Editor.desktop
 
+■ AI（Claude など）とつなぐ
+誤字・脱字のチェックや検索、ファイルの整理を、AI に頼めます。
+メニューの「AI 連携 → MCP サーバーを動かす」にチェックを入れると、つなぎ方の案内が出ます。
+
 ■ そのほか
 使い方は README.md、利用条件は LICENSE をご覧ください。
 同梱の Java 実行環境は OpenJDK で、その利用条件は lib/runtime/legal フォルダにあります。

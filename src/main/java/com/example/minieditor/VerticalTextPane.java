@@ -30,6 +30,7 @@ import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 
@@ -99,9 +100,6 @@ public class VerticalTextPane extends EditorPane implements Searchable {
     /** 原稿用紙1枚の、1行の文字数と行数（400字詰め）。 */
     public static final int SHEET_ROWS = 20;
     public static final int SHEET_COLUMNS = 20;
-    private static final Color PAPER = new Color(0x26231F);         // 原稿用紙の紙の色（暗い画面に合わせた色）
-    private static final Color PAPER_CURRENT = new Color(0x34302A); // カーソルのある行
-    private static final Color GRID = new Color(0x7A6248);          // マス目の線（茶色）
     private boolean manuscript = true;
     private List<VerticalLayout.RubyRun> runs = List.of();  // ルビの一覧（文書の属性から作った写し）
 
@@ -811,6 +809,14 @@ public class VerticalTextPane extends EditorPane implements Searchable {
     }
 
     @Override
+    public void select(int start, int end) {
+        reveal(end);
+        anchor = Math.max(0, Math.min(start, text.length()));
+        view.repaint();
+        fireStatusChanged();
+    }
+
+    @Override
     public void replaceRange(String replacement, int start, int end) {
         replace(start, end, replacement);
     }
@@ -828,6 +834,18 @@ public class VerticalTextPane extends EditorPane implements Searchable {
     @Override
     public void replaceAllText(String newText) {
         replace(0, text.length(), newText);
+    }
+
+    @Override
+    public void replaceRanges(List<Replacement> replacements) {
+        // 後ろにあるものから直す（前から直すと、文字数が変わって、後ろの位置がずれてしまうため）
+        List<Replacement> sorted = new ArrayList<>(replacements);
+        sorted.sort(Comparator.comparingInt(Replacement::start).reversed());
+        edit(() -> {
+            for (Replacement r : sorted) {
+                replace(r.start(), r.end(), r.text());
+            }
+        });
     }
 
     // ---------- ルビ（ふりがな） ----------
@@ -1362,7 +1380,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
                 }
                 // 変換中の文字は白くする
                 boolean composing = i >= caret && i < caret + composed.length();
-                g2.setColor(composing ? Color.WHITE : Theme.FG);
+                g2.setColor(composing ? Theme.FG_STRONG : Theme.FG);
                 layout.drawCharacter(g2, fm, i, cell.x + cell.width / 2.0, cell.y + cell.height / 2.0, size);
                 if (composing) {
                     // 変換中の文字の右側に線を引く（縦書きの下線にあたる）
@@ -1388,7 +1406,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
             // カーソル（文字の上に引く横線）
             if (isFocusOwner() && caretVisible) {
                 Rectangle cell = shownCellRect(Math.min(shownCaret(), colOf.length - 1));
-                g2.setColor(Color.WHITE);
+                g2.setColor(Theme.FG_STRONG);
                 g2.fillRect(cell.x + 6, cell.y - 1, cell.width - 12, 3);
             }
             g2.dispose();
@@ -1410,15 +1428,15 @@ public class VerticalTextPane extends EditorPane implements Searchable {
                     continue;
                 }
                 // 紙
-                g2.setColor(PAPER);
+                g2.setColor(Theme.PAPER);
                 g2.fillRect(paperLeft, top - cell / 2, paperRight - paperLeft, gridHeight + cell * 2);
                 for (int col = firstColumn; col <= lastColumn; col++) {
                     int x = columnLeft(col);
                     if (col == caretColumn) {
-                        g2.setColor(PAPER_CURRENT);
+                        g2.setColor(Theme.PAPER_CURRENT);
                         g2.fillRect(x, top, columnWidth(), gridHeight);
                     }
-                    g2.setColor(GRID);
+                    g2.setColor(Theme.GRID);
                     for (int row = 0; row < SHEET_ROWS; row++) {
                         g2.drawRect(x, top + row * cell, cell, cell);       // 文字を書くマス
                     }
@@ -1426,7 +1444,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
                 }
                 // 紙の下に、何枚目かを小さく書く
                 g2.setFont(Theme.small().deriveFont(Math.max(11f, cell * 0.4f)));
-                g2.setColor(GRID);
+                g2.setColor(Theme.GRID);
                 String label = (sheet + 1) + " 枚目";
                 int labelWidth = g2.getFontMetrics().stringWidth(label);
                 g2.drawString(label, (paperLeft + paperRight - labelWidth) / 2, top + gridHeight + cell + cell / 3);

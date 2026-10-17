@@ -63,6 +63,10 @@ public abstract class EditorPane extends JPanel {
 
     public static final String FORMAT_NAME = "datum-editor";
 
+    private static int nextDocumentId = 1;
+
+    /** 開いている文書を見分けるための番号。AI 連携で「どの文書か」を指定するのに使う。 */
+    private final int documentId = nextDocumentId++;
     private Path path;
     private boolean dirty;
     private boolean rawFile;
@@ -75,6 +79,10 @@ public abstract class EditorPane extends JPanel {
 
     public void setListener(Listener listener) {
         this.listener = listener;
+    }
+
+    public int getDocumentId() {
+        return documentId;
     }
 
     public Path getPath() {

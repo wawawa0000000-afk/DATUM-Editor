@@ -66,7 +66,7 @@ public class FindBar extends JPanel {
         caseButton.setToolTipText("大文字と小文字を区別する");
         caseButton.addActionListener(e -> {
             caseSensitive = !caseSensitive;
-            caseButton.setForeground(caseSensitive ? Color.WHITE : Theme.FG_DIM);
+            caseButton.setForeground(caseSensitive ? Theme.FG_STRONG : Theme.FG_DIM);
             caseButton.setBorder(BorderFactory.createCompoundBorder(
                     BorderFactory.createLineBorder(caseSensitive ? Theme.ACCENT : Theme.INPUT),
                     BorderFactory.createEmptyBorder(3, 11, 3, 11)));
@@ -300,7 +300,7 @@ public class FindBar extends JPanel {
         if (findField.getText().isEmpty()) {
             setCount(" ", Theme.FG);
         } else if (positions.isEmpty()) {
-            setCount("見つかりません", new Color(0xF48771));
+            setCount("見つかりません", Theme.ERROR);
         } else {
             setCount((positions.indexOf(current) + 1) + " / " + positions.size() + " 件", Theme.FG);
         }
@@ -315,7 +315,7 @@ public class FindBar extends JPanel {
     }
 
     private void showUnsupported() {
-        setCount("この文書は検索できません", new Color(0xF48771));
+        setCount("この文書は検索できません", Theme.ERROR);
     }
 
     private void clearHighlights() {

@@ -93,7 +93,7 @@ public class LineNumberGutter extends JComponent {
                     break;                      // ここから下は見えていないので、描かない
                 }
                 String number = String.valueOf(line + 1);
-                g2.setColor(line == caretLine ? Color.WHITE : Theme.FG_DIM);
+                g2.setColor(line == caretLine ? Theme.FG_STRONG : Theme.FG_DIM);
                 int x = getWidth() - 14 - fm.stringWidth(number);    // 右にそろえる
                 g2.drawString(number, x, (int) r.getY() + fm.getAscent());
             }

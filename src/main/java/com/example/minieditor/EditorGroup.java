@@ -150,6 +150,12 @@ public class EditorGroup extends JPanel {
         }
     }
 
+    /** タブの帯を出す／隠す（集中モードで隠す）。 */
+    public void setTabsVisible(boolean visible) {
+        stripScroll.setVisible(visible);
+        revalidate();
+    }
+
     /** タブの名前や未保存マークが変わったときに呼ぶ。 */
     public void refreshTabs() {
         rebuild();
@@ -191,7 +197,7 @@ public class EditorGroup extends JPanel {
 
             @Override
             public void mouseEntered(MouseEvent e) {
-                plus.setForeground(Color.WHITE);
+                plus.setForeground(Theme.FG_STRONG);
             }
 
             @Override
@@ -220,13 +226,13 @@ public class EditorGroup extends JPanel {
 
             JLabel title = new JLabel(pane.getTitle());
             title.setFont(Theme.ui());
-            title.setForeground(pane == active ? Color.WHITE : Theme.FG_DIM);
+            title.setForeground(pane == active ? Theme.FG_STRONG : Theme.FG_DIM);
 
             // 未保存のときは ● を出し、マウスを乗せると × に変わる
             String idle = pane.isDirty() ? "●" : "×";
             JLabel close = new JLabel(idle, SwingConstants.CENTER);
             close.setFont(Theme.ui());
-            close.setForeground(pane.isDirty() ? Color.WHITE : Theme.FG_DIM);
+            close.setForeground(pane.isDirty() ? Theme.FG_STRONG : Theme.FG_DIM);
             close.setPreferredSize(new Dimension(34, 28));
             close.setToolTipText("閉じる");
             close.addMouseListener(new MouseAdapter() {
@@ -239,13 +245,13 @@ public class EditorGroup extends JPanel {
                 @Override
                 public void mouseEntered(MouseEvent e) {
                     close.setText("×");
-                    close.setForeground(Color.WHITE);
+                    close.setForeground(Theme.FG_STRONG);
                 }
 
                 @Override
                 public void mouseExited(MouseEvent e) {
                     close.setText(idle);
-                    close.setForeground(pane.isDirty() ? Color.WHITE : Theme.FG_DIM);
+                    close.setForeground(pane.isDirty() ? Theme.FG_STRONG : Theme.FG_DIM);
                 }
             });
 

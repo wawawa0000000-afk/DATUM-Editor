@@ -2,16 +2,22 @@ package com.example.minieditor;
 
 import java.awt.BorderLayout;
 import java.awt.Font;
+import java.awt.Insets;
+import java.awt.Point;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.awt.geom.Rectangle2D;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 
 import javax.swing.JComponent;
 import javax.swing.JScrollPane;
 import javax.swing.KeyStroke;
+import javax.swing.SwingUtilities;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.text.BadLocationException;
@@ -29,6 +35,10 @@ public class TextEditorPane extends EditorPane implements Searchable {
     private final List<Object> highlightTags = new ArrayList<>();
     private CompoundEdit compound;      // 複数の変更を「元に戻す1回ぶん」にまとめるときに使う
     private boolean loading;            // ファイルを読み込んでいる最中か
+    private final JScrollPane scrollPane;
+    private final LineNumberGutter gutter;
+    private boolean focusMode;          // 集中モード（文字の列を中央に寄せ、カーソルの行を画面の真ん中に保つ）
+    private boolean wrapBeforeFocus;
 
     public TextEditorPane(Font font) {
         area.setFont(font);
@@ -48,6 +58,9 @@ public class TextEditorPane extends EditorPane implements Searchable {
         area.addCaretListener(e -> {
             area.repaint();             // カーソルのある行の強調を描き直す
             fireStatusChanged();
+            if (focusMode) {
+                SwingUtilities.invokeLater(this::centerCaret);
+            }
         });
         area.getDocument().addUndoableEditListener(e -> {
             if (loading) {
@@ -65,10 +78,19 @@ public class TextEditorPane extends EditorPane implements Searchable {
         area.getInputMap(JComponent.WHEN_FOCUSED).put(
                 KeyStroke.getKeyStroke(KeyEvent.VK_H, InputEvent.CTRL_DOWN_MASK), "none");
 
-        JScrollPane scrollPane = new JScrollPane(area);
+        scrollPane = new JScrollPane(area);
         scrollPane.setBorder(null);
         scrollPane.getViewport().setBackground(Theme.BG);
-        scrollPane.setRowHeaderView(new LineNumberGutter(area));
+        gutter = new LineNumberGutter(area);
+        scrollPane.setRowHeaderView(gutter);
+        scrollPane.getViewport().addComponentListener(new ComponentAdapter() {
+            @Override
+            public void componentResized(ComponentEvent e) {
+                if (focusMode) {
+                    applyFocusLayout();
+                }
+            }
+        });
         scrollPane.getVerticalScrollBar().setUnitIncrement(24);
         add(scrollPane, BorderLayout.CENTER);
     }
@@ -97,6 +119,69 @@ public class TextEditorPane extends EditorPane implements Searchable {
         loading = false;
         undoManager.discardAllEdits();
         setDirty(false);
+    }
+
+    /**
+     * 集中モードの見た目にする／戻す。
+     * 行番号を隠し、1行 40 字ほどの幅で中央に寄せて折り返し、カーソルの行がいつも画面の真ん中に来るようにする
+     * （タイプライターのように、目線を動かさずに書ける）。
+     */
+    public void setFocusMode(boolean on) {
+        if (on == focusMode) {
+            return;
+        }
+        focusMode = on;
+        if (on) {
+            wrapBeforeFocus = area.getLineWrap();
+            setWrap(true);
+            scrollPane.setRowHeaderView(null);
+            applyFocusLayout();
+            SwingUtilities.invokeLater(this::centerCaret);
+        } else {
+            setWrap(wrapBeforeFocus);
+            scrollPane.setRowHeaderView(gutter);
+            area.setMargin(new Insets(4, 12, 4, 12));
+            area.revalidate();
+        }
+    }
+
+    public boolean isFocusMode() {
+        return focusMode;
+    }
+
+    private void applyFocusLayout() {
+        int width = scrollPane.getViewport().getWidth();
+        int height = scrollPane.getViewport().getHeight();
+        int column = area.getFontMetrics(area.getFont()).charWidth('あ') * 40;
+        int side = Math.max(12, (width - column) / 2);
+        // 上下にも、画面の半分ほどの余白を入れる（最初や最後の行でも、真ん中に来られるように）
+        area.setMargin(new Insets(Math.max(4, height / 2 - area.getFontMetrics(area.getFont()).getHeight()), side,
+                Math.max(4, height / 2), side));
+        area.revalidate();
+    }
+
+    /** カーソルのある行が、画面の縦の真ん中に来るようにスクロールする。 */
+    private void centerCaret() {
+        try {
+            Rectangle2D r = area.modelToView2D(area.getCaretPosition());
+            if (r == null) {
+                return;
+            }
+            int viewHeight = scrollPane.getViewport().getHeight();
+            int y = (int) (r.getCenterY() - viewHeight / 2.0);
+            y = Math.max(0, Math.min(y, area.getHeight() - viewHeight));
+            Point position = scrollPane.getViewport().getViewPosition();
+            if (position.y != y) {
+                scrollPane.getViewport().setViewPosition(new Point(position.x, y));
+            }
+        } catch (BadLocationException ex) {
+            // カーソル位置は必ず文書の中にあるので、通常は起きない
+        }
+    }
+
+    /** カーソルの位置（前回の状態を復元するときに使う）。 */
+    public int getCaretOffset() {
+        return area.getCaretPosition();
     }
 
     public boolean isWrap() {
@@ -245,6 +330,14 @@ public class TextEditorPane extends EditorPane implements Searchable {
     }
 
     @Override
+    public void select(int start, int end) {
+        reveal(end);
+        int length = area.getDocument().getLength();
+        area.select(Math.max(0, Math.min(start, length)), Math.max(0, Math.min(end, length)));
+        area.getCaret().setSelectionVisible(true);
+    }
+
+    @Override
     public void replaceRange(String replacement, int start, int end) {
         compound = new CompoundEdit();
         area.replaceRange(replacement, start, end);
@@ -265,6 +358,18 @@ public class TextEditorPane extends EditorPane implements Searchable {
     public void replaceAllText(String text) {
         compound = new CompoundEdit();
         area.setText(text);
+        finishCompound();
+    }
+
+    @Override
+    public void replaceRanges(List<Replacement> replacements) {
+        // 後ろにあるものから直す（前から直すと、文字数が変わって、後ろの位置がずれてしまうため）
+        List<Replacement> sorted = new ArrayList<>(replacements);
+        sorted.sort(Comparator.comparingInt(Replacement::start).reversed());
+        compound = new CompoundEdit();
+        for (Replacement r : sorted) {
+            area.replaceRange(r.text(), r.start(), r.end());
+        }
         finishCompound();
     }
 

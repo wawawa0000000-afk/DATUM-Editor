@@ -20,9 +20,9 @@ public class StripedTextArea extends JTextArea {
         setOpaque(false);                       // 自動の塗りつぶしを止めて、自分で背景を描く
         setBackground(Theme.BG);
         setForeground(Theme.FG);
-        setCaretColor(Color.WHITE);
+        setCaretColor(Theme.FG_STRONG);
         setSelectionColor(Theme.SELECTION);
-        setSelectedTextColor(Color.WHITE);
+        setSelectedTextColor(Theme.FG_STRONG);
         setMargin(new Insets(4, 12, 4, 12));
     }
 

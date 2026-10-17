@@ -3,9 +3,14 @@ package com.example.minieditor;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
+import java.awt.Dimension;
+import java.awt.FlowLayout;
 import java.awt.Font;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
 import java.awt.GraphicsEnvironment;
 import java.awt.KeyboardFocusManager;
+import java.awt.RenderingHints;
 import java.awt.event.ActionEvent;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
@@ -13,8 +18,12 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -24,10 +33,12 @@ import java.util.Set;
 import javax.imageio.ImageIO;
 import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
+import javax.swing.Box;
 import javax.swing.ImageIcon;
 import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
+import javax.swing.JLayeredPane;
 import javax.swing.JFileChooser;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
@@ -39,6 +50,7 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
 import javax.swing.JTextArea;
+import javax.swing.JToggleButton;
 import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
@@ -49,6 +61,7 @@ import javax.swing.plaf.basic.BasicSplitPaneUI;
  * メインウィンドウ。
  *
  * 画面の構成（上から）：メニュー → 検索バー → タブ付きのエディタ（1つ、または分割して2つ） → ステータスバー
+ * 左にフォルダのサイドバー、右に校正か AI の欄、下にターミナルを、必要なときだけ出す。
  * 文書そのものの処理は EditorPane の各クラスに任せ、ここでは
  * 「どの文書に対して、何をするか」（開く・保存・閉じる・分割など）を受け持つ。
  */
@@ -66,12 +79,51 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     private boolean split = false;
     private int splitOrientation = JSplitPane.HORIZONTAL_SPLIT;
     private final JPanel editorArea = new JPanel(new BorderLayout());
+    private final JPanel center = new JPanel(new BorderLayout());     // 検索バー・エディタ・ターミナルを置く場所
+
+    private TerminalPane terminal;              // 下に出すターミナル。初めて表示するときに作る
+    private boolean terminalVisible = false;
+    private final JToggleButton terminalButton = createToolButton(">_", "ターミナルを表示する / 隠す（Ctrl+J）",
+            () -> setTerminalVisible(!terminalVisible));
+    private final JToggleButton folderButton = createToolButton("フォルダ", "フォルダのサイドバーを表示する / 隠す（Ctrl+Shift+E）",
+            this::toggleSidebar);
+    private final JToggleButton proofButton = createToolButton("校正", "校正の欄を表示する / 隠す（F7）",
+            () -> showRight("proof"));
+    private final JToggleButton aiButton = createToolButton("AI", "AI の会話欄を表示する / 隠す（Ctrl+Shift+A）",
+            () -> showRight("ai"));
+    private final JToggleButton focusButton = createToolButton("集中", "集中モード（F11）", this::toggleFocusMode);
+    private final JCheckBoxMenuItem terminalItem = new JCheckBoxMenuItem("ターミナル");
 
     private final FindBar findBar = new FindBar(this::currentPane);
     private final JLabel statusLeft = new JLabel(" ");
     private final JLabel statusRight = new JLabel(" ");
     private final JCheckBoxMenuItem wrapItem = new JCheckBoxMenuItem("折り返し");
     private final JCheckBoxMenuItem manuscriptItem = new JCheckBoxMenuItem("原稿用紙（20字×20行）", true);
+    private final AppSettings appSettings = AppSettings.load();  // 最後に保存したフォルダなど
+    private final WritingStats stats = new WritingStats(appSettings);   // 1日に書いた字数
+    private final VersionHistory history = new VersionHistory();       // 保存した版の履歴
+    private final Map<Path, Instant> lastHistory = new HashMap<>();     // 自動保存で履歴を残した時刻（残しすぎないように）
+    private final Recovery recovery = new Recovery();                   // 異常終了に備えた、未保存の文書の控え
+    private final Timer autosaveTimer = new Timer(30_000, e -> autosaveTick());
+
+    // 画面の左右に出す欄
+    private final JPanel mainArea = new JPanel(new BorderLayout());
+    private FolderSidebar sidebar;
+    private boolean sidebarVisible;
+    private ProofreadPanel proofPanel;
+    private AiChatPanel chatPanel;
+    private McpTools chatTools;
+    private String rightPanel;                  // 右に出している欄（"proof" / "ai"）。出していなければ null
+    private int sidebarWidth = 300;
+    private int rightWidth = 480;
+    private JPanel statusBar;
+
+    // 集中モード
+    private boolean focusMode;
+    private boolean terminalBeforeFocus;
+    private int stateBeforeFocus;
+    private final McpService mcp = new McpService(this);       // AI 連携（MCP）の窓口
+    private final JCheckBoxMenuItem mcpItem = new JCheckBoxMenuItem("MCP サーバーを動かす");
     private String message;                     // ステータスバーに一時的に出す文
     private final Timer messageTimer = new Timer(4000, e -> {
         message = null;
@@ -87,17 +139,19 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             setIconImage(new ImageIcon(icon).getImage());
         }
 
-        JPanel center = new JPanel(new BorderLayout());
         center.setBackground(Theme.BG);
         center.add(findBar, BorderLayout.NORTH);
         editorArea.setBackground(Theme.BG);
         center.add(editorArea, BorderLayout.CENTER);
 
         getContentPane().setBackground(Theme.BG);
-        add(center, BorderLayout.CENTER);
-        add(createStatusBar(), BorderLayout.SOUTH);
+        mainArea.setBackground(Theme.BG);
+        add(mainArea, BorderLayout.CENTER);
+        statusBar = createStatusBar();
+        add(statusBar, BorderLayout.SOUTH);
         setJMenuBar(createMenuBar());
         installExtraShortcuts();
+        layoutMain();
 
         // どちらのグループにカーソルがあるかを見張って、操作の対象を切り替える
         KeyboardFocusManager.getCurrentKeyboardFocusManager().addPropertyChangeListener("permanentFocusOwner", e -> {
@@ -115,6 +169,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
 
         setSize(1400, 850);
         setLocationByPlatform(true);
+        autosaveTimer.start();
         // ×ボタンを押しても勝手には閉じず、未保存の確認をしてから終了する
         setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
         addWindowListener(new WindowAdapter() {
@@ -153,6 +208,10 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         file.add(item("保存", key(KeyEvent.VK_S, CTRL), () -> save(currentPane())));
         file.add(item("名前を付けて保存…", key(KeyEvent.VK_S, CTRL | SHIFT), () -> saveAs(currentPane())));
         file.add(item("PDF として書き出す…", key(KeyEvent.VK_P, CTRL | SHIFT), this::exportPdf));
+        file.add(item("版の履歴…", key(KeyEvent.VK_H, CTRL | SHIFT), this::showHistory));
+        file.addSeparator();
+        file.add(item("フォルダをサイドバーに開く…", null, this::openFolderInSidebar));
+        file.add(item("設定…", key(KeyEvent.VK_COMMA, CTRL), this::openSettings));
         file.addSeparator();
         file.add(item("タブを閉じる", key(KeyEvent.VK_W, CTRL), () -> closePane(activeGroup, currentPane())));
         file.add(item("終了", key(KeyEvent.VK_Q, CTRL), this::exitApp));
@@ -213,6 +272,16 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             repaint();
         });
         view.add(stripeItem);
+        view.addSeparator();
+        view.add(item("フォルダのサイドバー", key(KeyEvent.VK_E, CTRL | SHIFT), this::toggleSidebar));
+        view.add(item("校正の欄", key(KeyEvent.VK_F7, 0), () -> showRight("proof")));
+        view.add(item("AI の会話欄", key(KeyEvent.VK_A, CTRL | SHIFT), () -> showRight("ai")));
+        view.add(item("集中モード", key(KeyEvent.VK_F11, 0), this::toggleFocusMode));
+        view.add(item("執筆の記録…", null, this::showStats));
+        view.addSeparator();
+        terminalItem.setAccelerator(key(KeyEvent.VK_J, CTRL));
+        terminalItem.addActionListener(e -> setTerminalVisible(terminalItem.isSelected()));
+        view.add(terminalItem);
 
         // カードボード専用の操作。ほかの種類の文書を開いているときは、案内を出すだけにする
         JMenu boardMenu = new JMenu("ボード");
@@ -233,12 +302,683 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         boardMenu.addSeparator();
         boardMenu.add(item("画像として書き出す（PNG）…", key(KeyEvent.VK_E, CTRL | SHIFT), this::exportBoardImage));
 
+        // AI（Claude など）に、校正・検索・ファイルの整理を頼めるようにする
+        JMenu aiMenu = new JMenu("AI 連携");
+        mcpItem.addActionListener(e -> toggleMcp());
+        aiMenu.add(mcpItem);
+        aiMenu.add(item("AI に任せるフォルダを選ぶ…", null, this::chooseWorkspace));
+        aiMenu.add(item("接続のしかた…", null, this::showMcpHelp));
+        aiMenu.addSeparator();
+        aiMenu.add(item("AI の会話欄を開く", null, () -> showRight("ai")));
+        aiMenu.add(item("会話欄で使う AI の設定…", null, this::openSettings));
+
         menuBar.add(file);
         menuBar.add(edit);
         menuBar.add(format);
         menuBar.add(view);
         menuBar.add(boardMenu);
+        menuBar.add(aiMenu);
+
+        // 右端（ウィンドウの最小化・最大化・×のすぐ下）に、1回押すだけで使えるボタンを並べる
+        JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+        tools.setOpaque(false);
+        for (JToggleButton button : new JToggleButton[]{folderButton, proofButton, aiButton, terminalButton, focusButton}) {
+            tools.add(button);
+        }
+        tools.setMaximumSize(tools.getPreferredSize());
+        menuBar.add(Box.createHorizontalGlue());
+        menuBar.add(tools);
         return menuBar;
+    }
+
+    /** メニューバーの右端に置く、1回押すだけで欄を出し入れするボタン。出ている間は青くなる。 */
+    private JToggleButton createToolButton(String label, String tooltip, Runnable action) {
+        JToggleButton button = new JToggleButton(label) {
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                boolean hot = getModel().isRollover() || getModel().isPressed();
+                g2.setColor(isSelected() ? Theme.ACCENT : hot ? Theme.HOVER : Theme.INPUT);
+                g2.fillRoundRect(0, 0, getWidth(), getHeight(), 8, 8);
+                g2.dispose();
+                super.paintComponent(g);
+            }
+        };
+        button.setContentAreaFilled(false);
+        button.setFocusPainted(false);
+        button.setFocusable(false);
+        button.setRolloverEnabled(true);
+        button.setForeground(Theme.FG_STRONG);
+        // 青い地のときは白い文字にする（ライトの配色でも読めるように）
+        button.addItemListener(e -> button.setForeground(button.isSelected() ? Color.WHITE : Theme.FG_STRONG));
+        button.setFont(label.equals(">_") ? new Font(Font.MONOSPACED, Font.BOLD, Theme.SMALL_SIZE) : Theme.small());
+        button.setBorder(BorderFactory.createEmptyBorder(2, 10, 2, 10));
+        button.setToolTipText(tooltip);
+        button.addActionListener(e -> {
+            button.setSelected(!button.isSelected());   // 表示の切り替えは action 側で行い、その結果に合わせる
+            action.run();
+        });
+        return button;
+    }
+
+    // ---------- 左右の欄（サイドバー・校正・AI） ----------
+
+    /** 真ん中（検索バー・エディタ・ターミナル）の左右に、出すことになっている欄を並べ直す。 */
+    private void layoutMain() {
+        mainArea.removeAll();
+        JComponent content = center;
+        String right = focusMode ? null : rightPanel;
+        if (right != null) {
+            JComponent panel = right.equals("ai") ? chatPanel : proofPanel;
+            JSplitPane splitPane = sideSplit(content, panel, 1.0);
+            // 幅が決まってから、覚えている幅に合わせる。それより前の自動の配置では、覚えている幅を書き換えない
+            boolean[] placed = {false};
+            SwingUtilities.invokeLater(() -> {
+                if (splitPane.getWidth() > 0) {
+                    splitPane.setDividerLocation(Math.max(200, splitPane.getWidth() - rightWidth));
+                }
+                placed[0] = true;
+            });
+            splitPane.addPropertyChangeListener(JSplitPane.DIVIDER_LOCATION_PROPERTY, e -> {
+                if (placed[0] && splitPane.getWidth() > 0 && splitPane.isShowing()) {
+                    rightWidth = Math.max(260, splitPane.getWidth() - splitPane.getDividerLocation() - splitPane.getDividerSize());
+                }
+            });
+            content = splitPane;
+        }
+        if (sidebarVisible && !focusMode) {
+            JSplitPane splitPane = sideSplit(sidebar, content, 0.0);
+            splitPane.setDividerLocation(sidebarWidth);
+            splitPane.addPropertyChangeListener(JSplitPane.DIVIDER_LOCATION_PROPERTY, e -> {
+                if (splitPane.isShowing()) {
+                    sidebarWidth = Math.max(160, splitPane.getDividerLocation());
+                }
+            });
+            content = splitPane;
+        }
+        mainArea.add(content, BorderLayout.CENTER);
+        mainArea.revalidate();
+        mainArea.repaint();
+    }
+
+    private static JSplitPane sideSplit(JComponent left, JComponent right, double weight) {
+        JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, right);
+        splitPane.setUI(new BasicSplitPaneUI());
+        splitPane.setBorder(null);
+        splitPane.setBackground(Theme.BORDER);
+        splitPane.setDividerSize(4);
+        splitPane.setResizeWeight(weight);      // ウィンドウの大きさを変えたときは、真ん中のエディタが伸び縮みする
+        splitPane.setContinuousLayout(true);
+        left.setMinimumSize(new Dimension(120, 0));
+        right.setMinimumSize(new Dimension(120, 0));
+        return splitPane;
+    }
+
+    private FolderSidebar sidebar() {
+        if (sidebar == null) {
+            sidebar = new FolderSidebar(new FolderSidebar.Host() {
+                @Override
+                public void openFromSidebar(Path file) {
+                    try {
+                        openPath(file.toAbsolutePath(), currentPane() instanceof VerticalTextPane, false);
+                    } catch (IOException ex) {
+                        JOptionPane.showMessageDialog(EditorFrame.this, "開けませんでした: " + ex.getMessage(),
+                                "エラー", JOptionPane.ERROR_MESSAGE);
+                    }
+                }
+
+                @Override
+                public void fileMoved(Path from, Path to) {
+                    for (EditorPane pane : allPanes()) {
+                        Path open = pane.getPath();
+                        if (open != null && open.toAbsolutePath().normalize().startsWith(from.toAbsolutePath().normalize())) {
+                            pane.setPath(to.resolve(from.toAbsolutePath().normalize().relativize(open.toAbsolutePath().normalize())));
+                        }
+                    }
+                    updateStatus();
+                }
+
+                @Override
+                public void fileTrashed(Path file) {
+                    for (EditorPane pane : allPanes()) {
+                        Path open = pane.getPath();
+                        if (open != null && open.toAbsolutePath().normalize().startsWith(file.toAbsolutePath().normalize())) {
+                            // ファイルはなくなったが、タブの中身は残っているので、未保存の文書として扱う
+                            pane.setPath(null);
+                            pane.setDirty(true);
+                        }
+                    }
+                    updateStatus();
+                }
+
+                @Override
+                public void openCombined(String title, String text) {
+                    TextEditorPane pane = new TextEditorPane(Theme.editorFont());
+                    pane.loadText(text);
+                    EditorPane previous = currentPane();
+                    addPane(activeGroup, pane);
+                    pane.setDirty(true);
+                    removeIfPristine(previous);
+                    flash(title + "を、新しいタブに開きました");
+                }
+
+                @Override
+                public Path chooseFolder() {
+                    JFileChooser chooser = newFileChooser();
+                    chooser.setDialogTitle("サイドバーに表示するフォルダ");
+                    chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+                    chooser.setApproveButtonText("このフォルダを表示");
+                    if (chooser.showOpenDialog(EditorFrame.this) != JFileChooser.APPROVE_OPTION) {
+                        return null;
+                    }
+                    return chooser.getSelectedFile().toPath().toAbsolutePath().normalize();
+                }
+
+                @Override
+                public void folderChanged(Path folder) {
+                    appSettings.put(AppSettings.SIDEBAR_FOLDER, folder.toString());
+                    appSettings.save();
+                }
+
+                @Override
+                public void message(String text) {
+                    flash(text);
+                }
+            }, this::toggleSidebar);
+            String saved = appSettings.getString(AppSettings.SIDEBAR_FOLDER, null);
+            if (saved != null && Files.isDirectory(Path.of(saved))) {
+                sidebar.setRoot(Path.of(saved));
+            }
+        }
+        return sidebar;
+    }
+
+    private void setSidebarVisible(boolean visible) {
+        if (visible) {
+            sidebar();
+        }
+        sidebarVisible = visible;
+        folderButton.setSelected(visible);
+        layoutMain();
+    }
+
+    private void toggleSidebar() {
+        setSidebarVisible(!sidebarVisible);
+    }
+
+    private void openFolderInSidebar() {
+        setSidebarVisible(true);
+        Path folder = null;
+        JFileChooser chooser = newFileChooser();
+        chooser.setDialogTitle("サイドバーに表示するフォルダ");
+        chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+        chooser.setApproveButtonText("このフォルダを表示");
+        if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
+            folder = chooser.getSelectedFile().toPath().toAbsolutePath().normalize();
+        }
+        if (folder != null) {
+            sidebar.setRoot(folder);
+            appSettings.put(AppSettings.SIDEBAR_FOLDER, folder.toString());
+            appSettings.save();
+        }
+    }
+
+    /** 右の欄を切り替える。今出ている欄をもう一度選んだときは、隠す。 */
+    private void showRight(String which) {
+        String next = which != null && which.equals(rightPanel) ? null : which;
+        if ("proof".equals(next) && proofPanel == null) {
+            proofPanel = new ProofreadPanel(() -> currentPane() instanceof Searchable s ? s : null,
+                    () -> withPane(EditorPane::focusEditor), appSettings, () -> showRight(null));
+        }
+        if ("ai".equals(next) && chatPanel == null) {
+            chatPanel = new AiChatPanel(new AiChatPanel.Host() {
+                @Override
+                public AppSettings settings() {
+                    return appSettings;
+                }
+
+                @Override
+                public boolean ensureMcp() {
+                    return ensureMcpRunning();
+                }
+
+                @Override
+                public Path workspace() {
+                    return mcp.settings().workspace;
+                }
+
+                @Override
+                public McpServer.Backend tools() {
+                    if (chatTools == null) {
+                        chatTools = new McpTools(EditorFrame.this, mcp.settings());
+                    }
+                    return chatTools;
+                }
+
+                @Override
+                public void openSettings() {
+                    EditorFrame.this.openSettings();
+                }
+            }, () -> showRight(null));
+        }
+        if (focusMode && next != null) {
+            toggleFocusMode();          // 集中モード中に欄を開くときは、集中モードを終える
+        }
+        rightPanel = next;
+        proofButton.setSelected("proof".equals(next));
+        aiButton.setSelected("ai".equals(next));
+        layoutMain();
+        if ("proof".equals(next)) {
+            proofPanel.refresh();
+        } else if ("ai".equals(next)) {
+            SwingUtilities.invokeLater(chatPanel::focusInput);
+        } else {
+            withPane(pane -> SwingUtilities.invokeLater(pane::focusEditor));
+        }
+    }
+
+    /** AI 連携（MCP）が動いていなければ、動かす（初めてなら、任せるフォルダを選んでもらう）。動けば true。 */
+    private boolean ensureMcpRunning() {
+        if (mcp.isRunning()) {
+            return true;
+        }
+        if (!mcp.hasWorkspace() && !chooseWorkspace()) {
+            return false;
+        }
+        try {
+            mcp.start();
+        } catch (IOException ex) {
+            JOptionPane.showMessageDialog(this, "AI 連携を始められませんでした: " + ex.getMessage(),
+                    "エラー", JOptionPane.ERROR_MESSAGE);
+            return false;
+        }
+        mcpItem.setSelected(true);
+        updateStatus();
+        flash("AI 連携（MCP）を始めました");
+        return true;
+    }
+
+    // ---------- 集中モード ----------
+
+    /**
+     * 集中モード：メニュー・タブ・ステータスバー・左右の欄を隠し、ウィンドウを最大にして、文章だけにする。
+     * テキストの文書では、文字の列を中央に寄せ、カーソルの行をいつも画面の真ん中に保つ。F11（または Esc）で戻る。
+     */
+    private void toggleFocusMode() {
+        focusMode = !focusMode;
+        focusButton.setSelected(focusMode);
+        JMenuBar menuBar = getJMenuBar();
+        if (focusMode) {
+            stateBeforeFocus = getExtendedState();
+            terminalBeforeFocus = terminalVisible;
+            if (terminalVisible) {
+                setTerminalVisible(false);
+            }
+            // メニューは隠すと Ctrl+S などのショートカットも効かなくなるので、高さを 0 にして見えなくする
+            menuBar.setPreferredSize(new Dimension(0, 0));
+            statusBar.setVisible(false);
+            group1.setTabsVisible(false);
+            group2.setTabsVisible(false);
+            setExtendedState(MAXIMIZED_BOTH);
+            if (currentPane() instanceof TextEditorPane text) {
+                text.setFocusMode(true);
+            }
+            showHint("集中モード　F11 か Esc で元に戻ります");
+        } else {
+            menuBar.setPreferredSize(null);
+            statusBar.setVisible(true);
+            group1.setTabsVisible(true);
+            group2.setTabsVisible(true);
+            setExtendedState(stateBeforeFocus);
+            for (EditorPane pane : allPanes()) {
+                if (pane instanceof TextEditorPane text) {
+                    text.setFocusMode(false);
+                }
+            }
+            if (terminalBeforeFocus) {
+                setTerminalVisible(true);
+            }
+        }
+        menuBar.revalidate();
+        layoutMain();
+        withPane(pane -> SwingUtilities.invokeLater(pane::focusEditor));
+    }
+
+    public boolean isFocusMode() {
+        return focusMode;
+    }
+
+    /** 画面の上のほうに、数秒だけ案内を出す（ステータスバーが隠れているときに使う）。 */
+    private void showHint(String text) {
+        JLabel hint = new JLabel(text, JLabel.CENTER);
+        hint.setOpaque(true);
+        hint.setBackground(Theme.ACCENT);
+        hint.setForeground(Color.WHITE);
+        hint.setFont(Theme.small());
+        hint.setBorder(BorderFactory.createEmptyBorder(8, 18, 8, 18));
+        Dimension size = hint.getPreferredSize();
+        JLayeredPane layers = getLayeredPane();
+        layers.add(hint, JLayeredPane.POPUP_LAYER);
+        // ウィンドウを最大にした直後は大きさが変わっていくので、少しのあいだ、真ん中に置き直す
+        Timer place = new Timer(100, e -> hint.setBounds((layers.getWidth() - size.width) / 2, 24, size.width, size.height));
+        place.start();
+        Timer timer = new Timer(3000, e -> {
+            place.stop();
+            layers.remove(hint);
+            layers.repaint();
+        });
+        timer.setRepeats(false);
+        timer.start();
+    }
+
+    // ---------- 版の履歴・執筆の記録・設定 ----------
+
+    private void showHistory() {
+        EditorPane pane = currentPane();
+        if (pane == null || pane.getPath() == null) {
+            flash("版の履歴は、保存したことのある文書で使えます");
+            return;
+        }
+        Path path = pane.getPath();
+        List<VersionHistory.Version> versions = history.list(path);
+        if (versions.isEmpty()) {
+            flash("まだ履歴がありません（保存するたびに、版が残ります）");
+            return;
+        }
+        String current = fileContent(pane, path);
+        new HistoryDialog(this, pane.getTitle(), versions, history, current,
+                content -> restoreVersion(pane, path, current, content),
+                content -> {
+                    EditorPane copy = paneFromFile(path, content, pane instanceof VerticalTextPane);
+                    addPane(activeGroup, copy);
+                    copy.setDirty(true);
+                    flash("過去の版を、新しいタブ（無題）に開きました");
+                }).setVisible(true);
+    }
+
+    /** 過去の版に戻す。今の内容は先に履歴へ残すので、戻したあとでも、元に戻れる。 */
+    private void restoreVersion(EditorPane pane, Path path, String current, String content) {
+        history.record(path, current, appSettings.getInt(AppSettings.HISTORY_LIMIT, 50) + 1);
+        EditorPane fresh = paneFromFile(path, content, pane instanceof VerticalTextPane);
+        fresh.setListener(this);
+        fresh.setRawFile(pane.isRawFile());
+        fresh.setPath(path);
+        fresh.setDirty(true);           // 戻しただけでは、ファイルはまだ書き換えていない
+        stats.track(fresh);
+        EditorGroup group = groupOf(pane);
+        group.replacePane(pane, fresh);
+        setActiveGroup(group);
+        currentPaneChanged();
+        SwingUtilities.invokeLater(fresh::focusEditor);
+        flash("過去の版に戻しました（保存すると、ファイルに書き込みます）");
+    }
+
+    private void showStats() {
+        appSettings.save();
+        stats.showDialog(this);
+        updateStatus();
+    }
+
+    private void openSettings() {
+        String themeBefore = appSettings.getString(AppSettings.THEME, "dark");
+        if (new SettingsDialog(this, appSettings).open()) {
+            if (chatPanel != null) {
+                chatPanel.refreshBackendLabel();
+            }
+            updateStatus();
+            boolean themeChanged = !themeBefore.equals(appSettings.getString(AppSettings.THEME, "dark"));
+            flash(themeChanged ? "設定を保存しました。配色は、次に起動したときに変わります" : "設定を保存しました");
+        }
+    }
+
+    // ---------- 自動保存・異常終了からの復旧 ----------
+
+    /** 30 秒ごとに呼ばれる。自動保存（設定で選んだときだけ）と、未保存の文書の控えを取る。 */
+    private void autosaveTick() {
+        if (appSettings.getBool(AppSettings.AUTO_SAVE, false)) {
+            for (EditorPane pane : allPanes()) {
+                if (pane.isDirty() && pane.getPath() != null && Files.isRegularFile(pane.getPath())) {
+                    write(pane, pane.getPath(), false);
+                }
+            }
+        }
+        recovery.save(allPanes());
+        appSettings.save();             // 今日の執筆量なども、ときどき書いておく
+    }
+
+    /** 前回、保存されずに終わった文書があれば、復元するかを聞く。起動して画面を出したあとに呼ぶ。 */
+    public void offerRecovery() {
+        List<Recovery.Entry> entries = recovery.leftovers();
+        if (entries.isEmpty()) {
+            return;
+        }
+        StringBuilder list = new StringBuilder();
+        for (Recovery.Entry entry : entries) {
+            list.append("・").append(entry.title()).append("（").append(entry.savedAt()).append(" の控え）\n");
+        }
+        Object[] options = {"復元する", "捨てる", "あとで決める"};
+        int answer = JOptionPane.showOptionDialog(this,
+                "前回、保存されずに終わった文書が " + entries.size() + " 件あります。復元しますか？\n\n" + list,
+                "文書の復元", JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE, null, options, options[0]);
+        if (answer == 0) {
+            for (Recovery.Entry entry : entries) {
+                restoreEntry(entry);
+            }
+            recovery.discardLeftovers();
+            flash(entries.size() + " 件の文書を復元しました（まだ保存されていません）");
+        } else if (answer == 1) {
+            int sure = JOptionPane.showConfirmDialog(this, "控えを捨てると、もう復元できません。捨てますか？",
+                    "確認", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+            if (sure == JOptionPane.YES_OPTION) {
+                recovery.discardLeftovers();
+            }
+        }
+        // 「あとで決める」は、控えを残したまま。次に起動したときに、もう一度聞く
+    }
+
+    private void restoreEntry(Recovery.Entry entry) {
+        EditorPane pane;
+        try {
+            pane = paneFromJson(entry.document());
+        } catch (RuntimeException ex) {
+            flash("復元できなかった文書があります: " + entry.title());
+            return;
+        }
+        Path path = entry.path() == null ? null : Path.of(entry.path());
+        pane.setRawFile(entry.raw());
+        EditorPane open = path == null ? null : findOpenDocument(path);
+        if (open != null) {
+            // 同じファイルのタブがあれば（前回の状態から開いたもの）、控えの内容に入れ替える
+            pane.setListener(this);
+            pane.setPath(path);
+            pane.setDirty(true);
+            stats.track(pane);
+            groupOf(open).replacePane(open, pane);
+        } else {
+            EditorPane previous = currentPane();
+            if (path != null) {
+                pane.setPath(path);
+            }
+            addPane(activeGroup, pane);
+            pane.setDirty(true);
+            removeIfPristine(previous);
+        }
+        currentPaneChanged();
+    }
+
+    // ---------- 前回の状態（タブ・分割・ウィンドウ） ----------
+
+    /** 開いているタブ・カーソルの位置・分割・ウィンドウの位置と大きさ・サイドバーを覚えておく。 */
+    private void saveSession() {
+        Map<String, Object> session = new java.util.LinkedHashMap<>();
+        List<Object> groups = new ArrayList<>();
+        List<Object> active = new ArrayList<>();
+        for (EditorGroup group : new EditorGroup[]{group1, group2}) {
+            List<Object> tabs = new ArrayList<>();
+            int activeIndex = 0;
+            for (EditorPane pane : group.getPanes()) {
+                if (pane.getPath() == null || !Files.isRegularFile(pane.getPath())) {
+                    continue;           // 保存していない文書は、開き直せないので覚えない
+                }
+                if (pane == group.getActive()) {
+                    activeIndex = tabs.size();
+                }
+                int caret = pane instanceof Searchable s ? s.getSelectionStart() : 0;
+                tabs.add(McpServer.map("path", pane.getPath().toAbsolutePath().toString(), "mode", pane.getMode().id,
+                        "caret", caret));
+            }
+            groups.add(tabs);
+            active.add(activeIndex);
+        }
+        session.put("groups", groups);
+        session.put("active", active);
+        session.put("activeGroup", activeGroup == group2 ? 1 : 0);
+        session.put("split", split);
+        session.put("vertical", splitOrientation == JSplitPane.VERTICAL_SPLIT);
+        boolean maximized = (getExtendedState() & MAXIMIZED_BOTH) == MAXIMIZED_BOTH;
+        int state = focusMode ? stateBeforeFocus : getExtendedState();
+        session.put("window", McpServer.map("x", getX(), "y", getY(), "width", getWidth(), "height", getHeight(),
+                "maximized", focusMode ? (state & MAXIMIZED_BOTH) == MAXIMIZED_BOTH : maximized));
+        session.put("sidebar", sidebarVisible);
+        session.put("sidebarWidth", sidebarWidth);
+        session.put("right", rightPanel);
+        session.put("rightWidth", rightWidth);
+        appSettings.put(AppSettings.SESSION, session);
+    }
+
+    /** 前回の状態に戻す。起動したとき、画面を出す前に呼ぶ。うまくいかない所は飛ばす（起動を止めない）。 */
+    @SuppressWarnings("unchecked")
+    public void restoreSession() {
+        Map<String, Object> session = appSettings.getMap(AppSettings.SESSION);
+        if (session == null) {
+            return;
+        }
+        try {
+            if (session.get("window") instanceof Map<?, ?> w) {
+                Map<String, Object> window = (Map<String, Object>) w;
+                java.awt.Rectangle bounds = new java.awt.Rectangle(Json.num(window, "x", 0), Json.num(window, "y", 0),
+                        Json.num(window, "width", 1400), Json.num(window, "height", 850));
+                // 前回と画面の構成が違っても、ウィンドウが画面の外に出てしまわないように確かめる
+                boolean onScreen = false;
+                for (java.awt.GraphicsDevice device : GraphicsEnvironment.getLocalGraphicsEnvironment().getScreenDevices()) {
+                    onScreen |= device.getDefaultConfiguration().getBounds().intersects(bounds);
+                }
+                if (onScreen && bounds.width >= 400 && bounds.height >= 300) {
+                    setBounds(bounds);
+                }
+                if (Json.bool(window, "maximized", false)) {
+                    setExtendedState(MAXIMIZED_BOTH);
+                }
+            }
+            sidebarWidth = Json.num(session, "sidebarWidth", sidebarWidth);
+            rightWidth = Json.num(session, "rightWidth", rightWidth);
+            if (Json.bool(session, "vertical", false)) {
+                splitOrientation = JSplitPane.VERTICAL_SPLIT;
+            }
+            List<?> groups = session.get("groups") instanceof List<?> g ? g : List.of();
+            List<?> active = session.get("active") instanceof List<?> a ? a : List.of();
+            EditorGroup[] targets = {group1, group2};
+            for (int index = 0; index < Math.min(2, groups.size()); index++) {
+                if (!(groups.get(index) instanceof List<?> tabs) || tabs.isEmpty()) {
+                    continue;
+                }
+                if (index == 1 && !split) {
+                    split = true;
+                    layoutGroups();
+                }
+                setActiveGroup(targets[index]);
+                List<EditorPane> opened = new ArrayList<>();
+                for (Object item : tabs) {
+                    if (!(item instanceof Map<?, ?> raw)) {
+                        continue;
+                    }
+                    Map<String, Object> tab = (Map<String, Object>) raw;
+                    Path path = Path.of(Json.str(tab, "path", ""));
+                    if (!Files.isRegularFile(path)) {
+                        continue;
+                    }
+                    try {
+                        boolean vertical = EditorPane.Mode.VERTICAL.id.equals(Json.str(tab, "mode", ""));
+                        EditorPane pane = openPath(path, vertical, false);
+                        if (pane instanceof Searchable s) {
+                            int caret = Math.min(Json.num(tab, "caret", 0), s.getText().length());
+                            SwingUtilities.invokeLater(() -> s.reveal(caret));
+                        }
+                        opened.add(pane);
+                    } catch (IOException | RuntimeException ex) {
+                        // 開けなかったファイルは飛ばす
+                    }
+                }
+                int activeIndex = index < active.size() && active.get(index) instanceof Number n ? n.intValue() : 0;
+                if (!opened.isEmpty()) {
+                    targets[index].select(opened.get(Math.max(0, Math.min(activeIndex, opened.size() - 1))));
+                }
+            }
+            if (split && group2.isEmpty()) {
+                split = false;
+                layoutGroups();
+            }
+            setActiveGroup(Json.num(session, "activeGroup", 0) == 1 && split ? group2 : group1);
+            if (Json.bool(session, "sidebar", false)) {
+                setSidebarVisible(true);
+            }
+            String right = Json.str(session, "right", null);
+            if ("proof".equals(right) || "ai".equals(right)) {
+                showRight(right);
+            }
+            currentPaneChanged();
+        } catch (RuntimeException ex) {
+            flash("前回の状態を、一部戻せませんでした");
+        }
+    }
+
+    // ---------- ターミナル ----------
+
+    /** エディタの下にターミナルを出す、または隠す。隠しても、中で動いているコマンドは止めない。 */
+    private void setTerminalVisible(boolean visible) {
+        terminalButton.setSelected(visible);
+        terminalItem.setSelected(visible);
+        if (visible == terminalVisible) {
+            return;
+        }
+        terminalVisible = visible;
+        if (terminal == null) {
+            terminal = new TerminalPane(this::terminalFolder, () -> setTerminalVisible(false));
+        }
+        // 真ん中に置いてあるもの（エディタだけ、または、エディタとターミナルの上下分割）を入れ替える
+        BorderLayout layout = (BorderLayout) center.getLayout();
+        center.remove(layout.getLayoutComponent(BorderLayout.CENTER));
+        if (visible) {
+            JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, editorArea, terminal);
+            splitPane.setUI(new BasicSplitPaneUI());
+            splitPane.setBorder(null);
+            splitPane.setBackground(Theme.BORDER);
+            splitPane.setDividerSize(4);
+            splitPane.setResizeWeight(1.0);     // ウィンドウの大きさを変えたときは、エディタの側が伸び縮みする
+            splitPane.setContinuousLayout(true);
+            editorArea.setMinimumSize(new Dimension(0, 80));
+            terminal.setMinimumSize(new Dimension(0, 80));
+            center.add(splitPane, BorderLayout.CENTER);
+            center.revalidate();
+            SwingUtilities.invokeLater(() -> splitPane.setDividerLocation(0.65));
+            terminal.start();
+            SwingUtilities.invokeLater(terminal::focusInput);
+        } else {
+            center.add(editorArea, BorderLayout.CENTER);
+            center.revalidate();
+            withPane(pane -> SwingUtilities.invokeLater(pane::focusEditor));
+        }
+        center.repaint();
+    }
+
+    /** ターミナルを始めるフォルダ。今の文書が保存されていればその場所、なければ「開く」の最初の場所と同じ。 */
+    private Path terminalFolder() {
+        EditorPane pane = currentPane();
+        if (pane != null && pane.getPath() != null && pane.getPath().toAbsolutePath().getParent() != null) {
+            return pane.getPath().toAbsolutePath().getParent();
+        }
+        return appSettings.startFolder();
     }
 
     private static KeyStroke key(int keyCode, int modifiers) {
@@ -261,6 +1001,12 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         shortcut(key(KeyEvent.VK_EQUALS, CTRL), "zoomIn3", () -> zoom(1));               // US 配列の「+」
         shortcut(key(KeyEvent.VK_ADD, CTRL), "zoomIn4", () -> zoom(1));                  // テンキー
         shortcut(key(KeyEvent.VK_SUBTRACT, CTRL), "zoomOut2", () -> zoom(-1));
+        // 集中モード中に Esc でも戻れるようにする（検索バーなどが Esc を使うときは、そちらが先に受け取る）
+        shortcut(key(KeyEvent.VK_ESCAPE, 0), "leaveFocus", () -> {
+            if (focusMode) {
+                toggleFocusMode();
+            }
+        });
     }
 
     private void shortcut(KeyStroke keyStroke, String name, Runnable action) {
@@ -305,8 +1051,8 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         JTextArea input = new JTextArea(10, 30);
         input.setFont(Theme.ui());
         input.setBackground(Theme.INPUT);
-        input.setForeground(Color.WHITE);
-        input.setCaretColor(Color.WHITE);
+        input.setForeground(Theme.FG_STRONG);
+        input.setCaretColor(Theme.FG_STRONG);
         JPanel panel = new JPanel(new BorderLayout(0, 8));
         panel.add(new JLabel("1行につき、カードが1枚できます。"), BorderLayout.NORTH);
         panel.add(new JScrollPane(input), BorderLayout.CENTER);
@@ -329,7 +1075,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             flash("カードがないので、書き出すものがありません");
             return;
         }
-        JFileChooser chooser = new JFileChooser();
+        JFileChooser chooser = newFileChooser();
         FileNameExtensionFilter pngFilter = new FileNameExtensionFilter("PNG 画像 (*.png)", "png");
         chooser.setAcceptAllFileFilterUsed(false);
         chooser.setFileFilter(pngFilter);
@@ -386,6 +1132,12 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         wrapItem.setSelected(currentPane() instanceof TextEditorPane text && text.isWrap());
         manuscriptItem.setSelected(!(currentPane() instanceof VerticalTextPane vertical) || vertical.isManuscript());
         findBar.paneSwitched();
+        if (proofPanel != null && "proof".equals(rightPanel)) {
+            proofPanel.refresh();
+        }
+        if (focusMode && currentPane() instanceof TextEditorPane text) {
+            text.setFocusMode(true);
+        }
     }
 
     private void updateTitle() {
@@ -413,7 +1165,10 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         } else {
             format = "テキスト";
         }
-        statusRight.setText(pane.statusText() + "    UTF-8    " + format);
+        String sheets = pane instanceof TextEditorPane text
+                ? "    原稿用紙換算 " + WritingStats.manuscriptSheets(text.getText()) + " 枚" : "";
+        statusRight.setText(pane.statusText() + sheets + "    " + stats.statusText() + "    UTF-8    " + format
+                + (mcp.isRunning() ? "    AI 連携中" : ""));
     }
 
     /** ステータスバーに、数秒だけお知らせを出す（ポップアップで作業を止めないため）。 */
@@ -428,6 +1183,10 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     @Override
     public void contentChanged(EditorPane pane) {
         findBar.contentChanged(pane);
+        stats.changed(pane);
+        if (proofPanel != null && pane == currentPane()) {
+            proofPanel.contentChanged();
+        }
     }
 
     @Override
@@ -487,6 +1246,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
 
     private void addPane(EditorGroup group, EditorPane pane) {
         pane.setListener(this);
+        stats.track(pane);
         group.addPane(pane);
         SwingUtilities.invokeLater(pane::focusEditor);
     }
@@ -504,7 +1264,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
      */
     private void openFile(boolean forceVertical) {
         boolean vertical = forceVertical || currentPane() instanceof VerticalTextPane;
-        JFileChooser chooser = new JFileChooser();
+        JFileChooser chooser = newFileChooser();
         chooser.setDialogTitle(vertical ? "縦書きで開く" : "開く");
         chooser.addChoosableFileFilter(new FileNameExtensionFilter("テキスト / JSON (*.txt, *.json)", "txt", "json"));
         if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
@@ -512,27 +1272,40 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         }
         Path path = chooser.getSelectedFile().toPath().toAbsolutePath();
 
-        // すでに開いているファイルは、もう1つ開かずに、そのタブを使う。
-        // （同じファイルを2つのタブで別々に編集すると、後から保存したほうが、先の変更を消してしまうため）
-        for (EditorPane open : allPanes()) {
-            if (path.equals(open.getPath())) {
-                showAlreadyOpen(open, forceVertical);
-                return;
-            }
-        }
-
         try {
-            EditorPane pane = paneFromFile(path, fileService.read(path), vertical);
-            EditorPane previous = currentPane();
-            pane.setPath(path);
-            addPane(activeGroup, pane);
-            // 何も書いていない「無題」のタブが残っていたら、片付ける
-            if (previous != null && previous.getPath() == null && !previous.isDirty() && previous.isEmpty()) {
-                activeGroup.removePane(previous);
-            }
+            openPath(path, vertical, forceVertical);
         } catch (IOException ex) {
             JOptionPane.showMessageDialog(this, "開けませんでした: " + ex.getMessage(),
                     "エラー", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    /**
+     * 指定したファイルを開いて、その文書を返す（メニューの「開く」と、AI 連携の両方から使う）。
+     *
+     * @param vertical           新しく開くとき、.txt を縦書きにするか
+     * @param switchToVertical   すでに開いていたとき、そのタブを縦書きに切り替えるか
+     */
+    private EditorPane openPath(Path path, boolean vertical, boolean switchToVertical) throws IOException {
+        // すでに開いているファイルは、もう1つ開かずに、そのタブを使う。
+        // （同じファイルを2つのタブで別々に編集すると、後から保存したほうが、先の変更を消してしまうため）
+        EditorPane open = findOpenDocument(path);
+        if (open != null) {
+            showAlreadyOpen(open, switchToVertical);
+            return currentPane();
+        }
+        EditorPane pane = paneFromFile(path, fileService.read(path), vertical);
+        EditorPane previous = currentPane();
+        pane.setPath(path);
+        addPane(activeGroup, pane);
+        removeIfPristine(previous);
+        return pane;
+    }
+
+    /** 何も書いていない「無題」のタブなら、片付ける（新しい文書を開いたあとに残さないため）。 */
+    private void removeIfPristine(EditorPane pane) {
+        if (pane != null && pane != currentPane() && pane.getPath() == null && !pane.isDirty() && pane.isEmpty()) {
+            groupOf(pane).removePane(pane);
         }
     }
 
@@ -565,12 +1338,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             try {
                 if (Json.parse(content) instanceof Map<?, ?> raw
                         && EditorPane.FORMAT_NAME.equals(raw.get("format"))) {
-                    Map<String, Object> json = (Map<String, Object>) raw;
-                    return switch (EditorPane.Mode.fromId(Json.str(json, "mode", "text"))) {
-                        case TEXT -> TextEditorPane.fromJson(json);
-                        case VERTICAL -> VerticalTextPane.fromJson(json);
-                        case BOARD -> BoardPane.fromJson(json);
-                    };
+                    return paneFromJson((Map<String, Object>) raw);
                 }
             } catch (Json.JsonException ex) {
                 flash("JSON として読めなかったので、テキストとして開きました");
@@ -589,8 +1357,25 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         return pane;
     }
 
-    private static boolean isJsonPath(Path path) {
+    /** このアプリの JSON 形式から、文書を作る。 */
+    private static EditorPane paneFromJson(Map<String, Object> json) {
+        return switch (EditorPane.Mode.fromId(Json.str(json, "mode", "text"))) {
+            case TEXT -> TextEditorPane.fromJson(json);
+            case VERTICAL -> VerticalTextPane.fromJson(json);
+            case BOARD -> BoardPane.fromJson(json);
+        };
+    }
+
+    static boolean isJsonPath(Path path) {
         return path.getFileName().toString().toLowerCase().endsWith(".json");
+    }
+
+    /**
+     * 「開く」「保存」などで使う、ファイルを選ぶ画面を作る。
+     * 最初に表示するのは、最後に保存したフォルダ。まだ一度も保存していなければ、デスクトップ。
+     */
+    private JFileChooser newFileChooser() {
+        return new JFileChooser(appSettings.startFolder().toFile());
     }
 
     /** 保存する。成功したら true。保存先が決まっていなければ「名前を付けて保存」になる。 */
@@ -608,7 +1393,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         if (pane == null) {
             return false;
         }
-        JFileChooser chooser = new JFileChooser();
+        JFileChooser chooser = newFileChooser();
         FileNameExtensionFilter txtFilter = new FileNameExtensionFilter("テキスト (*.txt)", "txt");
         FileNameExtensionFilter jsonFilter = new FileNameExtensionFilter("JSON：設定や配置も保存 (*.json)", "json");
         chooser.setAcceptAllFileFilterUsed(false);
@@ -642,6 +1427,9 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         if (write(pane, path)) {
             pane.setPath(path);
             updateStatus();
+            if (sidebar != null) {
+                sidebar.refresh();      // 新しいファイルができたかもしれないので、一覧を最新にする
+            }
             return true;
         }
         pane.setRawFile(wasRaw);
@@ -658,7 +1446,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             flash("カードがないので、書き出すものがありません");
             return;
         }
-        JFileChooser chooser = new JFileChooser();
+        JFileChooser chooser = newFileChooser();
         chooser.setAcceptAllFileFilterUsed(false);
         chooser.setFileFilter(new FileNameExtensionFilter("PDF (*.pdf)", "pdf"));
         if (pane.getPath() != null) {
@@ -699,21 +1487,54 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         }
     }
 
-    /** 実際にファイルへ書く。拡張子が .json なら JSON、それ以外は本文だけを書く。 */
+    /** ファイルに書く中身。拡張子が .json なら JSON、それ以外は本文だけ。 */
+    private static String fileContent(EditorPane pane, Path path) {
+        return isJsonPath(path) && !pane.isRawFile() ? Json.write(pane.toJson()) : pane.toPlainText();
+    }
+
     private boolean write(EditorPane pane, Path path) {
-        String content = isJsonPath(path) && !pane.isRawFile()
-                ? Json.write(pane.toJson())
-                : pane.toPlainText();
+        return write(pane, path, true);
+    }
+
+    /**
+     * 実際にファイルへ書き、版の履歴にも残す。
+     *
+     * @param manual 利用者が保存した（false なら自動保存。履歴は 10 分に1回だけ残し、失敗してもダイアログは出さない）
+     */
+    private boolean write(EditorPane pane, Path path, boolean manual) {
+        String content = fileContent(pane, path);
         try {
             fileService.save(content, path);
             pane.setDirty(false);
-            flash("保存しました: " + path);
+            Path key = path.toAbsolutePath().normalize();
+            Instant previous = lastHistory.get(key);
+            if (manual || previous == null || Duration.between(previous, Instant.now()).toMinutes() >= 10) {
+                history.record(path, content, appSettings.getInt(AppSettings.HISTORY_LIMIT, 50));
+                lastHistory.put(key, Instant.now());
+            }
+            if (manual) {
+                appSettings.rememberFolder(path.toAbsolutePath().getParent());   // 次に「開く」「保存」を出したとき、ここから始める
+                flash("保存しました: " + path);
+            }
             return true;
         } catch (IOException ex) {
+            if (!manual) {
+                flash("自動保存できませんでした: " + ex.getMessage());
+                return false;
+            }
             // 失敗は握りつぶさず、ダイアログで知らせる
             JOptionPane.showMessageDialog(this, "保存できませんでした: " + ex.getMessage(),
                     "エラー", JOptionPane.ERROR_MESSAGE);
             return false;
+        }
+    }
+
+    /** AI が文書を保存したときに呼ばれる（版の履歴に残し、サイドバーを最新にする）。 */
+    void savedByAi(Path path, String content) {
+        history.record(path, content, appSettings.getInt(AppSettings.HISTORY_LIMIT, 50));
+        lastHistory.put(path.toAbsolutePath().normalize(), Instant.now());
+        if (sidebar != null) {
+            sidebar.refresh();
         }
     }
 
@@ -780,7 +1601,167 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
                 return;                 // 1つでも「キャンセル」なら、終了をやめる
             }
         }
+        saveSession();                  // 次に起動したとき、同じタブ・同じ位置から始められるように
+        appSettings.save();
+        recovery.clear();               // ふつうに終わったので、異常終了に備えた控えは要らない
         System.exit(0);
+    }
+
+    // ---------- AI 連携（MCP）から使う操作 ----------
+    // AI から頼まれた操作（McpTools）が、ここを通してウィンドウを動かす。
+    // どれも、確認のダイアログは出さない（AI が返事を待っている間、エディタが止まってしまうため）。
+    // 必ず、画面のスレッド（EDT）から呼ぶこと。
+
+    List<EditorPane> documents() {
+        return allPanes();
+    }
+
+    EditorPane activeDocument() {
+        return currentPane();
+    }
+
+    /** そのファイルを開いているタブを探す。なければ null。 */
+    EditorPane findOpenDocument(Path path) {
+        for (EditorPane pane : allPanes()) {
+            Path open = pane.getPath();
+            if (open == null) {
+                continue;
+            }
+            try {
+                // 書き方が違っても同じファイルを指していることがあるので、文字の比較だけでなく、実体でも比べる
+                if (open.equals(path) || (Files.exists(open) && Files.exists(path) && Files.isSameFile(open, path))) {
+                    return pane;
+                }
+            } catch (IOException ex) {
+                // 比べられないときは、別のファイルとして扱う
+            }
+        }
+        return null;
+    }
+
+    /** その文書のタブを、手前に出す。 */
+    void showDocument(EditorPane pane) {
+        setActiveGroup(groupOf(pane));
+        activeGroup.select(pane);
+    }
+
+    EditorPane openDocument(Path path, boolean vertical) throws IOException {
+        return openPath(path, vertical, vertical);
+    }
+
+    EditorPane createDocument(EditorPane.Mode mode) {
+        EditorPane previous = currentPane();
+        EditorPane pane = createPane(mode);
+        addPane(activeGroup, pane);
+        removeIfPristine(previous);
+        return pane;
+    }
+
+    /** 確認をせずに、タブを閉じる（未保存かどうかは、呼ぶ側で確かめておくこと）。 */
+    void closeDocumentSilently(EditorPane pane) {
+        groupOf(pane).removePane(pane);
+        tidyGroups();
+    }
+
+    void notifyUser(String text) {
+        flash(text);
+    }
+
+    // ---------- AI 連携（MCP）の画面 ----------
+
+    /** 前回、AI 連携を動かしたまま終了していたら、起動したときに自動で始める。 */
+    public void startMcpIfEnabled() {
+        if (!mcp.settings().enabled) {
+            return;
+        }
+        try {
+            mcp.start();
+            flash("AI 連携（MCP）を始めました");
+        } catch (IOException ex) {
+            flash("AI 連携を始められませんでした: " + ex.getMessage());
+        }
+        mcpItem.setSelected(mcp.isRunning());
+        updateStatus();
+    }
+
+    private void toggleMcp() {
+        if (!mcpItem.isSelected()) {
+            mcp.stop();
+            flash("AI 連携を止めました");
+            return;
+        }
+        // 最初に、AI に触らせてよいフォルダを決めてもらう
+        if (!mcp.hasWorkspace() && !chooseWorkspace()) {
+            mcpItem.setSelected(false);
+            return;
+        }
+        try {
+            mcp.start();
+        } catch (IOException ex) {
+            mcpItem.setSelected(false);
+            JOptionPane.showMessageDialog(this, "AI 連携を始められませんでした: " + ex.getMessage(),
+                    "エラー", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        updateStatus();
+        showMcpHelp();
+    }
+
+    /** AI に読み書きを任せるフォルダを選ぶ。選ばれたら true。 */
+    private boolean chooseWorkspace() {
+        // 前に選んだフォルダがあればそこから、なければデスクトップから始める
+        JFileChooser chooser = new JFileChooser(AppSettings.desktop().toFile());
+        chooser.setDialogTitle("AI に任せるフォルダを選ぶ（AI は、この中のファイルだけを読み書きできます）");
+        chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+        chooser.setApproveButtonText("このフォルダにする");
+        if (mcp.settings().workspace != null) {
+            chooser.setCurrentDirectory(mcp.settings().workspace.toFile());
+        }
+        if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
+            return false;
+        }
+        Path folder = chooser.getSelectedFile().toPath().toAbsolutePath().normalize();
+        // ホームフォルダやドライブ全体のように広すぎる場所は、うっかり選んでいないかを確かめる
+        Path home = Path.of(System.getProperty("user.home")).toAbsolutePath().normalize();
+        if (folder.equals(home) || folder.getNameCount() < 2) {
+            int answer = JOptionPane.showConfirmDialog(this,
+                    folder + "\nとても広い範囲です。この中のすべてのファイルを、AI が読み書きできるようになります。\n"
+                            + "原稿を入れた専用のフォルダを選ぶことをおすすめします。このまま使いますか？",
+                    "確認", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+            if (answer != JOptionPane.YES_OPTION) {
+                return false;
+            }
+        }
+        try {
+            mcp.setWorkspace(folder);
+        } catch (IOException ex) {
+            JOptionPane.showMessageDialog(this, "フォルダを設定できませんでした: " + ex.getMessage(),
+                    "エラー", JOptionPane.ERROR_MESSAGE);
+            return false;
+        }
+        flash("AI に任せるフォルダ: " + mcp.settings().workspace);
+        return true;
+    }
+
+    /** つなぎ方の案内を出す。登録に使うコマンドや設定を、ボタンでコピーできる。 */
+    private void showMcpHelp() {
+        JTextArea text = new JTextArea(mcp.describeConnection(), 22, 62);
+        text.setEditable(false);
+        text.setLineWrap(true);
+        text.setFont(Theme.small());
+        text.setBackground(Theme.INPUT);
+        text.setForeground(Theme.FG_STRONG);
+        text.setCaretColor(Theme.FG_STRONG);
+        text.setCaretPosition(0);
+        Object[] options = {"Claude Code 用のコマンドをコピー", "Claude Desktop 用の設定をコピー", "閉じる"};
+        int choice = JOptionPane.showOptionDialog(this, new JScrollPane(text), "AI 連携（MCP）の接続のしかた",
+                JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE, null, options, options[2]);
+        if (choice == 0 || choice == 1) {
+            String copied = choice == 0 ? McpService.claudeCodeCommand() : McpService.claudeDesktopConfig();
+            java.awt.Toolkit.getDefaultToolkit().getSystemClipboard()
+                    .setContents(new java.awt.datatransfer.StringSelection(copied), null);
+            flash("コピーしました。" + (choice == 0 ? "ターミナルに貼り付けて実行してください" : "設定ファイルに貼り付けてください"));
+        }
     }
 
     // ---------- 分割 ----------
@@ -877,6 +1858,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         fresh.setRawFile(old.isRawFile());
         fresh.setPath(old.getPath());
         fresh.setDirty(old.isDirty());
+        stats.track(fresh);
         activeGroup.replacePane(old, fresh);
         SwingUtilities.invokeLater(fresh::focusEditor);
     }

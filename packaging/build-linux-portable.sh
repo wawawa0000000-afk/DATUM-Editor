@@ -4,7 +4,7 @@
 # 必要なもの: JDK 17 以上（jpackage）。先に「mvn package」をしておくこと。
 set -e
 cd "$(dirname "$0")/.."
-VERSION=1.0.0
+VERSION=1.1.0
 [ -f target/minieditor.jar ] || { echo "target/minieditor.jar がありません。先に mvn package を実行してください。"; exit 1; }
 WORK=$(mktemp -d)
 mkdir -p "$WORK/in" dist
@@ -12,7 +12,7 @@ cp target/minieditor.jar "$WORK/in/"
 jpackage --type app-image \
   --name DATUM-Editor --app-version "$VERSION" --vendor wazaseisakujo \
   --input "$WORK/in" --main-jar minieditor.jar --main-class com.example.minieditor.Main \
-  --add-modules java.desktop \
+  --add-modules java.desktop,jdk.httpserver,java.net.http \
   --icon src/main/resources/icon.png \
   --dest "$WORK"
 cp LICENSE README.md packaging/linux/Add-To-Menu.sh packaging/linux/START-HERE.txt "$WORK/DATUM-Editor/"

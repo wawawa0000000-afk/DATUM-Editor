@@ -24,28 +24,72 @@ import javax.swing.plaf.metal.DefaultMetalTheme;
 import javax.swing.plaf.metal.MetalLookAndFeel;
 
 /**
- * 画面の色とフォントをまとめたクラス（VS Code の Dark テーマに近い配色）。
+ * 画面の色とフォントをまとめたクラス（VS Code の Dark / Light テーマに近い配色）。
  * 色を変えたいときは、ここだけ直せばよい。
  */
 public final class Theme {
 
-    public static final Color BG = new Color(0x1E1E1E);            // エディタの背景
-    public static final Color BG_STRIPE = new Color(0x252525);     // 1行おきの縞
-    public static final Color CURRENT_LINE = new Color(0x2C2C2D);  // カーソルのある行
-    public static final Color PANEL = new Color(0x252526);         // タブの帯・ダイアログ
-    public static final Color TAB_INACTIVE = new Color(0x2D2D2D);
-    public static final Color MENU_BAR = new Color(0x323233);
-    public static final Color INPUT = new Color(0x3C3C3C);         // 入力欄・ボタン
-    public static final Color BORDER = new Color(0x454545);
-    public static final Color HOVER = new Color(0x505050);
-    public static final Color FG = new Color(0xD4D4D4);            // ふつうの文字
-    public static final Color FG_DIM = new Color(0x858585);        // 行番号などの薄い文字
-    public static final Color ACCENT = new Color(0x007ACC);        // 青（ステータスバーなど）
-    public static final Color MENU_SELECTION = new Color(0x094771);
-    public static final Color SELECTION = new Color(0x264F78);     // 選択範囲
-    public static final Color MATCH = new Color(0x00506E);         // 検索：一致（暗い水色）
-    public static final Color MATCH_CURRENT = new Color(0x0090C8); // 検索：今いる場所（明るい水色）
-    public static final Color REPLACED = new Color(0x1E7B34);      // 置換した場所（緑）
+    // 色は、起動のときに一度だけ決める（設定で「ライト」を選んでいれば、useLight で明るい色に入れ替える）。
+    // 部品は作られたときの色を覚えるので、配色の切り替えは、次に起動したときに反映される。
+    public static Color BG = new Color(0x1E1E1E);            // エディタの背景
+    public static Color BG_STRIPE = new Color(0x252525);     // 1行おきの縞
+    public static Color CURRENT_LINE = new Color(0x2C2C2D);  // カーソルのある行
+    public static Color PANEL = new Color(0x252526);         // タブの帯・ダイアログ
+    public static Color TAB_INACTIVE = new Color(0x2D2D2D);
+    public static Color MENU_BAR = new Color(0x323233);
+    public static Color INPUT = new Color(0x3C3C3C);         // 入力欄・ボタン
+    public static Color BORDER = new Color(0x454545);
+    public static Color HOVER = new Color(0x505050);
+    public static Color FG = new Color(0xD4D4D4);            // ふつうの文字
+    public static Color FG_STRONG = Color.WHITE;             // 目立たせたい文字（選んでいるタブの名前など）
+    public static Color FG_DIM = new Color(0x858585);        // 行番号などの薄い文字
+    public static Color ACCENT = new Color(0x007ACC);        // 青（ステータスバーなど）
+    public static Color MENU_SELECTION = new Color(0x094771);
+    public static Color SELECTION = new Color(0x264F78);     // 選択範囲
+    public static Color MATCH = new Color(0x00506E);         // 検索：一致（暗い水色）
+    public static Color MATCH_CURRENT = new Color(0x0090C8); // 検索：今いる場所（明るい水色）
+    public static Color REPLACED = new Color(0x1E7B34);      // 置換した場所（緑）
+    public static Color WARNING = new Color(0x6B5A12);       // 校正で見つかった場所（黄土色）
+    public static Color PAPER = new Color(0x26231F);         // 原稿用紙の紙の色
+    public static Color PAPER_CURRENT = new Color(0x34302A); // 原稿用紙の、カーソルのある行
+    public static Color GRID = new Color(0x7A6248);          // 原稿用紙のマス目の線（茶色）
+    public static Color BOARD_DOT = new Color(0x3A3A3A);     // カードボードの背景の点
+    public static Color ERROR = new Color(0xF48771);         // 「見つかりません」などの文字
+
+    private static boolean light;
+
+    /** 明るい配色（VS Code の Light に近い色）に入れ替える。apply() より前に呼ぶこと。 */
+    public static void useLight() {
+        light = true;
+        BG = new Color(0xFFFFFF);
+        BG_STRIPE = new Color(0xF6F6F6);
+        CURRENT_LINE = new Color(0xEEF3FA);
+        PANEL = new Color(0xF3F3F3);
+        TAB_INACTIVE = new Color(0xE8E8E8);
+        MENU_BAR = new Color(0xDDDDDD);
+        INPUT = new Color(0xE4E4E4);
+        BORDER = new Color(0xC8C8C8);
+        HOVER = new Color(0xD0D0D0);
+        FG = new Color(0x333333);
+        FG_STRONG = new Color(0x111111);
+        FG_DIM = new Color(0x777777);
+        ACCENT = new Color(0x007ACC);
+        MENU_SELECTION = new Color(0xC7DFF5);
+        SELECTION = new Color(0xADD6FF);
+        MATCH = new Color(0xC2E6F5);
+        MATCH_CURRENT = new Color(0x62C4EC);
+        REPLACED = new Color(0xB7E4C7);
+        WARNING = new Color(0xF7E59A);
+        PAPER = new Color(0xFBF7EE);
+        PAPER_CURRENT = new Color(0xF2EAD9);
+        GRID = new Color(0xC9A27E);
+        BOARD_DOT = new Color(0xD8D8D8);
+        ERROR = new Color(0xC0392B);
+    }
+
+    public static boolean isLight() {
+        return light;
+    }
 
     // 文字の大きさ。Windows などで画面の拡大（125%・150% など）が効いているときは、
     // Java が自動で拡大して描くので、そのぶん小さい数字にして二重に大きくならないようにする。
@@ -101,7 +145,7 @@ public final class Theme {
         UIManager.put("Menu.background", MENU_BAR);
         UIManager.put("Menu.foreground", FG);
         UIManager.put("Menu.selectionBackground", HOVER);
-        UIManager.put("Menu.selectionForeground", Color.WHITE);
+        UIManager.put("Menu.selectionForeground", FG_STRONG);
         UIManager.put("Menu.border", BorderFactory.createEmptyBorder(6, 12, 6, 12));
         UIManager.put("PopupMenu.background", PANEL);
         UIManager.put("PopupMenu.border", BorderFactory.createLineBorder(BORDER));
@@ -109,9 +153,9 @@ public final class Theme {
             UIManager.put(item + ".background", PANEL);
             UIManager.put(item + ".foreground", FG);
             UIManager.put(item + ".selectionBackground", MENU_SELECTION);
-            UIManager.put(item + ".selectionForeground", Color.WHITE);
+            UIManager.put(item + ".selectionForeground", FG_STRONG);
             UIManager.put(item + ".acceleratorForeground", FG_DIM);
-            UIManager.put(item + ".acceleratorSelectionForeground", Color.WHITE);
+            UIManager.put(item + ".acceleratorSelectionForeground", FG_STRONG);
             UIManager.put(item + ".acceleratorFont", new FontUIResource(small()));
             UIManager.put(item + ".border", BorderFactory.createEmptyBorder(6, 12, 6, 12));
         }
@@ -129,11 +173,37 @@ public final class Theme {
                 BorderFactory.createEmptyBorder(5, 14, 5, 14)));
         UIManager.put("TextField.background", INPUT);
         UIManager.put("TextField.foreground", FG);
-        UIManager.put("TextField.caretForeground", Color.WHITE);
+        UIManager.put("TextField.caretForeground", FG_STRONG);
         UIManager.put("TextField.border", BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(BORDER),
                 BorderFactory.createEmptyBorder(4, 6, 4, 6)));
-        UIManager.put("TextArea.caretForeground", Color.WHITE);
+        UIManager.put("TextArea.caretForeground", FG_STRONG);
+        UIManager.put("TextArea.background", INPUT);
+        UIManager.put("TextArea.foreground", FG);
+        UIManager.put("TextArea.selectionBackground", SELECTION);
+        UIManager.put("TextArea.selectionForeground", FG_STRONG);
+        UIManager.put("PasswordField.background", INPUT);
+        UIManager.put("PasswordField.foreground", FG);
+        UIManager.put("PasswordField.caretForeground", FG_STRONG);
+        UIManager.put("List.background", BG);
+        UIManager.put("List.foreground", FG);
+        UIManager.put("List.selectionBackground", MENU_SELECTION);
+        UIManager.put("List.selectionForeground", FG_STRONG);
+        UIManager.put("Tree.background", PANEL);
+        UIManager.put("Tree.foreground", FG);
+        UIManager.put("Tree.textBackground", PANEL);
+        UIManager.put("Tree.textForeground", FG);
+        UIManager.put("Tree.selectionBackground", MENU_SELECTION);
+        UIManager.put("Tree.selectionForeground", FG_STRONG);
+        UIManager.put("Tree.selectionBorderColor", MENU_SELECTION);
+        UIManager.put("CheckBox.background", PANEL);
+        UIManager.put("CheckBox.foreground", FG);
+        UIManager.put("RadioButton.background", PANEL);
+        UIManager.put("RadioButton.foreground", FG);
+        UIManager.put("Spinner.background", INPUT);
+        UIManager.put("FormattedTextField.background", INPUT);
+        UIManager.put("FormattedTextField.foreground", FG);
+        UIManager.put("TitledBorder.titleColor", FG_STRONG);
         UIManager.put("ComboBox.background", INPUT);
         UIManager.put("ComboBox.foreground", FG);
         UIManager.put("OptionPane.background", PANEL);
@@ -188,10 +258,10 @@ public final class Theme {
     /** 検索欄などの入力欄を、暗い配色にそろえる。 */
     public static void styleField(JTextField field) {
         field.setBackground(INPUT);
-        field.setForeground(Color.WHITE);
-        field.setCaretColor(Color.WHITE);
+        field.setForeground(FG_STRONG);
+        field.setCaretColor(FG_STRONG);
         field.setSelectionColor(SELECTION);
-        field.setSelectedTextColor(Color.WHITE);
+        field.setSelectedTextColor(FG_STRONG);
         field.setFont(small());
         field.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(BORDER),
@@ -216,7 +286,7 @@ public final class Theme {
 
         @Override
         public String getName() {
-            return "DATUM Dark";
+            return light ? "DATUM Light" : "DATUM Dark";
         }
 
         @Override

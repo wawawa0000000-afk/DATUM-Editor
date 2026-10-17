@@ -37,6 +37,43 @@ public final class Json {
         return sb.toString();
     }
 
+    /**
+     * 改行や字下げを入れずに、1行で書き出す。
+     * 通信に使う（「1行が1つのメッセージ」という決まりの相手に送るため、途中に改行を入れられない）。
+     */
+    public static String writeCompact(Object value) {
+        StringBuilder sb = new StringBuilder();
+        writeCompact(sb, value);
+        return sb.toString();
+    }
+
+    private static void writeCompact(StringBuilder sb, Object value) {
+        if (value instanceof Map<?, ?> map) {
+            sb.append('{');
+            int i = 0;
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                if (i++ > 0) {
+                    sb.append(',');
+                }
+                quote(sb, String.valueOf(entry.getKey()));
+                sb.append(':');
+                writeCompact(sb, entry.getValue());
+            }
+            sb.append('}');
+        } else if (value instanceof List<?> list) {
+            sb.append('[');
+            for (int i = 0; i < list.size(); i++) {
+                if (i > 0) {
+                    sb.append(',');
+                }
+                writeCompact(sb, list.get(i));
+            }
+            sb.append(']');
+        } else {
+            write(sb, value, 0);        // 文字列・数値・真偽・null は、ふつうの書き出しと同じ
+        }
+    }
+
     private static void write(StringBuilder sb, Object value, int indent) {
         if (value == null) {
             sb.append("null");
