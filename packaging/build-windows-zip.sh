@@ -5,7 +5,7 @@
 # 必要なもの: curl、unzip、zip、sha256sum。先に「mvn package」をしておくこと。
 set -e
 cd "$(dirname "$0")/.."
-VERSION=1.1.1
+VERSION=1.1.2
 JRE_URL="https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/OpenJDK21U-jre_x64_windows_hotspot_21.0.12.1_1.zip"
 JRE_SHA256="d35f31e712f0fcf6ac5a093edc90204fbff22f720ba3950bd09d331d5e621636"
 

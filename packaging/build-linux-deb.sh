@@ -4,7 +4,7 @@
 # 必要なもの: JDK 17 以上（jpackage）、dpkg-deb、fakeroot。先に「mvn package」をしておくこと。
 set -e
 cd "$(dirname "$0")/.."
-VERSION=1.1.1
+VERSION=1.1.2
 [ -f target/minieditor.jar ] || { echo "target/minieditor.jar がありません。先に mvn package を実行してください。"; exit 1; }
 WORK=$(mktemp -d)
 mkdir -p "$WORK/in" dist
