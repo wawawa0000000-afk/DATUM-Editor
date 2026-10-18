@@ -89,18 +89,20 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     private boolean terminalVisible = false;
     private final JToggleButton terminalButton = createToolButton(">_", "ターミナルを表示する / 隠す（Ctrl+J）",
             () -> setTerminalVisible(!terminalVisible));
-    private final JToggleButton folderButton = createToolButton("フォルダ", "フォルダのサイドバーを表示する / 隠す（Ctrl+Shift+E）",
-            this::toggleSidebar);
-    private final JToggleButton proofButton = createToolButton("校正", "校正の欄を表示する / 隠す（F7）",
-            () -> showRight("proof"));
+    private final JToggleButton folderButton = createIconButton(ToolIcons.folder(), "フォルダ",
+            "フォルダのサイドバーを表示する / 隠す（Ctrl+Shift+E）", this::toggleSidebar);
+    private final JToggleButton proofButton = createIconButton(ToolIcons.proofread(), "校正",
+            "校正の欄を表示する / 隠す（F7）", () -> showRight("proof"));
     private final JToggleButton aiButton = createToolButton("AI", "AI の会話欄を表示する / 隠す（Ctrl+Shift+A）",
             () -> showRight("ai"));
     private final JToggleButton focusButton = createToolButton("集中", "集中モード（F11）", this::toggleFocusMode);
-    private final JToggleButton paletteButton = createToolButton("操作", "すべての操作を、名前で探して実行する（Ctrl+P）",
-            this::showPalette);
+    private final JToggleButton paletteButton = createIconButton(ToolIcons.search(), "すべての操作を探す",
+            "すべての操作を、名前で探して実行する（Ctrl+P）", this::showPalette);
     private JMenuItem paletteItem;
-    private final JToggleButton splitButton = createToolButton("分割", "画面を分割する / 分割をやめる（Ctrl+\\）。"
-            + "タブは引きずって反対側へ移せます。右クリックでも操作できます", this::toggleSplit);
+    private final JToggleButton splitButton = createIconButton(
+            ToolIcons.split(() -> splitOrientation == JSplitPane.VERTICAL_SPLIT), "分割",
+            "画面を分割する / 分割をやめる（Ctrl+\\）。タブは引きずって反対側へ移せます。右クリックでも操作できます",
+            this::toggleSplit);
     private final JCheckBoxMenuItem terminalItem = new JCheckBoxMenuItem("ターミナル");
 
     private final FindBar findBar = new FindBar(this::currentPane);
@@ -401,6 +403,15 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             button.setSelected(!button.isSelected());   // 表示の切り替えは action 側で行い、その結果に合わせる
             action.run();
         });
+        return button;
+    }
+
+    /** アイコンで表すボタン。name は、読み上げ（アクセシビリティ）用の名前。 */
+    private JToggleButton createIconButton(javax.swing.Icon icon, String name, String tooltip, Runnable action) {
+        JToggleButton button = createToolButton("", name + "：" + tooltip, action);
+        button.setIcon(icon);
+        button.getAccessibleContext().setAccessibleName(name);
+        button.setBorder(BorderFactory.createEmptyBorder(3, 8, 3, 8));
         return button;
     }
 
@@ -2034,6 +2045,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         } else {
             toggleSplit();
         }
+        splitButton.repaint();              // アイコンの線の向き（縦・横）を合わせる
     }
 
     private void moveTabToOtherGroup() {
