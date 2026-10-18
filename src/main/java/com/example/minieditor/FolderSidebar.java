@@ -306,6 +306,7 @@ public final class FolderSidebar extends JPanel {
         Path folder = target == null ? root : (Files.isDirectory(target) ? target : target.getParent());
         JPopupMenu menu = new JPopupMenu();
         menu.add(menuItem("新しいテキストファイル…", () -> createFile(folder)));
+        menu.add(menuItem("新しいカードボード（KJ法）…", () -> createBoard(folder)));
         menu.add(menuItem("新しいフォルダ…", () -> createFolder(folder)));
         if (target != null) {
             menu.addSeparator();
@@ -348,6 +349,28 @@ public final class FolderSidebar extends JPanel {
         Path file = folder.resolve(name);
         try {
             Files.writeString(file, "", StandardCharsets.UTF_8, java.nio.file.StandardOpenOption.CREATE_NEW);
+            refresh();
+            host.openFromSidebar(file);
+        } catch (java.nio.file.FileAlreadyExistsException ex) {
+            host.message("同じ名前のファイルがあります: " + name);
+        } catch (IOException ex) {
+            host.message("作れませんでした: " + ex.getMessage());
+        }
+    }
+
+    /** 空のカードボードを、このアプリの .json として作って開く。 */
+    private void createBoard(Path folder) {
+        String name = ask("新しいカードボードの名前（.json は自動で付きます）", "アイデア.json");
+        if (name == null) {
+            return;
+        }
+        if (!name.toLowerCase().endsWith(".json")) {
+            name = name + ".json";      // カードの配置を残すため、カードボードは .json でしか保存できない
+        }
+        Path file = folder.resolve(name);
+        try {
+            Files.writeString(file, Json.write(new BoardPane().toJson()), StandardCharsets.UTF_8,
+                    java.nio.file.StandardOpenOption.CREATE_NEW);
             refresh();
             host.openFromSidebar(file);
         } catch (java.nio.file.FileAlreadyExistsException ex) {
@@ -438,6 +461,33 @@ public final class FolderSidebar extends JPanel {
         host.openCombined(folder.getFileName() + "（" + count + " ファイルをまとめたもの）", sb.toString());
     }
 
+    private static final String[] BADGE_HEX = {"#4FC1FF", "#CE9178", "#4EC9B0"};     // タブの印と同じ色
+    private static final java.util.Map<Path, Object[]> KINDS = new java.util.HashMap<>();   // ファイル → {更新時刻, 種類}
+
+    /** このアプリの形式の .json なら、その種類を返す。それ以外は null。更新時刻が同じあいだは、読み直さない。 */
+    static EditorPane.Mode kindOf(Path file) {
+        if (!file.getFileName().toString().toLowerCase().endsWith(".json")) {
+            return null;
+        }
+        try {
+            long modified = Files.getLastModifiedTime(file).toMillis();
+            Object[] cached = KINDS.get(file);
+            if (cached != null && (long) cached[0] == modified) {
+                return (EditorPane.Mode) cached[1];
+            }
+            EditorPane.Mode mode = null;
+            if (Files.size(file) < 5_000_000
+                    && Json.parse(Files.readString(file, StandardCharsets.UTF_8)) instanceof java.util.Map<?, ?> raw
+                    && EditorPane.FORMAT_NAME.equals(raw.get("format"))) {
+                mode = EditorPane.Mode.fromId(String.valueOf(raw.get("mode")));
+            }
+            KINDS.put(file, new Object[]{modified, mode});
+            return mode;
+        } catch (IOException | Json.JsonException | RuntimeException ex) {
+            return null;                // 読めない・JSON でないものは、ふつうのファイルとして出す
+        }
+    }
+
     /** 木の1行の見た目：フォルダは ▸、テキストはそのまま、開けないファイルは薄く。 */
     private static final class Renderer extends DefaultTreeCellRenderer {
         Renderer() {
@@ -457,6 +507,12 @@ public final class FolderSidebar extends JPanel {
             Object user = ((DefaultMutableTreeNode) value).getUserObject();
             String text = user instanceof Path p ? (p.getFileName() == null ? p.toString() : p.getFileName().toString())
                     : String.valueOf(user);
+            EditorPane.Mode mode = user instanceof Path p && Files.isRegularFile(p) ? kindOf(p) : null;
+            if (mode != null) {
+                // このアプリの .json は、タブと同じ印（文・縦・板）を名前の前に付けて、種類がわかるようにする
+                text = "<html><font color='" + BADGE_HEX[mode.ordinal()] + "'><b>" + mode.badge + "</b></font>&nbsp;&nbsp;"
+                        + text.replace("&", "&amp;").replace("<", "&lt;") + "</html>";
+            }
             super.getTreeCellRendererComponent(tree, text, selected, expanded, leaf, row, focused);
             boolean folder = user instanceof Path p && Files.isDirectory(p);
             setFont(tree.getFont().deriveFont(folder ? java.awt.Font.BOLD : java.awt.Font.PLAIN));   // フォルダは太字

@@ -7,6 +7,7 @@ import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.Graphics;
+import java.awt.Point;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
@@ -15,6 +16,7 @@ import java.util.List;
 import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
 import javax.swing.Box;
+import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollBar;
@@ -37,6 +39,15 @@ public class EditorGroup extends JPanel {
         void closeRequested(EditorGroup group, EditorPane pane);
 
         void newRequested(EditorGroup group);
+
+        /** タブを右クリックした。 */
+        void tabMenuRequested(EditorGroup group, EditorPane pane, java.awt.Component invoker, int x, int y);
+
+        /** タブを引きずっている途中（screen は画面全体での位置）。 */
+        void tabDragged(EditorGroup group, EditorPane pane, Point screen);
+
+        /** 引きずっていたタブを離した。 */
+        void tabDropped(EditorGroup group, EditorPane pane, Point screen);
     }
 
     private static final Color[] BADGE_COLORS = {
@@ -48,7 +59,20 @@ public class EditorGroup extends JPanel {
     private EditorPane active;
     private boolean groupActive;
 
-    private final JPanel strip = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+    private List<EditorPane> builtFor = new ArrayList<>();     // タブの帯を作ったときの顔ぶれ
+    private int dropMarker = -1;           // タブを引きずっているとき、ここに入ると示す位置（-1 なら出さない）
+
+    private final JPanel strip = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0)) {
+        @Override
+        protected void paintChildren(Graphics g) {
+            super.paintChildren(g);
+            int x = markerX();
+            if (x >= 0) {
+                g.setColor(Theme.ACCENT);
+                g.fillRect(Math.max(0, x - 2), 0, 4, getHeight());     // タブを離すと入る所に、青い縦線を出す
+            }
+        }
+    };
     private final JScrollPane stripScroll = new JScrollPane(strip,
             JScrollPane.VERTICAL_SCROLLBAR_NEVER, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
     private final JPanel content = new JPanel(new BorderLayout());
@@ -125,13 +149,103 @@ public class EditorGroup extends JPanel {
         }
     }
 
+    /** タブを、指定した位置に入れて表示する（引きずって移したときに使う）。 */
+    public void insertPane(EditorPane pane, int index) {
+        panes.add(Math.max(0, Math.min(index, panes.size())), pane);
+        select(pane);
+    }
+
+    /** 同じグループの中で、タブの順番を変える。index は、動かす前の並びで数えた入れたい位置。 */
+    public void movePane(EditorPane pane, int index) {
+        int from = panes.indexOf(pane);
+        if (from < 0) {
+            return;
+        }
+        panes.remove(from);
+        if (index > from) {
+            index--;                    // 自分が抜けたぶん、後ろの位置が1つ前にずれる
+        }
+        insertPane(pane, index);
+    }
+
+    /** 画面全体での位置が、このグループの上にあるか。 */
+    public boolean containsScreen(Point screen) {
+        if (!isShowing()) {
+            return false;
+        }
+        Point p = new Point(screen);
+        SwingUtilities.convertPointFromScreen(p, this);
+        return contains(p);
+    }
+
+    /** 画面全体での位置が、タブの帯の上にあるか。 */
+    public boolean overStrip(Point screen) {
+        if (!stripScroll.isShowing()) {
+            return false;
+        }
+        Point p = new Point(screen);
+        SwingUtilities.convertPointFromScreen(p, stripScroll);
+        return stripScroll.contains(p);
+    }
+
+    /** その位置でタブを離したとき、何番目に入るか。帯より下で離したときは最後に入れる。 */
+    public int dropIndex(Point screen) {
+        if (!overStrip(screen)) {
+            return panes.size();
+        }
+        Point p = new Point(screen);
+        SwingUtilities.convertPointFromScreen(p, strip);
+        int index = 0;
+        for (java.awt.Component c : strip.getComponents()) {
+            if (c instanceof Tab) {
+                if (p.x < c.getX() + c.getWidth() / 2) {
+                    return index;
+                }
+                index++;
+            }
+        }
+        return panes.size();
+    }
+
+    /** タブを離すと入る位置に、印を出す（-1 で消す）。 */
+    public void setDropMarker(int index) {
+        if (dropMarker != index) {
+            dropMarker = index;
+            strip.repaint();
+        }
+    }
+
+    private int markerX() {
+        if (dropMarker < 0) {
+            return -1;
+        }
+        int index = 0;
+        java.awt.Component last = null;
+        for (java.awt.Component c : strip.getComponents()) {
+            if (c instanceof Tab) {
+                if (index == dropMarker) {
+                    return c.getX();
+                }
+                last = c;
+                index++;
+            }
+        }
+        return last == null ? 0 : last.getX() + last.getWidth();
+    }
+
     public void select(EditorPane pane) {
         active = pane;
         content.removeAll();
         content.add(pane != null ? pane : placeholder, BorderLayout.CENTER);
         content.revalidate();
         content.repaint();
-        rebuild();
+        if (builtFor.equals(panes)) {
+            // タブの顔ぶれが同じなら、作り直さずに描き直すだけにする（引きずり始めたタブが消えないように）
+            strip.repaint();
+            scrollToActive();
+        } else {
+            rebuild();
+        }
         host.paneSelected(this, pane);
     }
 
@@ -164,21 +278,23 @@ public class EditorGroup extends JPanel {
     /** タブの帯を作り直す。 */
     private void rebuild() {
         strip.removeAll();
-        Tab activeTab = null;
         for (EditorPane pane : panes) {
-            Tab tab = new Tab(pane);
-            strip.add(tab);
-            if (pane == active) {
-                activeTab = tab;
-            }
+            strip.add(new Tab(pane));
         }
+        builtFor = new ArrayList<>(panes);
         strip.add(newTabButton());
         strip.revalidate();
         strip.repaint();
-        if (activeTab != null) {
-            Tab visible = activeTab;
-            SwingUtilities.invokeLater(() -> visible.scrollRectToVisible(
-                    new java.awt.Rectangle(0, 0, visible.getWidth(), visible.getHeight())));
+        scrollToActive();
+    }
+
+    /** 表示中のタブが見える所まで、タブの帯を送る。 */
+    private void scrollToActive() {
+        for (java.awt.Component c : strip.getComponents()) {
+            if (c instanceof Tab tab && tab.pane == active) {
+                SwingUtilities.invokeLater(() -> tab.scrollRectToVisible(
+                        new java.awt.Rectangle(0, 0, tab.getWidth(), tab.getHeight())));
+            }
         }
     }
 
@@ -224,9 +340,14 @@ public class EditorGroup extends JPanel {
             badge.setFont(Theme.small().deriveFont(Font.BOLD));
             badge.setForeground(BADGE_COLORS[pane.getMode().ordinal()]);
 
-            JLabel title = new JLabel(pane.getTitle());
+            // 文字の色は、描くたびに「選ばれているか」で決める（選び直すたびにタブを作り直さないため）
+            JLabel title = new JLabel(pane.getTitle()) {
+                @Override
+                public Color getForeground() {
+                    return Tab.this.pane == active ? Theme.FG_STRONG : Theme.FG_DIM;
+                }
+            };
             title.setFont(Theme.ui());
-            title.setForeground(pane == active ? Theme.FG_STRONG : Theme.FG_DIM);
 
             // 未保存のときは ● を出し、マウスを乗せると × に変わる
             String idle = pane.isDirty() ? "●" : "×";
@@ -261,21 +382,56 @@ public class EditorGroup extends JPanel {
             add(Box.createHorizontalStrut(10));
             add(close);
 
+            // 押すと表示、右クリックでメニュー、引きずると並べ替え・反対側への移動
             MouseAdapter selectOnPress = new MouseAdapter() {
+                private Point pressed;
+                private boolean dragging;
+
                 @Override
                 public void mousePressed(MouseEvent e) {
                     host.groupActivated(EditorGroup.this);
                     if (SwingUtilities.isMiddleMouseButton(e)) {
                         host.closeRequested(EditorGroup.this, pane);   // 中ボタンで閉じる
-                    } else {
-                        select(pane);
-                        pane.focusEditor();
+                        return;
+                    }
+                    select(pane);
+                    pane.focusEditor();
+                    if (SwingUtilities.isRightMouseButton(e)) {
+                        host.tabMenuRequested(EditorGroup.this, pane, e.getComponent(), e.getX(), e.getY());
+                    } else if (SwingUtilities.isLeftMouseButton(e)) {
+                        pressed = e.getLocationOnScreen();
+                        dragging = false;
                     }
                 }
+
+                @Override
+                public void mouseDragged(MouseEvent e) {
+                    if (pressed == null) {
+                        return;
+                    }
+                    if (!dragging && pressed.distance(e.getLocationOnScreen()) > 8) {
+                        dragging = true;        // 少し動かしただけでは、引きずりとみなさない（押すつもりの手ぶれ）
+                        e.getComponent().setCursor(Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR));
+                    }
+                    if (dragging) {
+                        host.tabDragged(EditorGroup.this, pane, e.getLocationOnScreen());
+                    }
+                }
+
+                @Override
+                public void mouseReleased(MouseEvent e) {
+                    if (dragging) {
+                        e.getComponent().setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+                        host.tabDropped(EditorGroup.this, pane, e.getLocationOnScreen());
+                    }
+                    pressed = null;
+                    dragging = false;
+                }
             };
-            addMouseListener(selectOnPress);
-            badge.addMouseListener(selectOnPress);
-            title.addMouseListener(selectOnPress);
+            for (JComponent part : new JComponent[]{this, badge, title}) {
+                part.addMouseListener(selectOnPress);
+                part.addMouseMotionListener(selectOnPress);
+            }
         }
 
         @Override

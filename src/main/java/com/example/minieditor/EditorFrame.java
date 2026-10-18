@@ -10,6 +10,7 @@ import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.GraphicsEnvironment;
 import java.awt.KeyboardFocusManager;
+import java.awt.Point;
 import java.awt.RenderingHints;
 import java.awt.event.ActionEvent;
 import java.awt.event.InputEvent;
@@ -47,6 +48,7 @@ import javax.swing.JMenuBar;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
 import javax.swing.JTextArea;
@@ -92,6 +94,8 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     private final JToggleButton aiButton = createToolButton("AI", "AI の会話欄を表示する / 隠す（Ctrl+Shift+A）",
             () -> showRight("ai"));
     private final JToggleButton focusButton = createToolButton("集中", "集中モード（F11）", this::toggleFocusMode);
+    private final JToggleButton splitButton = createToolButton("分割", "画面を分割する / 分割をやめる（Ctrl+\\）。"
+            + "タブは引きずって反対側へ移せます。右クリックでも操作できます", this::toggleSplit);
     private final JCheckBoxMenuItem terminalItem = new JCheckBoxMenuItem("ターミナル");
 
     private final FindBar findBar = new FindBar(this::currentPane);
@@ -112,6 +116,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     private FolderSidebar sidebar;
     private boolean sidebarVisible;
     private ProofreadPanel proofPanel;
+    private final Map<Theme.Scheme, javax.swing.JRadioButtonMenuItem> schemeItems = new java.util.EnumMap<>(Theme.Scheme.class);
     private AiChatPanel chatPanel;
     private McpTools chatTools;
     private String rightPanel;                  // 右に出している欄（"proof" / "ai"）。出していなければ null
@@ -271,6 +276,21 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         view.add(item("次のタブ", key(KeyEvent.VK_PAGE_DOWN, CTRL), () -> activeGroup.selectNext(1)));
         view.add(item("前のタブ", key(KeyEvent.VK_PAGE_UP, CTRL), () -> activeGroup.selectNext(-1)));
         view.addSeparator();
+        // 配色は、選ぶとすぐに変わる
+        JMenu schemeMenu = new JMenu("配色");
+        javax.swing.ButtonGroup schemeGroup = new javax.swing.ButtonGroup();
+        for (Theme.Scheme scheme : Theme.Scheme.values()) {
+            javax.swing.JRadioButtonMenuItem schemeItem = new javax.swing.JRadioButtonMenuItem(scheme.label, scheme == Theme.scheme());
+            schemeItem.addActionListener(e -> {
+                appSettings.put(AppSettings.THEME, scheme.id);
+                appSettings.save();
+                applyScheme(scheme);
+            });
+            schemeGroup.add(schemeItem);
+            schemeItems.put(scheme, schemeItem);
+            schemeMenu.add(schemeItem);
+        }
+        view.add(schemeMenu);
         JCheckBoxMenuItem stripeItem = new JCheckBoxMenuItem("行の縞模様", Theme.stripes);
         stripeItem.addActionListener(e -> {
             Theme.stripes = stripeItem.isSelected();
@@ -327,7 +347,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         // 右端（ウィンドウの最小化・最大化・×のすぐ下）に、1回押すだけで使えるボタンを並べる
         JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
         tools.setOpaque(false);
-        for (JToggleButton button : new JToggleButton[]{folderButton, proofButton, aiButton, terminalButton, focusButton}) {
+        for (JToggleButton button : new JToggleButton[]{folderButton, splitButton, proofButton, aiButton, terminalButton, focusButton}) {
             tools.add(button);
         }
         tools.setMaximumSize(tools.getPreferredSize());
@@ -726,15 +746,44 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     }
 
     private void openSettings() {
-        String themeBefore = appSettings.getString(AppSettings.THEME, "dark");
+        String themeBefore = appSettings.getString(AppSettings.THEME, "gray");
         if (new SettingsDialog(this, appSettings).open()) {
             if (chatPanel != null) {
                 chatPanel.refreshBackendLabel();
             }
             updateStatus();
-            boolean themeChanged = !themeBefore.equals(appSettings.getString(AppSettings.THEME, "dark"));
-            flash(themeChanged ? "設定を保存しました。配色は、次に起動したときに変わります" : "設定を保存しました");
+            if (!themeBefore.equals(appSettings.getString(AppSettings.THEME, "gray"))) {
+                applyScheme(Theme.Scheme.fromId(appSettings.getString(AppSettings.THEME, "gray")));
+            }
+            flash("設定を保存しました");
         }
+    }
+
+    /** 起動したまま配色を変える。画面に出ていない部品（裏のタブ・閉じている欄）も一緒に塗り直す。 */
+    private void applyScheme(Theme.Scheme scheme) {
+        List<Component> roots = new ArrayList<>(List.of(getRootPane(), group1, group2, findBar));
+        roots.addAll(allPanes());
+        for (Component c : new Component[]{sidebar, proofPanel, chatPanel, terminal, statusBar, goalMeter}) {
+            if (c != null) {
+                roots.add(c);
+            }
+        }
+        Theme.switchTo(scheme, roots);
+        JToggleButton[] buttons = {folderButton, splitButton, proofButton, aiButton, terminalButton, focusButton};
+        for (JToggleButton button : buttons) {
+            button.setForeground(button.isSelected() ? Color.WHITE : Theme.FG_STRONG);
+        }
+        for (EditorGroup group : new EditorGroup[]{group1, group2}) {
+            group.refreshTabs();
+        }
+        if (schemeItems.get(scheme) != null) {
+            schemeItems.get(scheme).setSelected(true);
+        }
+        findBar.paneSwitched();             // 検索の色を、新しい配色で付け直す
+        if (proofPanel != null) {
+            proofPanel.refresh();           // 校正の印も付け直す
+        }
+        flash("配色を「" + scheme.label + "」にしました");
     }
 
     // ---------- 自動保存・異常終了からの復旧 ----------
@@ -1238,6 +1287,100 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     public void newRequested(EditorGroup group) {
         setActiveGroup(group);
         newDocument(EditorPane.Mode.TEXT);
+    }
+
+    /** タブの右クリックメニュー。分割や移動を、メニューを探さずにその場でできるようにする。 */
+    @Override
+    public void tabMenuRequested(EditorGroup group, EditorPane pane, Component invoker, int x, int y) {
+        JPopupMenu menu = new JPopupMenu();
+        boolean right = group == group2;
+        String side = splitOrientation == JSplitPane.HORIZONTAL_SPLIT ? (right ? "左" : "右") : (right ? "上" : "下");
+        JMenuItem move = new JMenuItem(split ? side + "側へ移す" : "画面を分割して、" + side + "側へ移す");
+        move.setEnabled(split || group.getPanes().size() > 1);
+        move.addActionListener(e -> moveTabToOtherGroup());
+        menu.add(move);
+        menu.add(menuItem(split ? "分割をやめる" : "画面を分割する", this::toggleSplit));
+        menu.add(menuItem(splitOrientation == JSplitPane.HORIZONTAL_SPLIT ? "上下に分割する" : "左右に分割する",
+                this::toggleOrientation));
+        menu.addSeparator();
+        menu.add(menuItem("閉じる", () -> closePane(group, pane)));
+        JMenuItem others = new JMenuItem("ほかのタブを閉じる");
+        others.setEnabled(group.getPanes().size() > 1);
+        others.addActionListener(e -> {
+            for (EditorPane other : new ArrayList<>(group.getPanes())) {
+                if (other != pane && group.getPanes().contains(other)) {
+                    closePane(group, other);
+                }
+            }
+        });
+        menu.add(others);
+        menu.show(invoker, x, y);
+    }
+
+    private static JMenuItem menuItem(String label, Runnable action) {
+        JMenuItem item = new JMenuItem(label);
+        item.addActionListener(e -> action.run());
+        return item;
+    }
+
+    /** タブを離したとき、どこへ入るか。group が null なら、どこにも入らない。 */
+    private record TabDrop(EditorGroup group, int index, boolean newSplit) {
+    }
+
+    private TabDrop tabDrop(EditorGroup from, Point screen) {
+        for (EditorGroup group : split ? new EditorGroup[]{group1, group2} : new EditorGroup[]{group1}) {
+            if (!group.containsScreen(screen)) {
+                continue;
+            }
+            if (!split && !group.overStrip(screen) && from.getPanes().size() > 1) {
+                // 分割していないときに、文書の右（下）3分の1で離したら、分割してそちらへ移す
+                Point p = new Point(screen);
+                SwingUtilities.convertPointFromScreen(p, group);
+                boolean edge = splitOrientation == JSplitPane.HORIZONTAL_SPLIT
+                        ? p.x > group.getWidth() * 2 / 3 : p.y > group.getHeight() * 2 / 3;
+                if (edge) {
+                    return new TabDrop(group2, 0, true);
+                }
+            }
+            return new TabDrop(group, group.dropIndex(screen), false);
+        }
+        return new TabDrop(null, -1, false);
+    }
+
+    @Override
+    public void tabDragged(EditorGroup from, EditorPane pane, Point screen) {
+        TabDrop drop = tabDrop(from, screen);
+        group1.setDropMarker(drop.group() == group1 && group1.overStrip(screen) ? drop.index() : -1);
+        group2.setDropMarker(drop.group() == group2 && group2.overStrip(screen) ? drop.index() : -1);
+        String hint = drop.newSplit() ? "ここで離すと、画面を分割して移します"
+                : drop.group() != null && drop.group() != from ? "ここで離すと、反対側へ移します" : null;
+        if (hint != null && !hint.equals(message)) {
+            flash(hint);
+        }
+    }
+
+    @Override
+    public void tabDropped(EditorGroup from, EditorPane pane, Point screen) {
+        group1.setDropMarker(-1);
+        group2.setDropMarker(-1);
+        TabDrop drop = tabDrop(from, screen);
+        if (drop.group() == null) {
+            return;
+        }
+        if (drop.group() == from) {
+            from.movePane(pane, drop.index());      // 同じ側なら、並べ替え
+        } else {
+            from.removePane(pane);
+            if (drop.newSplit()) {
+                split = true;
+                layoutGroups();
+            }
+            drop.group().insertPane(pane, drop.index());
+            setActiveGroup(drop.group());
+            tidyGroups();
+        }
+        currentPaneChanged();
+        SwingUtilities.invokeLater(pane::focusEditor);
     }
 
     // ---------- 新規・開く・保存・閉じる ----------
@@ -1788,6 +1931,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         } else {
             editorArea.add(group1, BorderLayout.CENTER);
         }
+        splitButton.setSelected(split);
         editorArea.revalidate();
         editorArea.repaint();
     }

@@ -26,7 +26,7 @@ import javax.swing.SpinnerNumberModel;
 
 /**
  * 設定の画面（ファイル → 設定…）。表示・保存・執筆・AI の設定を1か所にまとめた。
- * 「OK」を押すと settings.json に保存する。配色だけは、次に起動したときに変わる。
+ * 「OK」を押すと settings.json に保存する。
  */
 final class SettingsDialog extends JDialog {
 
@@ -43,15 +43,16 @@ final class SettingsDialog extends JDialog {
         super(owner, "設定", true);
 
         // ---- 表示 ----
-        JRadioButton dark = new JRadioButton("ダーク（暗い配色）");
-        JRadioButton light = new JRadioButton("ライト（明るい配色）");
+        Theme.Scheme current = Theme.Scheme.fromId(settings.getString(AppSettings.THEME, "gray"));
         ButtonGroup themes = new ButtonGroup();
-        themes.add(dark);
-        themes.add(light);
-        boolean isLight = "light".equals(settings.getString(AppSettings.THEME, "dark"));
-        dark.setSelected(!isLight);
-        light.setSelected(isLight);
-        JPanel themeRow = row(dark, light);
+        JRadioButton[] schemeButtons = new JRadioButton[Theme.Scheme.values().length];
+        for (Theme.Scheme scheme : Theme.Scheme.values()) {
+            JRadioButton button = new JRadioButton(scheme.label);
+            button.setSelected(scheme == current);
+            themes.add(button);
+            schemeButtons[scheme.ordinal()] = button;
+        }
+        JPanel themeRow = row(schemeButtons);
 
         // ---- 保存 ----
         JCheckBox autoSave = new JCheckBox("30 秒ごとに自動で上書き保存する（保存先のある文書）",
@@ -100,7 +101,7 @@ final class SettingsDialog extends JDialog {
         int y = 0;
         y = section(form, y, "表示");
         y = field(form, y, "配色", themeRow);
-        y = field(form, y, "", hint("配色は、エディタを起動し直したときに変わります。"));
+        y = field(form, y, "", hint("OK を押すと、すぐに変わります。「表示 → 配色」からも切り替えられます。"));
         y = section(form, y, "保存");
         y = field(form, y, "", autoSave);
         y = field(form, y, "", hint("<html>自動保存を切っていても、未保存の文書は 30 秒ごとに裏で控えを取ります（異常終了したときに、次の起動で復元できます）。</html>"));
@@ -119,7 +120,11 @@ final class SettingsDialog extends JDialog {
         JButton ok = new JButton("OK");
         JButton cancel = new JButton("キャンセル");
         ok.addActionListener(e -> {
-            settings.put(AppSettings.THEME, light.isSelected() ? "light" : "dark");
+            for (Theme.Scheme scheme : Theme.Scheme.values()) {
+                if (schemeButtons[scheme.ordinal()].isSelected()) {
+                    settings.put(AppSettings.THEME, scheme.id);
+                }
+            }
             settings.put(AppSettings.AUTO_SAVE, autoSave.isSelected());
             settings.put(AppSettings.HISTORY_LIMIT, (Integer) historyLimit.getValue());
             settings.put(AppSettings.DAILY_GOAL, (Integer) goal.getValue());

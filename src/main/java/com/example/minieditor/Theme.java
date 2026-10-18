@@ -29,66 +29,257 @@ import javax.swing.plaf.metal.MetalLookAndFeel;
  */
 public final class Theme {
 
-    // 色は、起動のときに一度だけ決める（設定で「ライト」を選んでいれば、useLight で明るい色に入れ替える）。
-    // 部品は作られたときの色を覚えるので、配色の切り替えは、次に起動したときに反映される。
-    public static Color BG = new Color(0x1E1E1E);            // エディタの背景
-    public static Color BG_STRIPE = new Color(0x252525);     // 1行おきの縞
-    public static Color CURRENT_LINE = new Color(0x2C2C2D);  // カーソルのある行
-    public static Color PANEL = new Color(0x252526);         // タブの帯・ダイアログ
-    public static Color TAB_INACTIVE = new Color(0x2D2D2D);
-    public static Color MENU_BAR = new Color(0x323233);
-    public static Color INPUT = new Color(0x3C3C3C);         // 入力欄・ボタン
-    public static Color BORDER = new Color(0x454545);
-    public static Color HOVER = new Color(0x505050);
-    public static Color FG = new Color(0xD4D4D4);            // ふつうの文字
-    public static Color FG_STRONG = Color.WHITE;             // 目立たせたい文字（選んでいるタブの名前など）
-    public static Color FG_DIM = new Color(0x858585);        // 行番号などの薄い文字
-    public static Color ACCENT = new Color(0x007ACC);        // 青（ステータスバーなど）
-    public static Color MENU_SELECTION = new Color(0x094771);
-    public static Color SELECTION = new Color(0x264F78);     // 選択範囲
-    public static Color MATCH = new Color(0x00506E);         // 検索：一致（暗い水色）
-    public static Color MATCH_CURRENT = new Color(0x0090C8); // 検索：今いる場所（明るい水色）
-    public static Color REPLACED = new Color(0x1E7B34);      // 置換した場所（緑）
-    public static Color WARNING = new Color(0x6B5A12);       // 校正で見つかった場所（黄土色）
-    public static Color PAPER = new Color(0x26231F);         // 原稿用紙の紙の色
-    public static Color PAPER_CURRENT = new Color(0x34302A); // 原稿用紙の、カーソルのある行
-    public static Color GRID = new Color(0x7A6248);          // 原稿用紙のマス目の線（茶色）
-    public static Color BOARD_DOT = new Color(0x3A3A3A);     // カードボードの背景の点
-    public static Color ERROR = new Color(0xF48771);         // 「見つかりません」などの文字
+    /** 配色。設定の「配色」と、表示 → 配色 で選ぶ。 */
+    public enum Scheme {
+        WHITE("white", "白", true),
+        GRAY("gray", "灰", false),
+        NAVY("navy", "紺", false),
+        BLACK("black", "黒", false);
 
-    private static boolean light;
+        public final String id;         // settings.json に書く名前
+        public final String label;      // 画面に出す名前
+        public final boolean light;     // 明るい配色か
 
-    /** 明るい配色（VS Code の Light に近い色）に入れ替える。apply() より前に呼ぶこと。 */
-    public static void useLight() {
-        light = true;
-        BG = new Color(0xFFFFFF);
-        BG_STRIPE = new Color(0xF6F6F6);
-        CURRENT_LINE = new Color(0xEEF3FA);
-        PANEL = new Color(0xF3F3F3);
-        TAB_INACTIVE = new Color(0xE8E8E8);
-        MENU_BAR = new Color(0xDDDDDD);
-        INPUT = new Color(0xE4E4E4);
-        BORDER = new Color(0xC8C8C8);
-        HOVER = new Color(0xD0D0D0);
-        FG = new Color(0x333333);
-        FG_STRONG = new Color(0x111111);
-        FG_DIM = new Color(0x777777);
-        ACCENT = new Color(0x007ACC);
-        MENU_SELECTION = new Color(0xC7DFF5);
-        SELECTION = new Color(0xADD6FF);
-        MATCH = new Color(0xC2E6F5);
-        MATCH_CURRENT = new Color(0x62C4EC);
-        REPLACED = new Color(0xB7E4C7);
-        WARNING = new Color(0xF7E59A);
-        PAPER = new Color(0xFBF7EE);
-        PAPER_CURRENT = new Color(0xF2EAD9);
-        GRID = new Color(0xC9A27E);
-        BOARD_DOT = new Color(0xD8D8D8);
-        ERROR = new Color(0xC0392B);
+        Scheme(String id, String label, boolean light) {
+            this.id = id;
+            this.label = label;
+            this.light = light;
+        }
+
+        /** 設定の名前から配色を選ぶ。以前の版の "dark" は灰、"light" は白として読む。 */
+        public static Scheme fromId(String id) {
+            if ("light".equals(id)) {
+                return WHITE;
+            }
+            for (Scheme scheme : values()) {
+                if (scheme.id.equals(id)) {
+                    return scheme;
+                }
+            }
+            return GRAY;
+        }
+    }
+
+    // 部品の色は、ここの値を使う。配色を変えると、use() で全部入れ替わる。
+    // 文字の白（Color.WHITE）は「青い地の上の文字」専用にしているので、どの配色にも真っ白・真っ黒は使わない
+    // （配色を切り替えるときに、色の値で入れ替え先を決めるため）。
+    public static Color BG;                 // エディタの背景
+    public static Color BG_STRIPE;          // 1行おきの縞
+    public static Color CURRENT_LINE;       // カーソルのある行
+    public static Color PANEL;              // タブの帯・ダイアログ
+    public static Color TAB_INACTIVE;
+    public static Color MENU_BAR;
+    public static Color INPUT;              // 入力欄・ボタン
+    public static Color BORDER;
+    public static Color HOVER;
+    public static Color FG;                 // ふつうの文字
+    public static Color FG_STRONG;          // 目立たせたい文字（選んでいるタブの名前など）
+    public static Color FG_DIM;             // 行番号などの薄い文字
+    public static Color ACCENT;             // 青（ステータスバーなど）
+    public static Color MENU_SELECTION;
+    public static Color SELECTION;          // 選択範囲
+    public static Color MATCH;              // 検索：一致
+    public static Color MATCH_CURRENT;      // 検索：今いる場所
+    public static Color REPLACED;           // 置換した場所（緑）
+    public static Color WARNING;            // 校正で見つかった場所（黄土色）
+    public static Color PAPER;              // 原稿用紙の紙の色
+    public static Color PAPER_CURRENT;      // 原稿用紙の、カーソルのある行
+    public static Color GRID;               // 原稿用紙のマス目の線（茶色）
+    public static Color BOARD_DOT;          // カードボードの背景の点
+    public static Color ERROR;              // 「見つかりません」などの文字
+
+    private static Scheme scheme;
+
+    static {
+        use(Scheme.GRAY);
+    }
+
+    // 並び：BG, BG_STRIPE, CURRENT_LINE, PANEL, TAB_INACTIVE, MENU_BAR, INPUT, BORDER, HOVER,
+    //       FG, FG_STRONG, FG_DIM, ACCENT, MENU_SELECTION, SELECTION, MATCH, MATCH_CURRENT, REPLACED, WARNING,
+    //       PAPER, PAPER_CURRENT, GRID, BOARD_DOT, ERROR
+    private static int[] palette(Scheme s) {
+        return switch (s) {
+            // 白：GitHub や Notion のような、白地にやわらかい灰色の配色。原稿用紙は最初の版のベージュ
+            case WHITE -> new int[]{
+                0xFEFEFE, 0xF6F8FA, 0xEEF4FC, 0xF6F7F9, 0xECEEF1, 0xF0F1F4, 0xEAECEF, 0xD8DCE1, 0xDDE1E6,
+                0x24292F, 0x0E1116, 0x6E7781, 0x0969DA, 0xD6E6FB, 0xB6D7FF, 0xCDEBF8, 0x6CC4F0, 0xBDE8C9, 0xF8E3A1,
+                0xFBF7EE, 0xF2EAD9, 0xC9A27E, 0xD9DDE2, 0xCF222E};
+            // 灰：JetBrains の新しい画面のような、落ち着いた濃い灰色
+            case GRAY -> new int[]{
+                0x1F2023, 0x25262A, 0x2A2C30, 0x2B2D31, 0x26282C, 0x2F3136, 0x3A3D43, 0x43464D, 0x4B4F57,
+                0xD5D8DD, 0xF4F5F7, 0x878C95, 0x3574F0, 0x2E436E, 0x2F4F80, 0x1F5266, 0x1590C0, 0x2A6B3C, 0x6B5A1A,
+                0x26231F, 0x34302A, 0x7A6248, 0x3A3C41, 0xF28B82};
+            // 紺：夜の空のような、青みのある紺色
+            case NAVY -> new int[]{
+                0x141B2D, 0x172036, 0x1B2540, 0x1A2238, 0x161E33, 0x101727, 0x243050, 0x2C3A5C, 0x33446B,
+                0xC8D3F5, 0xEEF2FE, 0x7482A8, 0x3B82F6, 0x274272, 0x2D4A85, 0x1C4E6E, 0x0EA5E9, 0x1F6B4A, 0x6E5B1C,
+                0x26231F, 0x34302A, 0x7A6248, 0x2A3552, 0xF7768E};
+            // 黒：有機 EL の画面にも合う、ほぼ黒の配色
+            case BLACK -> new int[]{
+                0x0B0B0C, 0x121214, 0x18181B, 0x111113, 0x0E0E10, 0x151517, 0x1F1F23, 0x2A2A2F, 0x34343A,
+                0xD4D4D8, 0xFAFAFA, 0x71717A, 0x2563EB, 0x1E3A8A, 0x1E3F7A, 0x0E4A63, 0x0284C7, 0x166534, 0x5C4D0F,
+                0x26231F, 0x34302A, 0x7A6248, 0x26262B, 0xF87171};
+        };
+    }
+
+    /** 配色を入れ替える（色の値だけ。すでにある部品に反映するには switchTo を使う）。 */
+    public static void use(Scheme s) {
+        scheme = s;
+        int[] c = palette(s);
+        int i = 0;
+        BG = new Color(c[i++]);
+        BG_STRIPE = new Color(c[i++]);
+        CURRENT_LINE = new Color(c[i++]);
+        PANEL = new Color(c[i++]);
+        TAB_INACTIVE = new Color(c[i++]);
+        MENU_BAR = new Color(c[i++]);
+        INPUT = new Color(c[i++]);
+        BORDER = new Color(c[i++]);
+        HOVER = new Color(c[i++]);
+        FG = new Color(c[i++]);
+        FG_STRONG = new Color(c[i++]);
+        FG_DIM = new Color(c[i++]);
+        ACCENT = new Color(c[i++]);
+        MENU_SELECTION = new Color(c[i++]);
+        SELECTION = new Color(c[i++]);
+        MATCH = new Color(c[i++]);
+        MATCH_CURRENT = new Color(c[i++]);
+        REPLACED = new Color(c[i++]);
+        WARNING = new Color(c[i++]);
+        PAPER = new Color(c[i++]);
+        PAPER_CURRENT = new Color(c[i++]);
+        GRID = new Color(c[i++]);
+        BOARD_DOT = new Color(c[i++]);
+        ERROR = new Color(c[i]);
+    }
+
+    public static Scheme scheme() {
+        return scheme;
     }
 
     public static boolean isLight() {
-        return light;
+        return scheme.light;
+    }
+
+    /**
+     * 起動したまま配色を変える。roots から下の部品を全部たどり、前の配色の色を、新しい配色の同じ役目の色に置き換える。
+     * 部品の多くは、作ったときの色を覚えているため（描くたびに Theme を読む部品は、描き直すだけで変わる）。
+     */
+    public static void switchTo(Scheme next, java.util.Collection<? extends java.awt.Component> roots) {
+        if (next == scheme) {
+            return;
+        }
+        int[] before = palette(scheme);
+        int[] after = palette(next);
+        java.util.Map<Integer, Color> map = new java.util.HashMap<>();
+        for (int i = 0; i < before.length; i++) {
+            map.putIfAbsent(before[i], new Color(after[i]));
+        }
+        use(next);
+        apply();
+        java.util.Set<java.awt.Component> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        for (java.awt.Component root : roots) {
+            if (root != null) {
+                recolor(root, map, seen);
+            }
+        }
+        for (java.awt.Window window : java.awt.Window.getWindows()) {
+            window.repaint();
+        }
+    }
+
+    private static Color swap(Color color, java.util.Map<Integer, Color> map) {
+        if (color == null) {
+            return null;
+        }
+        Color to = map.get(color.getRGB() & 0xFFFFFF);
+        if (to == null || color.getAlpha() != 255) {
+            return color;
+        }
+        // UIManager から来た色（UIResource）は、そのしるしを残す（部品が自分で付けた色と区別されるため）
+        return color instanceof javax.swing.plaf.UIResource ? new ColorUIResource(to) : to;
+    }
+
+    private static void recolor(java.awt.Component c, java.util.Map<Integer, Color> map,
+            java.util.Set<java.awt.Component> seen) {
+        if (!seen.add(c)) {
+            return;
+        }
+        if (c.isBackgroundSet()) {
+            c.setBackground(swap(c.getBackground(), map));
+        }
+        if (c.isForegroundSet()) {
+            c.setForeground(swap(c.getForeground(), map));
+        }
+        if (c instanceof JComponent jc) {
+            jc.setBorder(swapBorder(jc.getBorder(), map));
+        }
+        if (c instanceof javax.swing.text.JTextComponent text) {
+            text.setCaretColor(swap(text.getCaretColor(), map));
+            text.setSelectionColor(swap(text.getSelectionColor(), map));
+            text.setSelectedTextColor(swap(text.getSelectedTextColor(), map));
+            text.setDisabledTextColor(swap(text.getDisabledTextColor(), map));
+        }
+        if (c instanceof javax.swing.JTextPane pane) {
+            // 会話欄のように、文字ごとに色を付けた文章は、その色も入れ替える
+            javax.swing.text.StyledDocument doc = pane.getStyledDocument();
+            int pos = 0;
+            while (pos < doc.getLength()) {
+                javax.swing.text.Element run = doc.getCharacterElement(pos);
+                int end = Math.max(run.getEndOffset(), pos + 1);
+                Object fg = run.getAttributes().getAttribute(javax.swing.text.StyleConstants.Foreground);
+                if (fg instanceof Color color && swap(color, map) != color) {
+                    javax.swing.text.SimpleAttributeSet attr = new javax.swing.text.SimpleAttributeSet();
+                    javax.swing.text.StyleConstants.setForeground(attr, swap(color, map));
+                    doc.setCharacterAttributes(pos, Math.min(end, doc.getLength()) - pos, attr, false);
+                }
+                pos = end;
+            }
+        }
+        if (c instanceof javax.swing.JTree tree &&tree.getCellRenderer() instanceof javax.swing.tree.DefaultTreeCellRenderer r) {
+            r.setBackgroundNonSelectionColor(swap(r.getBackgroundNonSelectionColor(), map));
+            r.setBackgroundSelectionColor(swap(r.getBackgroundSelectionColor(), map));
+            r.setBorderSelectionColor(swap(r.getBorderSelectionColor(), map));
+            r.setTextSelectionColor(swap(r.getTextSelectionColor(), map));
+            r.setTextNonSelectionColor(swap(r.getTextNonSelectionColor(), map));
+        }
+        if (c instanceof javax.swing.JList<?> list) {
+            list.setSelectionBackground(swap(list.getSelectionBackground(), map));
+            list.setSelectionForeground(swap(list.getSelectionForeground(), map));
+        }
+        if (c instanceof javax.swing.JMenu menu) {
+            recolor(menu.getPopupMenu(), map, seen);    // 閉じているメニューの中身は、部品の木に入っていない
+        }
+        if (c instanceof JComponent jc && jc.getComponentPopupMenu() != null) {
+            recolor(jc.getComponentPopupMenu(), map, seen);
+        }
+        if (c instanceof java.awt.Container container) {
+            for (java.awt.Component child : container.getComponents()) {
+                recolor(child, map, seen);
+            }
+        }
+    }
+
+    private static javax.swing.border.Border swapBorder(javax.swing.border.Border border, java.util.Map<Integer, Color> map) {
+        if (border instanceof javax.swing.border.CompoundBorder compound) {
+            javax.swing.border.Border outside = swapBorder(compound.getOutsideBorder(), map);
+            javax.swing.border.Border inside = swapBorder(compound.getInsideBorder(), map);
+            return outside == compound.getOutsideBorder() && inside == compound.getInsideBorder()
+                    ? border : BorderFactory.createCompoundBorder(outside, inside);
+        }
+        if (border instanceof javax.swing.border.MatteBorder matte && matte.getMatteColor() != null) {
+            Color to = swap(matte.getMatteColor(), map);
+            if (to != matte.getMatteColor()) {
+                java.awt.Insets in = matte.getBorderInsets();
+                return BorderFactory.createMatteBorder(in.top, in.left, in.bottom, in.right, to);
+            }
+        } else if (border instanceof javax.swing.border.LineBorder line) {
+            Color to = swap(line.getLineColor(), map);
+            if (to != line.getLineColor()) {
+                return new javax.swing.border.LineBorder(to, line.getThickness(), line.getRoundedCorners());
+            }
+        }
+        return border;
     }
 
     // 文字の大きさ。Windows などで画面の拡大（125%・150% など）が効いているときは、
@@ -129,7 +320,7 @@ public final class Theme {
         return new Font("Monospaced", Font.PLAIN, EDITOR_SIZE);
     }
 
-    /** 画面を作る前に1回だけ呼ぶ。Swing 全体の色とフォントを設定する。 */
+    /** 画面を作る前に呼ぶ（配色を変えたときにも呼び直す）。Swing 全体の色とフォントを設定する。 */
     public static void apply() {
         UIManager.put("swing.boldMetal", Boolean.FALSE);
         MetalLookAndFeel.setCurrentTheme(new DarkMetalTheme());
@@ -168,6 +359,7 @@ public final class Theme {
         UIManager.put("Button.foreground", FG);
         UIManager.put("Button.select", MENU_SELECTION);
         UIManager.put("Button.focus", FG_DIM);
+        UIManager.put("Button.disabledText", FG_DIM);       // 押せないボタンの文字が、地の色に溶けて消えないように
         UIManager.put("Button.border", BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(BORDER),
                 BorderFactory.createEmptyBorder(5, 14, 5, 14)));
@@ -286,7 +478,7 @@ public final class Theme {
 
         @Override
         public String getName() {
-            return light ? "DATUM Light" : "DATUM Dark";
+            return "DATUM " + scheme.id;
         }
 
         @Override

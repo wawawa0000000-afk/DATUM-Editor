@@ -18,10 +18,8 @@ public class Main {
         // Swing の部品は必ず「イベントディスパッチスレッド（EDT）」で作る必要がある。
         // invokeLater でその手順を予約し、画面を作って表示する。
         SwingUtilities.invokeLater(() -> {
-            // 色とフォントは、部品を作る前に決めておく（設定で「ライト」を選んでいれば、明るい配色にする）
-            if ("light".equals(AppSettings.load().getString(AppSettings.THEME, "dark"))) {
-                Theme.useLight();
-            }
+            // 色とフォントは、部品を作る前に決めておく（設定で選んだ配色にする）
+            Theme.use(Theme.Scheme.fromId(AppSettings.load().getString(AppSettings.THEME, "gray")));
             Theme.apply();
             EditorFrame frame = new EditorFrame();
             frame.restoreSession();     // 前回閉じたときのタブ・分割・ウィンドウの大きさに戻す
