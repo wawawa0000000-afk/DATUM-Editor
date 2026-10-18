@@ -38,7 +38,8 @@ public class EditorGroup extends JPanel {
 
         void closeRequested(EditorGroup group, EditorPane pane);
 
-        void newRequested(EditorGroup group);
+        /** 「+」が押された。invoker の下に、作る種類を選ぶメニューを出す。 */
+        void newRequested(EditorGroup group, java.awt.Component invoker);
 
         /** タブを右クリックした。 */
         void tabMenuRequested(EditorGroup group, EditorPane pane, java.awt.Component invoker, int x, int y);
@@ -304,11 +305,11 @@ public class EditorGroup extends JPanel {
         plus.setForeground(Theme.FG_DIM);
         plus.setBorder(BorderFactory.createEmptyBorder(8, 16, 8, 16));
         plus.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        plus.setToolTipText("新しい文書");
+        plus.setToolTipText("新しい文書（横書き・縦書き・カードボードから選ぶ）");
         plus.addMouseListener(new MouseAdapter() {
             @Override
             public void mousePressed(MouseEvent e) {
-                host.newRequested(EditorGroup.this);
+                host.newRequested(EditorGroup.this, plus);
             }
 
             @Override

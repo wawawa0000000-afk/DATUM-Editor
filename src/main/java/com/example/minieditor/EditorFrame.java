@@ -36,6 +36,7 @@ import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.ImageIcon;
+import javax.swing.InputMap;
 import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
@@ -54,6 +55,7 @@ import javax.swing.JSplitPane;
 import javax.swing.JTextArea;
 import javax.swing.JToggleButton;
 import javax.swing.KeyStroke;
+import javax.swing.MenuSelectionManager;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import javax.swing.filechooser.FileNameExtensionFilter;
@@ -94,6 +96,9 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     private final JToggleButton aiButton = createToolButton("AI", "AI の会話欄を表示する / 隠す（Ctrl+Shift+A）",
             () -> showRight("ai"));
     private final JToggleButton focusButton = createToolButton("集中", "集中モード（F11）", this::toggleFocusMode);
+    private final JToggleButton paletteButton = createToolButton("操作", "すべての操作を、名前で探して実行する（Ctrl+P）",
+            this::showPalette);
+    private JMenuItem paletteItem;
     private final JToggleButton splitButton = createToolButton("分割", "画面を分割する / 分割をやめる（Ctrl+\\）。"
             + "タブは引きずって反対側へ移せます。右クリックでも操作できます", this::toggleSplit);
     private final JCheckBoxMenuItem terminalItem = new JCheckBoxMenuItem("ターミナル");
@@ -325,7 +330,8 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         boardMenu.add(item("縮小", null, () -> withBoard(board -> board.zoomBy(0.8))));
         boardMenu.add(item("全体を表示", key(KeyEvent.VK_0, CTRL), () -> withBoard(BoardPane::fitAll)));
         boardMenu.addSeparator();
-        boardMenu.add(item("画像として書き出す（PNG）…", key(KeyEvent.VK_E, CTRL | SHIFT), this::exportBoardImage));
+        // Ctrl+Shift+E はサイドバーに使っているので、画像の書き出しは Ctrl+Alt+E にする
+        boardMenu.add(item("画像として書き出す（PNG）…", key(KeyEvent.VK_E, CTRL | InputEvent.ALT_DOWN_MASK), this::exportBoardImage));
 
         // AI（Claude など）に、校正・検索・ファイルの整理を頼めるようにする
         JMenu aiMenu = new JMenu("AI 連携");
@@ -344,10 +350,21 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         menuBar.add(boardMenu);
         menuBar.add(aiMenu);
 
+        // 困ったときに引ける説明（ふつうのエディタと同じ操作が多いので、チュートリアルは出さない）
+        JMenu help = new JMenu("ヘルプ");
+        paletteItem = item("すべての操作を探す…", key(KeyEvent.VK_P, CTRL), this::showPalette);
+        help.add(paletteItem);
+        help.addSeparator();
+        help.add(item("使い方", key(KeyEvent.VK_F1, 0), () -> HelpDialog.showGuide(this)));
+        help.add(item("キーボードショートカット", null, () -> HelpDialog.showShortcuts(this, getJMenuBar())));
+        help.addSeparator();
+        help.add(item("DATUM-Editor について", null, () -> HelpDialog.showAbout(this)));
+        menuBar.add(help);
+
         // 右端（ウィンドウの最小化・最大化・×のすぐ下）に、1回押すだけで使えるボタンを並べる
         JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
         tools.setOpaque(false);
-        for (JToggleButton button : new JToggleButton[]{folderButton, splitButton, proofButton, aiButton, terminalButton, focusButton}) {
+        for (JToggleButton button : new JToggleButton[]{paletteButton, folderButton, splitButton, proofButton, aiButton, terminalButton, focusButton}) {
             tools.add(button);
         }
         tools.setMaximumSize(tools.getPreferredSize());
@@ -632,6 +649,12 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
      */
     private void toggleFocusMode() {
         focusMode = !focusMode;
+        InputMap windowKeys = getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
+        if (focusMode) {
+            windowKeys.put(key(KeyEvent.VK_ESCAPE, 0), "leaveFocus");
+        } else {
+            windowKeys.remove(key(KeyEvent.VK_ESCAPE, 0));
+        }
         focusButton.setSelected(focusMode);
         JMenuBar menuBar = getJMenuBar();
         if (focusMode) {
@@ -759,6 +782,23 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         }
     }
 
+    /** コマンドパレット（すべての操作を名前で探す）を開く。メニューの項目は自動で集める。 */
+    private void showPalette() {
+        paletteButton.setSelected(false);   // 押したままの見た目にしない（欄の出し入れのボタンではないため）
+        List<CommandPalette.Command> extras = new ArrayList<>();
+        // メニューにない操作（タブの右クリックなどでしかできないもの）
+        extras.add(new CommandPalette.Command("extra/ほかのタブを閉じる", "ほかのタブを閉じる", "タブ", "", () -> {
+            EditorPane keep = currentPane();
+            for (EditorPane other : new ArrayList<>(activeGroup.getPanes())) {
+                if (other != keep && activeGroup.getPanes().contains(other)) {
+                    closePane(activeGroup, other);
+                }
+            }
+        }));
+        extras.add(new CommandPalette.Command("extra/目標字数", "1日の目標字数を決める…", "執筆", "", () -> goalMeter.openEditor()));
+        CommandPalette.show(this, appSettings, CommandPalette.collect(getJMenuBar(), extras, paletteItem));
+    }
+
     /** 起動したまま配色を変える。画面に出ていない部品（裏のタブ・閉じている欄）も一緒に塗り直す。 */
     private void applyScheme(Theme.Scheme scheme) {
         List<Component> roots = new ArrayList<>(List.of(getRootPane(), group1, group2, findBar));
@@ -769,7 +809,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             }
         }
         Theme.switchTo(scheme, roots);
-        JToggleButton[] buttons = {folderButton, splitButton, proofButton, aiButton, terminalButton, focusButton};
+        JToggleButton[] buttons = {paletteButton, folderButton, splitButton, proofButton, aiButton, terminalButton, focusButton};
         for (JToggleButton button : buttons) {
             button.setForeground(button.isSelected() ? Color.WHITE : Theme.FG_STRONG);
         }
@@ -1056,9 +1096,17 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         shortcut(key(KeyEvent.VK_ADD, CTRL), "zoomIn4", () -> zoom(1));                  // テンキー
         shortcut(key(KeyEvent.VK_SUBTRACT, CTRL), "zoomOut2", () -> zoom(-1));
         // 集中モード中に Esc でも戻れるようにする（検索バーなどが Esc を使うときは、そちらが先に受け取る）
-        shortcut(key(KeyEvent.VK_ESCAPE, 0), "leaveFocus", () -> {
-            if (focusMode) {
-                toggleFocusMode();
+        // 集中モード中は Esc でも戻れるようにする。取り決めは集中モードの間だけ登録する（setFocusEscape）。
+        // いつも登録しておくと、Swing がメニューを閉じるための Esc より先に受け取ってしまい、
+        // 開いたメニューを Esc で閉じられなくなるため。
+        getRootPane().getActionMap().put("leaveFocus", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                if (MenuSelectionManager.defaultManager().getSelectedPath().length > 0) {
+                    MenuSelectionManager.defaultManager().clearSelectedPath();   // 開いているメニューがあれば、先に閉じる
+                } else if (focusMode) {
+                    toggleFocusMode();
+                }
             }
         });
     }
@@ -1283,11 +1331,35 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         closePane(group, pane);
     }
 
+    /** 「+」を押したとき、どの種類の文書を作るかを選ぶメニューを出す。 */
     @Override
-    public void newRequested(EditorGroup group) {
+    public void newRequested(EditorGroup group, Component invoker) {
         setActiveGroup(group);
-        newDocument(EditorPane.Mode.TEXT);
+        JPopupMenu menu = new JPopupMenu();
+        String[][] choices = {
+            {"横書きのテキスト", "Ctrl+N"},
+            {"縦書き（原稿用紙）", "Ctrl+Shift+N"},
+            {"カードボード（KJ法）", "Ctrl+Shift+K"},
+        };
+        for (EditorPane.Mode mode : EditorPane.Mode.values()) {
+            String[] choice = choices[mode.ordinal()];
+            JMenuItem item = new JMenuItem("<html><font color='" + BADGE_HEX[mode.ordinal()] + "'><b>" + mode.badge
+                    + "</b></font>&nbsp;&nbsp;" + choice[0] + "&nbsp;&nbsp;&nbsp;<font color='" + hex(Theme.FG_DIM) + "'>"
+                    + choice[1] + "</font></html>");
+            item.addActionListener(e -> {
+                setActiveGroup(group);
+                newDocument(mode);
+            });
+            menu.add(item);
+        }
+        menu.show(invoker, 0, invoker.getHeight());
     }
+
+    private static String hex(Color color) {
+        return String.format("#%06X", color.getRGB() & 0xFFFFFF);
+    }
+
+    private static final String[] BADGE_HEX = {"#4FC1FF", "#CE9178", "#4EC9B0"};     // タブの印と同じ色
 
     /** タブの右クリックメニュー。分割や移動を、メニューを探さずにその場でできるようにする。 */
     @Override

@@ -132,6 +132,13 @@ final class GoalMeter extends JComponent {
 
     // ---------- 目標字数を変える小さな欄 ----------
 
+    /** 目標字数の欄を開く（コマンドパレットからも使う）。 */
+    void openEditor() {
+        if (isShowing()) {          // 集中モードでステータスバーを隠しているときは、出す場所がない
+            showEditor();
+        }
+    }
+
     private void showEditor() {
         JPopupMenu popup = new JPopupMenu();
         JPanel panel = new JPanel(new BorderLayout(0, 8));

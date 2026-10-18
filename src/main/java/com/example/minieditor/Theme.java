@@ -177,6 +177,9 @@ public final class Theme {
         }
         use(next);
         apply();
+        // 見た目（L&F）を設定し直すと、Swing がメニューを Esc や外のクリックで閉じるための仕組みが外れる。
+        // ポップアップメニューを1つ作ると、その仕組みが付け直される
+        new javax.swing.JPopupMenu();
         java.util.Set<java.awt.Component> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
         for (java.awt.Component root : roots) {
             if (root != null) {
