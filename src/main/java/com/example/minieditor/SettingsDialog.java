@@ -37,6 +37,13 @@ final class SettingsDialog extends JDialog {
         "OpenAI 互換 API（ChatGPT・Gemini・Ollama など）",
     };
 
+    private static final String[] DRIVE_MODES = {"off", "folder", "api"};
+    private static final String[] DRIVE_LABELS = {
+        "使わない",
+        "同期フォルダを使う（Google ドライブ パソコン版・rclone など）",
+        "エディタから直接ログインする（自分のクライアント ID）",
+    };
+
     private boolean saved;
 
     SettingsDialog(Frame owner, AppSettings settings) {
@@ -96,6 +103,52 @@ final class SettingsDialog extends JDialog {
         backend.addActionListener(e -> updateAi.run());
         updateAi.run();
 
+        // ---- Google Drive ----
+        JComboBox<String> driveMode = new JComboBox<>(DRIVE_LABELS);
+        String currentDrive = settings.getString(AppSettings.DRIVE_MODE, "off");
+        for (int i = 0; i < DRIVE_MODES.length; i++) {
+            if (DRIVE_MODES[i].equals(currentDrive)) {
+                driveMode.setSelectedIndex(i);
+            }
+        }
+        JTextField driveFolder = new JTextField(settings.getString(AppSettings.DRIVE_FOLDER, ""), 24);
+        JButton chooseDrive = new JButton("選ぶ…");
+        JTextField clientId = new JTextField(settings.getString(AppSettings.DRIVE_CLIENT_ID, ""), 24);
+        JPasswordField clientSecret = new JPasswordField(settings.getString(AppSettings.DRIVE_CLIENT_SECRET, ""), 24);
+        for (JTextField field : new JTextField[]{driveFolder, clientId, clientSecret}) {
+            Theme.styleField(field);
+        }
+        chooseDrive.addActionListener(e -> {
+            javax.swing.JFileChooser chooser = new javax.swing.JFileChooser(
+                    driveFolder.getText().isBlank() ? null : new java.io.File(driveFolder.getText().strip()));
+            chooser.setFileSelectionMode(javax.swing.JFileChooser.DIRECTORIES_ONLY);
+            chooser.setDialogTitle("Google Drive のフォルダ");
+            if (chooser.showOpenDialog(this) == javax.swing.JFileChooser.APPROVE_OPTION) {
+                driveFolder.setText(chooser.getSelectedFile().getAbsolutePath());
+            }
+        });
+        JLabel driveHint = hint("");
+        Runnable updateDrive = () -> {
+            int index = driveMode.getSelectedIndex();
+            driveFolder.setEnabled(index != 0);
+            chooseDrive.setEnabled(index != 0);
+            clientId.setEnabled(index == 2);
+            clientSecret.setEnabled(index == 2);
+            if (index == 2 && driveFolder.getText().isBlank()) {
+                driveFolder.setText(DriveSync.defaultLocal().toString());
+            }
+            driveHint.setText("<html><div style='width:520px'>" + switch (index) {
+                case 1 -> "Google ドライブ パソコン版（Windows・Mac）や rclone（Linux）が作る、Drive と同期されるフォルダを選んでください。"
+                        + "同期はそのアプリが行います。「ファイル → Google Drive」からサイドバーに開けます。";
+                case 2 -> "フォルダは手元の写しの置き場所です。Drive の「" + DriveSync.REMOTE_FOLDER + "」フォルダと中身をそろえ、"
+                        + "写しの中のファイルは保存するたびに Drive へも上げます。クライアント ID の作り方は「ヘルプ → Google Drive のつなぎ方」にあります。"
+                        + "このエディタで作ったファイルだけが見えます（Drive のほかのファイルには触れません）。";
+                default -> "Google Drive は使いません。";
+            } + "</div></html>");
+        };
+        driveMode.addActionListener(e -> updateDrive.run());
+        updateDrive.run();
+
         JPanel form = new JPanel(new GridBagLayout());
         form.setBorder(BorderFactory.createEmptyBorder(12, 16, 12, 16));
         int y = 0;
@@ -115,7 +168,13 @@ final class SettingsDialog extends JDialog {
         y = field(form, y, "接続先 URL", url);
         y = field(form, y, "Claude Code のコマンド", command);
         y = field(form, y, "", aiHint);
-        field(form, y, "", hint("<html>API キーは、この PC の設定フォルダ（本人だけが読める設定）に保存します。暗号化はしていません。</html>"));
+        y = field(form, y, "", hint("<html>API キーは、この PC の設定フォルダ（本人だけが読める設定）に保存します。暗号化はしていません。</html>"));
+        y = section(form, y, "Google Drive");
+        y = field(form, y, "使い方", driveMode);
+        y = field(form, y, "フォルダ", row(driveFolder, chooseDrive));
+        y = field(form, y, "クライアント ID", clientId);
+        y = field(form, y, "クライアント シークレット", clientSecret);
+        field(form, y, "", driveHint);
 
         JButton ok = new JButton("OK");
         JButton cancel = new JButton("キャンセル");
@@ -133,6 +192,10 @@ final class SettingsDialog extends JDialog {
             settings.put(AppSettings.AI_KEY, blankToNull(new String(key.getPassword())));
             settings.put(AppSettings.AI_URL, blankToNull(url.getText()));
             settings.put(AppSettings.CLAUDE_COMMAND, blankToNull(command.getText()));
+            settings.put(AppSettings.DRIVE_MODE, DRIVE_MODES[driveMode.getSelectedIndex()]);
+            settings.put(AppSettings.DRIVE_FOLDER, blankToNull(driveFolder.getText()));
+            settings.put(AppSettings.DRIVE_CLIENT_ID, blankToNull(clientId.getText()));
+            settings.put(AppSettings.DRIVE_CLIENT_SECRET, blankToNull(new String(clientSecret.getPassword())));
             settings.save();
             saved = true;
             dispose();
