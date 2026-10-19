@@ -228,15 +228,6 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         file.add(item("版の履歴…", key(KeyEvent.VK_H, CTRL | SHIFT), this::showHistory));
         file.addSeparator();
         file.add(item("フォルダをサイドバーに開く…", null, this::openFolderInSidebar));
-        // Google Drive：使うかどうか・どうつなぐかは、使う人が設定で決める
-        JMenu driveMenu = new JMenu("Google Drive");
-        driveMenu.add(item("Drive のフォルダをサイドバーに開く", null, this::openDriveFolder));
-        driveMenu.add(item("Drive と同期", key(KeyEvent.VK_S, CTRL | InputEvent.ALT_DOWN_MASK), this::syncDrive));
-        driveMenu.addSeparator();
-        driveMenu.add(item("Drive にログイン…", null, this::loginDrive));
-        driveMenu.add(item("Drive からログアウト", null, this::logoutDrive));
-        driveMenu.add(item("Drive の設定…", null, this::openSettings));
-        file.add(driveMenu);
         file.add(item("設定…", key(KeyEvent.VK_COMMA, CTRL), this::openSettings));
         file.addSeparator();
         file.add(item("タブを閉じる", key(KeyEvent.VK_W, CTRL), () -> closePane(activeGroup, currentPane())));
@@ -368,7 +359,6 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         help.addSeparator();
         help.add(item("使い方", key(KeyEvent.VK_F1, 0), () -> HelpDialog.showGuide(this)));
         help.add(item("キーボードショートカット", null, () -> HelpDialog.showShortcuts(this, getJMenuBar())));
-        help.add(item("Google Drive のつなぎ方", null, () -> HelpDialog.showDrive(this)));
         help.addSeparator();
         help.add(item("DATUM-Editor について", null, () -> HelpDialog.showAbout(this)));
         menuBar.add(help);
@@ -1758,7 +1748,6 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
                 appSettings.rememberFolder(path.toAbsolutePath().getParent());   // 次に「開く」「保存」を出したとき、ここから始める
                 flash("保存しました: " + path);
             }
-            uploadToDrive(path);
             return true;
         } catch (IOException ex) {
             if (!manual) {
@@ -2004,212 +1993,6 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             java.awt.Toolkit.getDefaultToolkit().getSystemClipboard()
                     .setContents(new java.awt.datatransfer.StringSelection(copied), null);
             flash("コピーしました。" + (choice == 0 ? "ターミナルに貼り付けて実行してください" : "設定ファイルに貼り付けてください"));
-        }
-    }
-
-    // ---------- Google Drive ----------
-
-    /** 通信は時間がかかるので、裏の1本のスレッドで順番に行う（同期と保存のアップロードが重ならないように）。 */
-    private final java.util.concurrent.ExecutorService driveWorker = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
-        Thread thread = new Thread(r, "google-drive");
-        thread.setDaemon(true);
-        return thread;
-    });
-    private DriveSync drive;
-    private String driveKey;            // drive を作ったときの設定（変わったら作り直す）
-
-    private String driveMode() {
-        return appSettings.getString(AppSettings.DRIVE_MODE, "off");
-    }
-
-    private Path driveFolder() {
-        String folder = appSettings.getString(AppSettings.DRIVE_FOLDER, null);
-        if (folder == null) {
-            return "api".equals(driveMode()) ? DriveSync.defaultLocal() : null;
-        }
-        return Path.of(folder).toAbsolutePath().normalize();
-    }
-
-    private String driveClientId() {
-        return appSettings.getString(AppSettings.DRIVE_CLIENT_ID, "");
-    }
-
-    /** 直接ログインの設定なら、同期の係を返す（設定が足りなければ null）。 */
-    private DriveSync drive() {
-        if (!"api".equals(driveMode()) || driveClientId().isBlank()) {
-            return null;
-        }
-        String secret = appSettings.getString(AppSettings.DRIVE_CLIENT_SECRET, "");
-        String key = driveClientId() + "\n" + secret + "\n" + driveFolder();
-        if (drive == null || !key.equals(driveKey)) {
-            drive = DriveSync.load(driveClientId(), secret, driveFolder());
-            driveKey = key;
-        }
-        return drive;
-    }
-
-    /** 設定が足りないときに、どうすればよいかを伝えて設定を開く。足りていれば true。 */
-    private boolean driveReady(boolean needLogin) {
-        String mode = driveMode();
-        if ("off".equals(mode)) {
-            flash("Google Drive を使うには、設定の「Google Drive」で使い方を選んでください");
-            openSettings();
-            return false;
-        }
-        if ("folder".equals(mode)) {
-            if (needLogin) {
-                flash("同期フォルダを使う設定なので、同期は Google ドライブのアプリが行います");
-                return false;
-            }
-            if (driveFolder() == null || !Files.isDirectory(driveFolder())) {
-                flash("Drive の同期フォルダが見つかりません。設定でフォルダを選び直してください");
-                openSettings();
-                return false;
-            }
-            return true;
-        }
-        if (driveClientId().isBlank()) {
-            flash("クライアント ID が未設定です（作り方は ヘルプ → Google Drive のつなぎ方）");
-            openSettings();
-            return false;
-        }
-        return true;
-    }
-
-    private void openDriveFolder() {
-        if (!driveReady(false)) {
-            return;
-        }
-        Path folder = driveFolder();
-        try {
-            Files.createDirectories(folder);
-        } catch (IOException ex) {
-            flash("フォルダを作れませんでした: " + ex.getMessage());
-            return;
-        }
-        setSidebarVisible(true);
-        sidebar.setRoot(folder);
-        appSettings.put(AppSettings.SIDEBAR_FOLDER, folder.toString());
-        appSettings.save();
-        if ("api".equals(driveMode())) {
-            if (drive().loggedIn()) {
-                syncDrive();
-            } else {
-                flash("Drive にはまだログインしていません（ファイル → Google Drive → Drive にログイン）");
-            }
-        }
-    }
-
-    private void loginDrive() {
-        if (!driveReady(true)) {
-            return;
-        }
-        DriveSync sync = drive();
-        String clientId = driveClientId();
-        flash("ブラウザで Google にログインしてください（5 分まで待ちます）");
-        driveWorker.submit(() -> {
-            try {
-                sync.login(url -> SwingUtilities.invokeLater(() -> openBrowser(url)), clientId);
-                SwingUtilities.invokeLater(() -> {
-                    flash("Drive にログインしました");
-                    syncDrive();
-                });
-            } catch (IOException | RuntimeException ex) {
-                SwingUtilities.invokeLater(() -> flash("ログインできませんでした: " + ex.getMessage()));
-            } catch (InterruptedException ex) {
-                Thread.currentThread().interrupt();
-            }
-        });
-    }
-
-    private void logoutDrive() {
-        try {
-            DriveSync.logout();
-            drive = null;
-            flash("Drive からログアウトしました（手元の写しと Drive のファイルは残っています）");
-        } catch (IOException ex) {
-            flash("ログアウトできませんでした: " + ex.getMessage());
-        }
-    }
-
-    /** 手元の写しと Drive をそろえる。ログインしていなければ、先にログインする。 */
-    private void syncDrive() {
-        if (!driveReady(true)) {
-            return;
-        }
-        DriveSync sync = drive();
-        if (!sync.loggedIn()) {
-            loginDrive();
-            return;
-        }
-        // 開いているファイルは、画面の部品に触れるので、ここ（画面のスレッド）で先に調べておく
-        Set<Path> open = new java.util.HashSet<>();
-        for (EditorPane pane : allPanes()) {
-            if (pane.getPath() != null) {
-                open.add(pane.getPath().toAbsolutePath().normalize());
-            }
-        }
-        String clientId = driveClientId();
-        flash("Drive と同期しています…");
-        driveWorker.submit(() -> {
-            try {
-                DriveSync.Result result = sync.syncAll(p -> open.contains(p.toAbsolutePath().normalize()), clientId);
-                SwingUtilities.invokeLater(() -> {
-                    flash(result.summary());
-                    if (sidebar != null) {
-                        sidebar.refresh();
-                    }
-                });
-            } catch (IOException | RuntimeException ex) {
-                SwingUtilities.invokeLater(() -> flash("Drive と同期できませんでした: " + ex.getMessage()));
-            } catch (InterruptedException ex) {
-                Thread.currentThread().interrupt();
-            }
-        });
-    }
-
-    /** 保存したファイルが Drive の写しの中なら、裏で Drive にも上げる。 */
-    private void uploadToDrive(Path path) {
-        DriveSync sync = drive();
-        if (sync == null || !sync.loggedIn() || !sync.isTopLevel(path)) {
-            return;
-        }
-        String clientId = driveClientId();
-        driveWorker.submit(() -> {
-            try {
-                String note = sync.upload(path, clientId);
-                if (note != null) {
-                    SwingUtilities.invokeLater(() -> flash(note));
-                }
-            } catch (IOException | RuntimeException ex) {
-                SwingUtilities.invokeLater(() -> flash("Drive に上げられませんでした（手元には保存済み）: " + ex.getMessage()));
-            } catch (InterruptedException ex) {
-                Thread.currentThread().interrupt();
-            }
-        });
-    }
-
-    /** ブラウザで開く。開けない環境では、URL をコピーできる画面を出す。 */
-    private void openBrowser(String url) {
-        boolean opened = false;
-        try {
-            if (java.awt.Desktop.isDesktopSupported() && java.awt.Desktop.getDesktop().isSupported(java.awt.Desktop.Action.BROWSE)) {
-                java.awt.Desktop.getDesktop().browse(java.net.URI.create(url));
-                opened = true;
-            } else if (!System.getProperty("os.name", "").toLowerCase().contains("win")) {
-                new ProcessBuilder("xdg-open", url).start();
-                opened = true;
-            }
-        } catch (IOException | RuntimeException ex) {
-            // 下で URL を見せる
-        }
-        if (!opened) {
-            JTextArea text = new JTextArea(url, 6, 60);
-            text.setLineWrap(true);
-            text.setEditable(false);
-            text.setFont(Theme.small());
-            JOptionPane.showMessageDialog(this, new Object[]{"ブラウザを開けませんでした。この URL をブラウザに貼り付けてください：", new JScrollPane(text)},
-                    "Google Drive にログイン", JOptionPane.PLAIN_MESSAGE);
         }
     }
 

@@ -40,10 +40,6 @@ public final class AppSettings {
     public static final String AI_KEY = "aiApiKey";
     public static final String AI_URL = "aiBaseUrl";                // OpenAI 互換の接続先
     public static final String CLAUDE_COMMAND = "claudeCommand";    // Claude Code のコマンド（既定は claude）
-    public static final String DRIVE_MODE = "driveMode";            // "off" / "folder"（同期フォルダ） / "api"（直接ログイン）
-    public static final String DRIVE_FOLDER = "driveFolder";        // 同期フォルダ、または直接ログインのときの手元の写し
-    public static final String DRIVE_CLIENT_ID = "driveClientId";   // 使う人が Google Cloud で作ったクライアント ID
-    public static final String DRIVE_CLIENT_SECRET = "driveClientSecret";
 
     private final Map<String, Object> data;
 
