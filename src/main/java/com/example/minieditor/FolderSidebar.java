@@ -380,7 +380,7 @@ public final class FolderSidebar extends JPanel {
         Path folder = target == null ? root : (Files.isDirectory(target) ? target : target.getParent());
         JPopupMenu menu = new JPopupMenu();
         menu.add(menuItem("新しいテキストファイル…", () -> createFile(folder)));
-        menu.add(menuItem("新しいカードボード（KJ法）…", () -> createBoard(folder)));
+        menu.add(menuItem("新しいカードボード（KJ法風のアイデア整理）…", () -> createBoard(folder)));
         menu.add(menuItem("新しいフォルダ…", () -> createFolder(folder)));
         if (target != null) {
             menu.addSeparator();

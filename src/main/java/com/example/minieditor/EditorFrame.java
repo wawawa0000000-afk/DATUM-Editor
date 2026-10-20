@@ -1350,7 +1350,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         String[][] choices = {
             {"横書きのテキスト", "Ctrl+N"},
             {"縦書き（原稿用紙）", "Ctrl+Shift+N"},
-            {"カードボード（KJ法）", "Ctrl+Shift+K"},
+            {"カードボード（KJ法風のアイデア整理）", "Ctrl+Shift+K"},
         };
         for (EditorPane.Mode mode : EditorPane.Mode.values()) {
             String[] choice = choices[mode.ordinal()];
