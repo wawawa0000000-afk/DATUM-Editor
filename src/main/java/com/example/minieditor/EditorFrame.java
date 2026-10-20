@@ -1503,6 +1503,11 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             return;
         }
         Path path = chooser.getSelectedFile().toPath().toAbsolutePath();
+        if (FolderSidebar.isGoogleFile(path)) {
+            // Google ドキュメントなどは本文が PC にない（リンクだけ）ので、タブには開かずブラウザに渡す
+            flash(FolderSidebar.openGoogleFile(path));
+            return;
+        }
 
         try {
             openPath(path, vertical, forceVertical);

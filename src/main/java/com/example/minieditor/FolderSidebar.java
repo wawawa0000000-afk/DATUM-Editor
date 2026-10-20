@@ -142,6 +142,14 @@ public final class FolderSidebar extends JPanel {
                     if (file != null && Files.isRegularFile(file)) {
                         if (isText(file)) {
                             host.openFromSidebar(file);
+                        } else if (isGoogleFile(file)) {
+                            // Google ドキュメントなどは、本文が PC になくリンクだけなので、ショートカットのようにブラウザで開く。
+                            // うっかり開かないように、ダブルクリックのときだけにする
+                            if (e.getClickCount() == 2) {
+                                host.message(openGoogleFile(file));
+                            } else {
+                                host.message("Google のファイルです。ダブルクリックでブラウザで開きます");
+                            }
                         } else {
                             host.message("このエディタで開けるのは、テキスト（.txt など）と JSON です");
                         }
@@ -290,6 +298,72 @@ public final class FolderSidebar extends JPanel {
         String name = file.getFileName().toString();
         int dot = name.lastIndexOf('.');
         return dot > 0 && TEXT_EXTENSIONS.contains(name.substring(dot + 1).toLowerCase());
+    }
+
+    // ---------- Google ドキュメントなど（ショートカットとして扱う） ----------
+
+    /** 拡張子 → Google のサービスの URL の一部。 */
+    private static final java.util.Map<String, String> GOOGLE_KINDS = java.util.Map.of(
+            "gdoc", "document",
+            "gsheet", "spreadsheets",
+            "gslides", "presentation",
+            "gform", "forms",
+            "gdraw", "drawings");
+
+    /** Google ドライブ パソコン版が作る、Google ドキュメントなどへのリンクのファイルか。 */
+    static boolean isGoogleFile(Path file) {
+        String name = file.getFileName().toString();
+        int dot = name.lastIndexOf('.');
+        return dot > 0 && GOOGLE_KINDS.containsKey(name.substring(dot + 1).toLowerCase());
+    }
+
+    /**
+     * リンクのファイルから、ブラウザで開く URL を作る。読めなければ null。
+     * 中身は小さな JSON で、古いアプリは "url"、今のアプリは "doc_id"（文書の番号）を書いている。
+     */
+    static String googleUrl(Path file) {
+        try {
+            if (Files.size(file) > 100_000
+                    || !(Json.parse(Files.readString(file, StandardCharsets.UTF_8)) instanceof java.util.Map<?, ?> json)) {
+                return null;
+            }
+            if (json.get("url") instanceof String url && url.startsWith("https://")) {
+                return url;
+            }
+            if (json.get("doc_id") instanceof String id && id.matches("[A-Za-z0-9_-]+")) {
+                String name = file.getFileName().toString();
+                String kind = GOOGLE_KINDS.get(name.substring(name.lastIndexOf('.') + 1).toLowerCase());
+                String url = "https://docs.google.com/" + kind + "/d/" + id + "/edit";
+                if (json.get("email") instanceof String email && !email.isBlank()) {
+                    // Google に複数のアカウントでログインしていても、この文書の持ち主のアカウントで開く
+                    url += "?authuser=" + java.net.URLEncoder.encode(email, StandardCharsets.UTF_8);
+                }
+                return url;
+            }
+        } catch (IOException | Json.JsonException | RuntimeException ex) {
+            // 下で null を返す
+        }
+        return null;
+    }
+
+    /** ブラウザで開く（サイドバーと「開く」の両方から使う）。結果を知らせる文を返す。 */
+    static String openGoogleFile(Path file) {
+        String url = googleUrl(file);
+        try {
+            java.awt.Desktop desktop = java.awt.Desktop.isDesktopSupported() ? java.awt.Desktop.getDesktop() : null;
+            if (url != null && desktop != null && desktop.isSupported(java.awt.Desktop.Action.BROWSE)) {
+                desktop.browse(java.net.URI.create(url));
+            } else if (url != null && !System.getProperty("os.name", "").toLowerCase().contains("win")) {
+                new ProcessBuilder("xdg-open", url).start();
+            } else if (desktop != null && desktop.isSupported(java.awt.Desktop.Action.OPEN)) {
+                desktop.open(file.toFile());    // 中身が読めなくても、Google ドライブのアプリに任せれば開ける
+            } else {
+                return "このファイルを開くための URL が見つかりませんでした";
+            }
+            return "ブラウザで開きました（編集は Google の画面で行います）";
+        } catch (IOException | RuntimeException ex) {
+            return "ブラウザで開けませんでした: " + ex.getMessage();
+        }
     }
 
     private static Path fileOf(TreePath path) {
@@ -512,6 +586,8 @@ public final class FolderSidebar extends JPanel {
                 // このアプリの .json は、タブと同じ印（文・縦・板）を名前の前に付けて、種類がわかるようにする
                 text = "<html><font color='" + BADGE_HEX[mode.ordinal()] + "'><b>" + mode.badge + "</b></font>&nbsp;&nbsp;"
                         + text.replace("&", "&amp;").replace("<", "&lt;") + "</html>";
+            } else if (user instanceof Path p && isGoogleFile(p)) {
+                text = text + "  ↗";         // ブラウザで開くリンクだとわかるように
             }
             super.getTreeCellRendererComponent(tree, text, selected, expanded, leaf, row, focused);
             boolean folder = user instanceof Path p && Files.isDirectory(p);
