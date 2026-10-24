@@ -106,7 +106,7 @@ final class SettingsDialog extends JDialog {
         y = field(form, y, "", autoSave);
         y = field(form, y, "", hint("<html>自動保存を切っていても、未保存の文書は 30 秒ごとに裏で控えを取ります（異常終了したときに、次の起動で復元できます）。</html>"));
         y = field(form, y, "版の履歴", row(historyLimit, new JLabel("個までファイルごとに残す")));
-        // 版（Edition）に入っていない機能の設定は出さない（保存するときは、今の値をそのまま書き戻す）
+        // 種類（Edition）に入っていない機能の設定は出さない（保存するときは、今の値をそのまま書き戻す）
         if (Edition.has(Edition.VERTICAL)) {
             y = section(form, y, "執筆");
             y = field(form, y, "1日の目標", row(goal, new JLabel("字（0 で目標なし）")));

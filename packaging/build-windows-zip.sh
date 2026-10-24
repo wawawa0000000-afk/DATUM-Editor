@@ -5,7 +5,7 @@
 # 必要なもの: curl、unzip、zip、sha256sum。先に「mvn package」をしておくこと。
 set -e
 cd "$(dirname "$0")/.."
-. packaging/edition.sh      # 版（引数）と VERSION を決める
+. packaging/edition.sh      # 種類（引数）・VERSION・PRODUCT を決める
 JRE_URL="https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/OpenJDK21U-jre_x64_windows_hotspot_21.0.12.1_1.zip"
 JRE_SHA256="d35f31e712f0fcf6ac5a093edc90204fbff22f720ba3950bd09d331d5e621636"
 
@@ -27,7 +27,7 @@ mv "$WORK"/jre/*/ "$APP/runtime"
 edition_jar "$APP"
 cp LICENSE README.md packaging/icon.ico "$APP/"
 cp packaging/windows/DATUM-Editor.bat packaging/windows/Create-Desktop-Shortcut.bat packaging/windows/START-HERE.txt "$APP/"
-OUT="$(pwd)/dist/DATUM-Editor-$VERSION-windows.zip"
+OUT="$(pwd)/dist/$PRODUCT-$VERSION-windows.zip"
 rm -f "$OUT"
 (cd "$WORK" && zip -q -r "$OUT" DATUM-Editor)
 rm -rf "$WORK"

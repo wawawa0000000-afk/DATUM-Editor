@@ -217,7 +217,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         JPanel east = new JPanel(new BorderLayout(24, 0));
         east.setOpaque(false);
         if (Edition.has(Edition.VERTICAL)) {
-            east.add(goalMeter, BorderLayout.CENTER);       // 目標字数は、小説を書く機能（縦書きの版から）
+            east.add(goalMeter, BorderLayout.CENTER);       // 目標字数は、小説を書く機能（Writer から）
         }
         east.add(createZoomControl(), BorderLayout.EAST);
         right.add(east, BorderLayout.EAST);
@@ -299,7 +299,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
 
         JMenu file = new JMenu("ファイル");
         file.add(item("新規（テキスト）", key(KeyEvent.VK_N, CTRL), () -> newDocument(EditorPane.Mode.TEXT)));
-        // 版（Edition）に入っていない機能は、メニューに出さない（コマンドパレットとショートカット一覧からも消える）
+        // 種類（Edition）に入っていない機能は、メニューに出さない（コマンドパレットとショートカット一覧からも消える）
         if (Edition.has(Edition.VERTICAL)) {
             file.add(item("新規（縦書き）", key(KeyEvent.VK_N, CTRL | SHIFT), () -> newDocument(EditorPane.Mode.VERTICAL)));
         }
@@ -468,7 +468,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         for (JToggleButton button : new JToggleButton[]{paletteButton, folderButton, splitButton, proofButton, aiButton, terminalButton, focusButton}) {
             if ((button == proofButton && !Edition.has(Edition.VERTICAL))
                     || ((button == aiButton || button == terminalButton) && !Edition.has(Edition.AI))) {
-                continue;           // 版に入っていない機能のボタンは出さない
+                continue;           // 種類に入っていない機能のボタンは出さない
             }
             tools.add(button);
         }
@@ -477,7 +477,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         return menuBar;
     }
 
-    /** 書式メニューの、縦書き（1.1.1 から）の項目。 */
+    /** 書式メニューの、縦書き（Writer から）の項目。 */
     private void addVerticalFormatItems(JMenu format) {
         format.add(item("横書き ⇔ 縦書き を切り替え", key(KeyEvent.VK_T, CTRL | SHIFT), this::switchWriting));
         manuscriptItem.setAccelerator(key(KeyEvent.VK_G, CTRL | SHIFT));
@@ -1882,7 +1882,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     private EditorPane paneFromJson(Map<String, Object> json) throws IOException {
         EditorPane.Mode mode = EditorPane.Mode.fromId(Json.str(json, "mode", "text"));
         if (mode == EditorPane.Mode.BOARD && !Edition.allows(mode)) {
-            throw new IOException(Edition.notice(Edition.BOARD) + "（この版では開けません）");
+            throw new IOException(Edition.notice(Edition.BOARD) + "（この種類では開けません）");
         }
         if (mode == EditorPane.Mode.VERTICAL && !Edition.allows(mode)) {
             // 縦書きの文書は、文章（ルビは「｜漢字《かんじ》」の形）を横書きで開く

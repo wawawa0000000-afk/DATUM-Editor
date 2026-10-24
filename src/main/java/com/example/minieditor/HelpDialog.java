@@ -89,7 +89,7 @@ final class HelpDialog {
 
     /**
      * [[V]]…[[/V]]（縦書き）、[[B]]…[[/B]]（カードボード）、[[A]]…[[/A]]（AI）で囲んだ所を、
-     * 今の版（Edition）に入っていなければ消す。入っていれば、印だけを消す。
+     * 今の種類（Edition）に入っていなければ消す。入っていれば、印だけを消す。
      */
     static String forEdition(String html) {
         String[][] marks = {{"V", "VERTICAL"}, {"B", "BOARD"}, {"A", "AI"}};
@@ -132,7 +132,7 @@ final class HelpDialog {
         };
         for (String[] row : extra) {
             if (row[0].startsWith("[[A]]") && !Edition.has(Edition.AI) || row[0].startsWith("[[B]]") && !Edition.has(Edition.BOARD)) {
-                continue;       // 版に入っていない機能の操作は出さない
+                continue;       // 種類に入っていない機能の操作は出さない
             }
             sb.append(row(row[0].replaceFirst("^\\[\\[[AB]\\]\\]", ""), row[1]));
         }

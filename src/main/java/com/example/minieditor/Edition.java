@@ -5,35 +5,40 @@ import java.io.InputStream;
 import java.util.Properties;
 
 /**
- * 配る種類（版）。基礎の部分はどの版にも同じものが入り、主な機能を順に足していく。
+ * 配る種類。基礎の部分はどの種類にも同じものが入り、主な機能を順に足していく。
+ * 種類は名前で分け、番号（VERSION）は全部の種類で同じにする（番号は「いつの版か」だけを表す）。
  *
- *   1.1.0 横書き       … 基礎（横書き・タブ・分割・検索・配色・倍率・フォルダ・版の履歴・PDF など）
- *   1.1.1 縦書き       … ＋縦書き（原稿用紙・ルビ・傍点）、校正、目標字数・執筆の記録
- *   1.1.2 カードボード … ＋カードボード（KJ法風のアイデア整理）
- *   1.1.3 AI           … ＋AI の会話欄、AI 連携（MCP）、ターミナル
+ *   Lite   … 基礎（横書き・タブ・分割・検索・配色・倍率・フォルダ・版の履歴・PDF など）
+ *   Writer … ＋縦書き（原稿用紙・ルビ・傍点）、校正、目標字数・執筆の記録
+ *   Studio … ＋カードボード（KJ法風のアイデア整理）
+ *   AI     … ＋AI の会話欄、AI 連携（MCP）、ターミナル
  *
- * どの版かは、jar の中の edition.properties で決める（配布用のスクリプトが書き込む）。
- * ないとき（開発中に mvn package しただけのとき）は、全部入りの AI 版として動く。
+ * どの種類かは、jar の中の edition.properties で決める（配布用のスクリプトが書き込む）。
+ * ないとき（開発中に mvn package しただけのとき）は、全部入りの AI として動く。
+ * 定数の名前は「その種類で足した機能」（has(Edition.VERTICAL) ＝ 縦書きが入っているか）。
  */
 enum Edition {
-    HORIZONTAL("1.1.0", "横書き"),
-    VERTICAL("1.1.1", "縦書き"),
-    BOARD("1.1.2", "カードボード"),
-    AI("1.1.3", "AI");
+    HORIZONTAL("Lite", "横書き"),
+    VERTICAL("Writer", "縦書き"),
+    BOARD("Studio", "カードボード"),
+    AI("AI", "AI");
 
-    final String version;
-    final String label;
+    /** 全部の種類で同じ番号。 */
+    static final String VERSION = "1.1.3";
 
-    Edition(String version, String label) {
-        this.version = version;
+    final String id;            // 種類の名前（ファイル名にも使う）
+    final String label;         // その種類で足した主な機能
+
+    Edition(String id, String label) {
+        this.id = id;
         this.label = label;
     }
 
-    /** 今動いている版。 */
+    /** 今動いている種類。 */
     static final Edition CURRENT = load();
 
     private static Edition load() {
-        String name = System.getProperty("datum.edition");      // テストで版を切り替えるため
+        String name = System.getProperty("datum.edition");      // テストで種類を切り替えるため
         if (name == null) {
             try (InputStream in = Edition.class.getResourceAsStream("/edition.properties")) {
                 if (in != null) {
@@ -45,19 +50,22 @@ enum Edition {
                 // 読めなければ、全部入りとして動く
             }
         }
-        try {
-            return name == null ? AI : valueOf(name.strip().toUpperCase());
-        } catch (IllegalArgumentException ex) {
-            return AI;
+        if (name != null) {
+            for (Edition edition : values()) {
+                if (edition.id.equalsIgnoreCase(name.strip()) || edition.name().equalsIgnoreCase(name.strip())) {
+                    return edition;
+                }
+            }
         }
+        return AI;
     }
 
-    /** 今の版に、feature の版で足した機能が入っているか。 */
+    /** 今の種類に、feature の種類で足した機能が入っているか。 */
     static boolean has(Edition feature) {
         return CURRENT.ordinal() >= feature.ordinal();
     }
 
-    /** その種類の文書を、今の版で作れる・開けるか。 */
+    /** その種類の文書を、今の種類で作れる・開けるか。 */
     static boolean allows(EditorPane.Mode mode) {
         return switch (mode) {
             case TEXT -> true;
@@ -68,11 +76,11 @@ enum Edition {
 
     /** 入っていない機能を使おうとしたときの案内。 */
     static String notice(Edition feature) {
-        return feature.label + "は、DATUM-Editor " + feature.version + " 以上で使えます";
+        return feature.label + "は、DATUM-Editor " + feature.id + (feature == AI ? "" : " 以上") + "で使えます";
     }
 
-    /** 画面に出す名前（例：1.1.1（縦書き））。 */
+    /** 画面に出す名前（例：Writer 1.1.3）。 */
     static String title() {
-        return CURRENT.version + "（" + CURRENT.label + "）";
+        return CURRENT.id + " " + VERSION;
     }
 }

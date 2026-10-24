@@ -4,7 +4,7 @@
 # 必要なもの: JDK 17 以上（jpackage）、dpkg-deb、fakeroot。先に「mvn package」をしておくこと。
 set -e
 cd "$(dirname "$0")/.."
-. packaging/edition.sh      # 版（引数）と VERSION を決める
+. packaging/edition.sh      # 種類（引数）・VERSION・PRODUCT を決める
 WORK=$(mktemp -d)
 mkdir -p "$WORK/in" dist
 edition_jar "$WORK/in"
@@ -21,6 +21,6 @@ jpackage --type deb \
 rm -rf "$WORK"
 # jpackage が付ける名前（datum-editor_版_機種.deb）を、ほかの配布物とそろえた名前に変える
 for f in dist/datum-editor_"$VERSION"_*.deb; do
-  mv "$f" "dist/DATUM-Editor-$VERSION-linux-${f##*_}"
+  mv "$f" "dist/$PRODUCT-$VERSION-linux-${f##*_}"
 done
-ls -l dist/DATUM-Editor-"$VERSION"-linux-*.deb
+ls -l dist/"$PRODUCT"-"$VERSION"-linux-*.deb

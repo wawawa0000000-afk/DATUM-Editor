@@ -4,7 +4,7 @@
 # 必要なもの: JDK 17 以上（jpackage）。先に「mvn package」をしておくこと。
 set -e
 cd "$(dirname "$0")/.."
-. packaging/edition.sh      # 版（引数）と VERSION を決める
+. packaging/edition.sh      # 種類（引数）・VERSION・PRODUCT を決める
 WORK=$(mktemp -d)
 mkdir -p "$WORK/in" dist
 edition_jar "$WORK/in"
@@ -16,7 +16,7 @@ jpackage --type app-image \
   --dest "$WORK"
 cp LICENSE README.md packaging/linux/Add-To-Menu.sh packaging/linux/START-HERE.txt "$WORK/DATUM-Editor/"
 chmod +x "$WORK/DATUM-Editor/Add-To-Menu.sh"
-OUT="$(pwd)/dist/DATUM-Editor-$VERSION-linux-x64.tar.gz"
+OUT="$(pwd)/dist/$PRODUCT-$VERSION-linux-x64.tar.gz"
 # tar.gz にするのは、「実行できる」という印（パーミッション）を保ったまま配るため
 tar -C "$WORK" -czf "$OUT" DATUM-Editor
 rm -rf "$WORK"
