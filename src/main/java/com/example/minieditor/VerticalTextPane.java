@@ -119,6 +119,10 @@ public class VerticalTextPane extends EditorPane implements Searchable {
     private VerticalLayout layout = new VerticalLayout("", 1, List.of());
     private int layoutHeight = -1;
     private boolean layoutDirty = true;
+    private int rowsPerColumn = 1;      // 1列に入る文字数
+    // 文字のない所（行の終わりより下や、文書の終わりより先の列）をクリックしたときの、マス（x=列、y=行）。
+    // 打ち始めたときに、そこまでを全角の空白と改行で埋める（打たずにほかへ移れば、何も足さない）
+    private Point freeCell;
 
     private boolean caretVisible = true;
     private final Timer blinkTimer = new Timer(530, e -> {
@@ -294,6 +298,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
 
     /** start から end までを replacement に置き換える（「元に戻す」1回ぶんにまとめる）。 */
     private void replace(int start, int end, String replacement) {
+        freeCell = null;
         int[] newCaret = {start + replacement.length()};
         edit(() -> {
             if (end > start) {
@@ -362,7 +367,81 @@ public class VerticalTextPane extends EditorPane implements Searchable {
 
     /** 選択範囲があればそれを消してから、カーソルの位置に文字を入れる。 */
     private void insert(String s) {
-        replace(selectionStart(), selectionEnd(), s.replace("\r", ""));
+        String padding = takePadding();
+        replace(selectionStart(), selectionEnd(), padding + s.replace("\r", ""));
+    }
+
+    // ---------- 好きなマスから書く ----------
+
+    /**
+     * 点 p が文字のないマスなら、そのマス（x=列、y=行）を返す。文字のある所なら null。
+     * 文字のないマスは、改行のある列の行の終わりより下か、文書の終わりより先（左）の列。
+     */
+    private Point freeCellAt(Point p) {
+        ensureLayout();
+        if (!composed.isEmpty()) {
+            return null;
+        }
+        int col = -1;
+        for (int c = 0; columnLeft(c) + columnWidth() > 0; c++) {
+            int left = columnLeft(c);
+            if (p.x >= left && p.x < left + columnWidth()) {
+                col = c;
+                break;
+            }
+        }
+        if (col < 0) {
+            return null;
+        }
+        int row = Math.max(0, Math.min(rowsPerColumn - 1, (p.y - margin()) / cellHeight()));
+        int end = text.length();
+        if (col > colOf[end]) {
+            return new Point(col, row);
+        }
+        int last = -1;      // その列の、行の終わり（改行の位置か、文書の終わり）
+        for (int i = 0; i <= end; i++) {
+            if (colOf[i] == col && (i == end || text.charAt(i) == '\n')) {
+                last = i;
+            }
+        }
+        return last >= 0 && row > rowOf[last] ? new Point(col, row) : null;
+    }
+
+    /** 文字のないマスをクリックしたとき、カーソルを置く文書の中の位置（その列の行の終わり）。 */
+    private int freeCellPosition(Point cell) {
+        int end = text.length();
+        if (cell.x > colOf[end]) {
+            return end;
+        }
+        for (int i = 0; i <= end; i++) {
+            if (colOf[i] == cell.x && (i == end || text.charAt(i) == '\n')) {
+                return i;
+            }
+        }
+        return end;
+    }
+
+    /** クリックした空きマスまでを埋める空白と改行。使ったら、空きマスは忘れる。 */
+    private String takePadding() {
+        Point cell = freeCell;
+        freeCell = null;
+        if (cell == null || selectionEnd() > selectionStart()) {
+            return "";
+        }
+        ensureLayout();
+        int end = text.length();
+        if (cell.x > colOf[end]) {
+            return "\n".repeat(cell.x - colOf[end]) + "\u3000".repeat(cell.y);
+        }
+        return "\u3000".repeat(Math.max(0, cell.y - rowOf[caret]));
+    }
+
+    /** カーソルを描くマス。空きマスをクリックしていれば、そのマス。 */
+    private Rectangle caretCell() {
+        if (freeCell != null) {
+            return new Rectangle(columnLeft(freeCell.x), margin() + freeCell.y * cellHeight(), cellWidth(), cellHeight());
+        }
+        return shownCellRect(Math.min(shownCaret(), colOf.length - 1));
     }
 
     private int selectionStart() {
@@ -390,6 +469,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
 
     private void moveCaret(int position, boolean extendSelection) {
         dropComposition();
+        freeCell = null;
         int p = Math.max(0, Math.min(position, text.length()));
         // サロゲートペア（2つで1文字になる文字）の真ん中には止まらない
         if (p > 0 && p < text.length() && Character.isLowSurrogate(text.charAt(p))
@@ -533,7 +613,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
 
         // 配置は「画面に出す文章」（変換中の文字をはさんだもの）で計算する。
         // 一番下の1文字ぶんは、余白として空けておく。
-        int rowsPerColumn = manuscript ? SHEET_ROWS
+        rowsPerColumn = manuscript ? SHEET_ROWS
                 : Math.max(1, (height - 2 * margin() - cellHeight()) / cellHeight());
         layout = new VerticalLayout(shownText(), rowsPerColumn, shownRuns());
         colOf = layout.col;
@@ -1055,6 +1135,14 @@ public class VerticalTextPane extends EditorPane implements Searchable {
                     }
                     draggingFromStrip = false;
                     requestFocusInWindow();
+                    Point cell = SwingUtilities.isLeftMouseButton(e) && !e.isShiftDown() ? freeCellAt(e.getPoint()) : null;
+                    if (cell != null) {
+                        // 文字のないマス：カーソルはそのマスに出し、打ち始めたら、そこまでを空白で埋める
+                        moveCaret(freeCellPosition(cell), false);
+                        freeCell = cell;
+                        repaint();
+                        return;
+                    }
                     moveCaret(indexAt(e.getPoint()), e.isShiftDown());
                 }
 
@@ -1143,8 +1231,8 @@ public class VerticalTextPane extends EditorPane implements Searchable {
             composed = "";              // 文書を書き換える前に、いったん空にする（位置の計算がずれないように）
             if (committed.length() > 0) {
                 insert(committed.toString());
-            } else if (composing.length() > 0 && selectionEnd() > selectionStart()) {
-                insert("");             // 範囲を選んだまま打ち始めたら、先にその範囲を消す
+            } else if (composing.length() > 0 && (selectionEnd() > selectionStart() || freeCell != null)) {
+                insert("");             // 範囲を選んだまま打ち始めたら、先にその範囲を消す（空きマスなら、そこまで埋める）
             }
             int caretInComposed = e.getCaret() != null ? e.getCaret().getInsertionIndex() : composing.length();
             setComposed(composing.toString(), Math.max(0, Math.min(caretInComposed, composing.length())));
@@ -1162,7 +1250,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
             @Override
             public Rectangle getTextLocation(TextHitInfo offset) {
                 ensureLayout();
-                Rectangle cell = shownCellRect(Math.min(shownCaret(), colOf.length - 1));
+                Rectangle cell = caretCell();
                 try {
                     Point origin = getLocationOnScreen();
                     cell.translate(origin.x, origin.y);
@@ -1260,7 +1348,10 @@ public class VerticalTextPane extends EditorPane implements Searchable {
                 }
                 case KeyEvent.VK_ENTER -> insert("\n");
                 case KeyEvent.VK_BACK_SPACE -> {
-                    if (selectionEnd() > selectionStart()) {
+                    if (freeCell != null) {
+                        freeCell = null;        // 空きマスにいるときは、何も消さずに、元の行の終わりへ戻るだけ
+                        repaint();
+                    } else if (selectionEnd() > selectionStart()) {
                         insert("");
                     } else if (caret > 0) {
                         replace(caret - charLengthBefore(caret), caret, "");
@@ -1330,7 +1421,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
             g2.fillRect(clip.x, clip.y, clip.width, clip.height);
 
             int columnWidth = columnWidth();
-            int caretColumn = colOf[Math.min(shownCaret(), colOf.length - 1)];
+            int caretColumn = freeCell != null ? freeCell.x : colOf[Math.min(shownCaret(), colOf.length - 1)];
             if (manuscript) {
                 paintSheets(g2, clip, caretColumn);
             } else {
@@ -1400,7 +1491,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
 
             // カーソル（文字の上に引く横線）
             if (isFocusOwner() && caretVisible) {
-                Rectangle cell = shownCellRect(Math.min(shownCaret(), colOf.length - 1));
+                Rectangle cell = caretCell();
                 g2.setColor(Theme.FG_STRONG);
                 g2.fillRect(cell.x + 6, cell.y - 1, cell.width - 12, 3);
             }
