@@ -394,9 +394,14 @@ public class VerticalTextPane extends EditorPane implements Searchable {
             return null;
         }
         int row = Math.max(0, Math.min(rowsPerColumn - 1, (p.y - margin()) / cellHeight()));
+        return isFreeCell(col, row) ? new Point(col, row) : null;
+    }
+
+    /** col 列目・row 行目が、文字のないマスか。 */
+    private boolean isFreeCell(int col, int row) {
         int end = text.length();
         if (col > colOf[end]) {
-            return new Point(col, row);
+            return true;
         }
         int last = -1;      // その列の、行の終わり（改行の位置か、文書の終わり）
         for (int i = 0; i <= end; i++) {
@@ -404,7 +409,35 @@ public class VerticalTextPane extends EditorPane implements Searchable {
                 last = i;
             }
         }
-        return last >= 0 && row > rowOf[last] ? new Point(col, row) : null;
+        return last >= 0 && row > rowOf[last];
+    }
+
+    /** 矢印キーで行ける列か。文書の先（左）の列も、画面に描ける所までは行ける。 */
+    private boolean canReachColumn(int col) {
+        return col >= 0 && (col < displayColumns() || columnLeft(col) >= 0);
+    }
+
+    /** col 列目・row 行目のマスへカーソルを動かす。文字のないマスなら、そのマスにカーソルを出す。 */
+    private void moveToCell(int col, int row) {
+        ensureLayout();
+        if (!canReachColumn(col) || row < 0 || row >= rowsPerColumn || !composed.isEmpty()) {
+            return;
+        }
+        for (int i = 0; i < colOf.length; i++) {
+            if (colOf[i] == col && rowOf[i] == row) {
+                moveCaret(i, false);
+                return;
+            }
+        }
+        if (isFreeCell(col, row)) {
+            Point cell = new Point(col, row);
+            moveCaret(freeCellPosition(cell), false);
+            freeCell = cell;
+            scrollToCaret();
+            view.repaint();
+            return;
+        }
+        moveCaret(indexAt(col, row), false);
     }
 
     /** 文字のないマスをクリックしたとき、カーソルを置く文書の中の位置（その列の行の終わり）。 */
@@ -721,7 +754,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
         if (caret > text.length()) {
             return;
         }
-        Rectangle r = shownCellRect(shownCaret());
+        Rectangle r = caretCell();
         r.grow(columnWidth(), 0);               // 左右の列も少し見えるようにする
         view.scrollRectToVisible(r);
     }
@@ -1337,8 +1370,9 @@ public class VerticalTextPane extends EditorPane implements Searchable {
             ensureLayout();
             switch (e.getKeyCode()) {
                 // 画面の見た目どおりに動かす：上下で「文字」を、左右で「行」を移る
-                case KeyEvent.VK_DOWN -> moveCaret(caret + 1, shift);   // 下：次の文字へ
-                case KeyEvent.VK_UP -> moveCaret(caret - 1, shift);     // 上：前の文字へ
+                // 範囲選択していないときは、行の終わりより下の、文字のないマスにも行ける
+                case KeyEvent.VK_DOWN -> moveDown(shift);               // 下：次の文字へ
+                case KeyEvent.VK_UP -> moveUp(shift);                   // 上：前の文字へ
                 case KeyEvent.VK_LEFT -> moveColumn(1, shift);          // 左：次の行へ
                 case KeyEvent.VK_RIGHT -> moveColumn(-1, shift);        // 右：前の行へ
                 case KeyEvent.VK_HOME -> moveCaret(text.lastIndexOf('\n', caret - 1) + 1, shift);
@@ -1383,14 +1417,46 @@ public class VerticalTextPane extends EditorPane implements Searchable {
             e.consume();
         }
 
-        /** 左右の列へ移る。同じ高さにいちばん近い文字へ動かす。 */
-        private void moveColumn(int delta, boolean shift) {
-            int here = toShown(caret);
-            int target = colOf[here] + delta;
-            if (target < 0 || target >= totalCols) {
+        /** 下へ。行の終わりからは、その下の文字のないマスへ。列の一番下からは、次の列の頭へ。 */
+        private void moveDown(boolean shift) {
+            boolean lineEnd = caret == text.length() || text.charAt(caret) == '\n';
+            if (shift || (freeCell == null && !lineEnd)) {
+                moveCaret(caret + 1, shift);
                 return;
             }
-            moveCaret(indexAt(target, rowOf[here]), shift);
+            Point here = freeCell != null ? freeCell : new Point(colOf[toShown(caret)], rowOf[toShown(caret)]);
+            if (here.y + 1 < rowsPerColumn) {
+                moveToCell(here.x, here.y + 1);
+            } else {
+                moveToCell(here.x + 1, 0);
+            }
+        }
+
+        /** 上へ。文字のないマスからは、1マスずつ上へ（行の終わりまで来たら、文字の所に戻る）。 */
+        private void moveUp(boolean shift) {
+            if (shift || freeCell == null) {
+                moveCaret(caret - 1, shift);
+                return;
+            }
+            if (freeCell.y > 0) {
+                moveToCell(freeCell.x, freeCell.y - 1);
+            } else {
+                moveToCell(freeCell.x - 1, rowsPerColumn - 1);
+            }
+        }
+
+        /** 左右の列へ移る。同じ高さのマスへ（そこに文字がなければ、文字のないマスとして）動かす。 */
+        private void moveColumn(int delta, boolean shift) {
+            int here = toShown(caret);
+            int row = freeCell != null ? freeCell.y : rowOf[here];
+            int target = (freeCell != null ? freeCell.x : colOf[here]) + delta;
+            if (shift) {
+                if (target >= 0 && target < totalCols) {
+                    moveCaret(indexAt(target, row), true);
+                }
+                return;
+            }
+            moveToCell(target, row);
         }
 
         private int charLengthBefore(int position) {
