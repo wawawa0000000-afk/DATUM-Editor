@@ -108,7 +108,8 @@ final class HelpDialog {
             {"AI の会話欄：送る / 改行", "Enter / Shift+Enter"},
             {"タブを閉じる", "タブを中ボタンでクリック"},
             {"カードの文字を確定する", "Ctrl+Enter"},
-            {"カードボードの拡大・縮小", "Ctrl+ホイール"},
+            {"画面全体の拡大・縮小", "Ctrl+ホイール"},
+            {"カードボードの拡大・縮小（ボードの上で）", "Ctrl+ホイール"},
         };
         for (String[] row : extra) {
             sb.append(row(row[0], row[1]));

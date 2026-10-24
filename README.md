@@ -274,7 +274,7 @@ Miro・FigJam・Mural などのオンラインのボードにある機能を参�
 | 切り取り / コピー / 貼り付け / すべて選択 | Ctrl+X / Ctrl+C / Ctrl+V / Ctrl+A |
 | 検索 / 置換 | Ctrl+F / Ctrl+H |
 | 次を検索 / 前を検索 / 検索を閉じる | Enter / Shift+Enter / Esc（検索欄で） |
-| 画面全体を拡大 / 縮小 / 100% に戻す（ブラウザと同じ） | Ctrl+;（Ctrl++ や Ctrl+= でも可） / Ctrl+- / Ctrl+0 |
+| 画面全体を拡大 / 縮小 / 100% に戻す（ブラウザと同じ） | Ctrl+;（Ctrl++ や Ctrl+= でも可） / Ctrl+- / Ctrl+0、または Ctrl+ホイール（カードボードの上ではボードの拡大・縮小） |
 | 本文の文字だけ大きく / 小さく | Ctrl+Alt+; / Ctrl+Alt+- |
 | 横書き ⇔ 縦書き | Ctrl+Shift+T |
 | ルビを振る / 傍点を付ける | Ctrl+R / Ctrl+Shift+R |

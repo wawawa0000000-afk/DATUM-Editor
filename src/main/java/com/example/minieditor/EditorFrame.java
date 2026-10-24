@@ -1,5 +1,6 @@
 package com.example.minieditor;
 
+import java.awt.AWTEvent;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
@@ -167,6 +168,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         setJMenuBar(createMenuBar());
         installExtraShortcuts();
         installZoomKeys();
+        installZoomWheel();
         layoutMain();
 
         // どちらのグループにカーソルがあるかを見張って、操作の対象を切り替える
@@ -1170,6 +1172,26 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             e.consume();
             return true;
         });
+    }
+
+    private double wheelSum;    // タッチパッドの細かい回転を、1目盛り分たまるまで足しておく
+
+    /** ブラウザと同じく、Ctrl+ホイールで画面全体の倍率を変える（カードボードの上では、ボードの拡大・縮小のまま）。 */
+    private void installZoomWheel() {
+        java.awt.Toolkit.getDefaultToolkit().addAWTEventListener(event -> {
+            if (!(event instanceof java.awt.event.MouseWheelEvent e) || e.getID() != java.awt.event.MouseEvent.MOUSE_WHEEL
+                    || !e.isControlDown() || e.isAltDown() || e.isConsumed()
+                    || SwingUtilities.getWindowAncestor(e.getComponent()) != this
+                    || SwingUtilities.getAncestorOfClass(BoardPane.class, e.getComponent()) != null) {
+                return;
+            }
+            e.consume();        // 本文がスクロールしないように
+            wheelSum += e.getPreciseWheelRotation();
+            if (Math.abs(wheelSum) >= 1) {
+                setUiZoom(Theme.nextZoom(wheelSum < 0 ? 1 : -1));     // 奥へ回すと拡大
+                wheelSum = 0;
+            }
+        }, AWTEvent.MOUSE_WHEEL_EVENT_MASK);
     }
 
     /** 倍率のキーなら 1（拡大）、-1（縮小）、0（元に戻す）。ほかのキーなら Integer.MIN_VALUE。 */
