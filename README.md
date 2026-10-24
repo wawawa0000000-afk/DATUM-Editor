@@ -34,13 +34,30 @@ Java で書いてあるので、同じ `minieditor.jar` が Windows・macOS・Li
 
 `~/Desktop/DATUM-Editor.desktop` のようなランチャーを置き、`Exec=` に `java -jar <minieditor.jar の場所>` を書きます。
 
+### 版の種類
+
+主な機能のあり・なしで、4つの版に分けて配っています。基礎の部分はどの版も同じで、直したら全部の版に入ります。
+
+| 版 | 入っている主な機能 |
+|---|---|
+| 1.1.0 | 基礎 ＋ 横書き |
+| 1.1.1 | 基礎 ＋ 横書き ＋ 縦書き（原稿用紙・ルビ・傍点）、校正、目標字数・執筆の記録 |
+| 1.1.2 | 基礎 ＋ 横書き ＋ 縦書き ＋ カードボード（KJ法風のアイデア整理） |
+| 1.1.3 | 基礎 ＋ 横書き ＋ 縦書き ＋ カードボード ＋ AI（AI の会話欄・AI 連携・ターミナル） |
+
+- **基礎**：タブ、画面分割、検索・置換、配色、表示の倍率、フォルダのサイドバー、コマンドパレット、集中モード、版の履歴、自動の控え、PDF への書き出し、設定、ヘルプ。
+- 下の版で、上の版で作った文書を開いたとき：縦書きの文書は横書きで開きます（ルビは「｜漢字《かんじ》」の形）。カードボードは開けません。
+- どの版かは、jar の中の `edition.properties` で決まります（配布用のスクリプトが書き込みます）。`mvn package` で作っただけの jar は、全部入り（1.1.3）として動きます。
+
 ### 配布用のファイルを作る
 
 先に `mvn package` をしてから、次のスクリプトを実行すると、`dist/` に配布用のファイルができます。どれも Linux の上で作れます。
+スクリプトの後ろに版（`HORIZONTAL`＝1.1.0、`VERTICAL`＝1.1.1、`BOARD`＝1.1.2、`AI`＝1.1.3）を付けます。省略すると 1.1.3 です。
+**`sh packaging/build-all.sh` で、4つの版すべてを、下の4種類で作ります。**
 
 | 作るもの | スクリプト | 使う人の側 |
 |---|---|---|
-| Windows 用 ZIP（Java 同梱） | `sh packaging/build-windows-zip.sh` | 展開して `DATUM-Editor.bat` をダブルクリック。`Create-Desktop-Shortcut.bat` でデスクトップにアイコン |
+| Windows 用 ZIP（Java 同梱） | `sh packaging/build-windows-zip.sh AI` | 展開して `DATUM-Editor.bat` をダブルクリック。`Create-Desktop-Shortcut.bat` でデスクトップにアイコン |
 | Linux 用 `.deb`（Java 同梱） | `sh packaging/build-linux-deb.sh` | `sudo apt install ./ファイル名.deb`。アプリのメニューに登録される |
 | Linux 用 `.tar.gz`（Java 同梱） | `sh packaging/build-linux-portable.sh` | 展開して `./bin/DATUM-Editor`。`sh Add-To-Menu.sh` でメニューとデスクトップにアイコン |
 | どの OS でも使える ZIP（Java は別に必要） | `sh packaging/build-universal-zip.sh` | `START-HERE.txt` のとおり |
@@ -335,6 +352,7 @@ src/main/java/com/example/minieditor/
 ├── WritingStats.java       執筆の記録（今日の字数・目標・グラフ）
 ├── AiChatPanel.java        AI の会話欄
 ├── AiBackends.java         会話欄のつなぎ先（Claude Code / Anthropic API / OpenAI 互換）
+├── Edition.java            版（1.1.0〜1.1.3）。どの主な機能を出すかを決める
 ├── ChatHistory.java        会話欄のやり取りの保存と履歴
 ├── WheelScroll.java        ホイール・タッチパッドのスクロール（全画面で同じ速さ）
 ├── SettingsDialog.java     設定の画面

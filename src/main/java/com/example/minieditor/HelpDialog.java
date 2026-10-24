@@ -40,14 +40,14 @@ final class HelpDialog {
                 <h2>文書の種類</h2>
                 <ul>
                 <li><b>横書きのテキスト</b>：ふつうのエディタです。</li>
-                <li><b>縦書き（原稿用紙）</b>：20字×20行の原稿用紙に、縦書きで書けます。「書式 → 原稿用紙の表示」で、ふつうの縦書きにもできます。</li>
-                <li><b>カードボード</b>：カードを並べて、アイデアを整理します（KJ法風）。何もない所をダブルクリックすると、カードができます。</li>
+                [[V]]<li><b>縦書き（原稿用紙）</b>：20字×20行の原稿用紙に、縦書きで書けます。「書式 → 原稿用紙の表示」で、ふつうの縦書きにもできます。</li>[[/V]]
+                [[B]]<li><b>カードボード</b>：カードを並べて、アイデアを整理します（KJ法風）。何もない所をダブルクリックすると、カードができます。</li>[[/B]]
                 </ul>
                 <p>タブの帯の右の <b>＋</b> を押すと、どれを作るかを選べます。</p>
 
-                <h2>ルビと傍点</h2>
+                [[V]]<h2>ルビと傍点</h2>
                 <p>文字を選んで <b>Ctrl+R</b> でルビ（ふりがな）、<b>Ctrl+Shift+R</b> で傍点を付けます。
-                .txt で保存すると「｜漢字《かんじ》」の形で書き出すので、小説投稿サイトにそのまま貼り付けられます。</p>
+                .txt で保存すると「｜漢字《かんじ》」の形で書き出すので、小説投稿サイトにそのまま貼り付けられます。</p>[[/V]]
 
                 <h2>保存の形式</h2>
                 <ul>
@@ -64,9 +64,9 @@ final class HelpDialog {
                 <li><b>虫眼鏡</b>：すべての操作を名前で探して実行します（Ctrl+P）。</li>
                 <li><b>フォルダ</b>（フォルダの形）：原稿のフォルダを左に表示します。章ごとのファイルを並べて扱えます。</li>
                 <li><b>分割</b>（四角を線で分けた形）：画面を2つに分けます。</li>
-                <li><b>校正</b>（「校」の印）：ら抜き言葉・表記ゆれ・重複表現などを探します。AI は使わず、文章は外に送りません。</li>
-                <li><b>AI</b>：AI に誤字の確認や相談を頼めます。先に「ファイル → 設定」で、使う AI を選んでください。</li>
-                <li><b>&gt;_</b>：エディタの中にターミナルを出します。</li>
+                [[V]]<li><b>校正</b>（「校」の印）：ら抜き言葉・表記ゆれ・重複表現などを探します。AI は使わず、文章は外に送りません。</li>[[/V]]
+                [[A]]<li><b>AI</b>：AI に誤字の確認や相談を頼めます。先に「ファイル → 設定」で、使う AI を選んでください。</li>
+                <li><b>&gt;_</b>：エディタの中にターミナルを出します。</li>[[/A]]
                 <li><b>集中</b>：メニューやタブを隠して、本文だけにします。Esc で戻ります。</li>
                 </ul>
 
@@ -79,12 +79,30 @@ final class HelpDialog {
 
                 <h2>そのほか</h2>
                 <ul>
-                <li>ステータスバー右の「今日 … 字」を押すと、1日の目標字数を決められます。</li>
+                [[V]]<li>ステータスバー右の「今日 … 字」を押すと、1日の目標字数を決められます。</li>[[/V]]
                 <li>配色は「表示 → 配色」で、白・灰・紺・黒から選べます。すぐに変わります。</li>
                 <li>ショートカットの一覧は「ヘルプ → キーボードショートカット」にあります。</li>
                 </ul>
                 """;
-        show(owner, "使い方", html, new Dimension(900, 820));
+        show(owner, "使い方", forEdition(html), new Dimension(900, 820));
+    }
+
+    /**
+     * [[V]]…[[/V]]（縦書き）、[[B]]…[[/B]]（カードボード）、[[A]]…[[/A]]（AI）で囲んだ所を、
+     * 今の版（Edition）に入っていなければ消す。入っていれば、印だけを消す。
+     */
+    static String forEdition(String html) {
+        String[][] marks = {{"V", "VERTICAL"}, {"B", "BOARD"}, {"A", "AI"}};
+        for (String[] mark : marks) {
+            String open = "[[" + mark[0] + "]]";
+            String close = "[[/" + mark[0] + "]]";
+            if (Edition.has(Edition.valueOf(mark[1]))) {
+                html = html.replace(open, "").replace(close, "");
+            } else {
+                html = html.replaceAll(java.util.regex.Pattern.quote(open) + "(?s).*?" + java.util.regex.Pattern.quote(close), "");
+            }
+        }
+        return html;
     }
 
     /** ショートカットの一覧。メニューに登録されているものを集めるので、メニューを変えても一覧がずれない。 */
@@ -105,15 +123,18 @@ final class HelpDialog {
         String[][] extra = {
             {"集中モードをやめる", "Esc"},
             {"検索：次へ / 前へ", "Enter / Shift+Enter"},
-            {"AI の会話欄：送る / 改行", "Enter / Shift+Enter"},
+            {"[[A]]AI の会話欄：送る / 改行", "Enter / Shift+Enter"},
             {"タブを閉じる", "タブを中ボタンでクリック"},
-            {"カードの文字を確定する", "Ctrl+Enter"},
+            {"[[B]]カードの文字を確定する", "Ctrl+Enter"},
             {"画面全体の拡大・縮小", "Ctrl+ホイール"},
             {"画面全体の拡大 / 縮小 / 100% に戻す（もう1組のキー）", "Alt+↑ / Alt+↓ / Alt+0"},
-            {"カードボードの拡大・縮小（ボードの上で）", "Ctrl+ホイール"},
+            {"[[B]]カードボードの拡大・縮小（ボードの上で）", "Ctrl+ホイール"},
         };
         for (String[] row : extra) {
-            sb.append(row(row[0], row[1]));
+            if (row[0].startsWith("[[A]]") && !Edition.has(Edition.AI) || row[0].startsWith("[[B]]") && !Edition.has(Edition.BOARD)) {
+                continue;       // 版に入っていない機能の操作は出さない
+            }
+            sb.append(row(row[0].replaceFirst("^\\[\\[[AB]\\]\\]", ""), row[1]));
         }
         sb.append("</table>");
         show(owner, "キーボードショートカット", sb.toString(), new Dimension(820, 860));
@@ -186,7 +207,7 @@ final class HelpDialog {
     /** このソフトについて。版・ライセンス・連絡先。 */
     static void showAbout(Frame owner) {
         String html = "<h1>DATUM-Editor</h1>"
-                + "<p>バージョン " + McpServer.SERVER_VERSION + "</p>"
+                + "<p>バージョン " + Edition.title() + "</p>"
                 + "<p>小説や文章を書くためのテキストエディタです。</p>"
                 + "<h2>ライセンス</h2><p>MIT ライセンスです（配布ファイルの中の LICENSE をご覧ください）。"
                 + "個人が作った非公式のソフトで、無保証です。大切な文章は、こまめに保存して控えを取ってください。</p>"

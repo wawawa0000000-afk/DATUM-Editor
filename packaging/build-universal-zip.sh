@@ -3,11 +3,11 @@
 # 必要なもの: zip。先に「mvn package」をしておくこと。
 set -e
 cd "$(dirname "$0")/.."
-VERSION=1.1.3
-[ -f target/minieditor.jar ] || { echo "target/minieditor.jar がありません。先に mvn package を実行してください。"; exit 1; }
+. packaging/edition.sh      # 版（引数）と VERSION を決める
 WORK=$(mktemp -d)
 mkdir -p "$WORK/DATUM-Editor" dist
-cp target/minieditor.jar DATUM-Editor.bat DATUM-Editor.sh START-HERE.txt LICENSE README.md "$WORK/DATUM-Editor/"
+edition_jar "$WORK/DATUM-Editor"
+cp DATUM-Editor.bat DATUM-Editor.sh START-HERE.txt LICENSE README.md "$WORK/DATUM-Editor/"
 OUT="$(pwd)/dist/DATUM-Editor-$VERSION.zip"
 rm -f "$OUT"
 (cd "$WORK" && zip -q -r "$OUT" DATUM-Editor)

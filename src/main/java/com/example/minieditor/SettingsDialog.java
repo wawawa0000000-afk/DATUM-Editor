@@ -106,16 +106,21 @@ final class SettingsDialog extends JDialog {
         y = field(form, y, "", autoSave);
         y = field(form, y, "", hint("<html>自動保存を切っていても、未保存の文書は 30 秒ごとに裏で控えを取ります（異常終了したときに、次の起動で復元できます）。</html>"));
         y = field(form, y, "版の履歴", row(historyLimit, new JLabel("個までファイルごとに残す")));
-        y = section(form, y, "執筆");
-        y = field(form, y, "1日の目標", row(goal, new JLabel("字（0 で目標なし）")));
-        y = section(form, y, "AI（会話欄）");
-        y = field(form, y, "使う AI", backend);
-        y = field(form, y, "モデル", model);
-        y = field(form, y, "API キー", key);
-        y = field(form, y, "接続先 URL", url);
-        y = field(form, y, "Claude Code のコマンド", command);
-        y = field(form, y, "", aiHint);
-        field(form, y, "", hint("<html>API キーは、この PC の設定フォルダ（本人だけが読める設定）に保存します。暗号化はしていません。</html>"));
+        // 版（Edition）に入っていない機能の設定は出さない（保存するときは、今の値をそのまま書き戻す）
+        if (Edition.has(Edition.VERTICAL)) {
+            y = section(form, y, "執筆");
+            y = field(form, y, "1日の目標", row(goal, new JLabel("字（0 で目標なし）")));
+        }
+        if (Edition.has(Edition.AI)) {
+            y = section(form, y, "AI（会話欄）");
+            y = field(form, y, "使う AI", backend);
+            y = field(form, y, "モデル", model);
+            y = field(form, y, "API キー", key);
+            y = field(form, y, "接続先 URL", url);
+            y = field(form, y, "Claude Code のコマンド", command);
+            y = field(form, y, "", aiHint);
+            field(form, y, "", hint("<html>API キーは、この PC の設定フォルダ（本人だけが読める設定）に保存します。暗号化はしていません。</html>"));
+        }
 
         JButton ok = new JButton("OK");
         JButton cancel = new JButton("キャンセル");

@@ -4,11 +4,10 @@
 # 必要なもの: JDK 17 以上（jpackage）。先に「mvn package」をしておくこと。
 set -e
 cd "$(dirname "$0")/.."
-VERSION=1.1.3
-[ -f target/minieditor.jar ] || { echo "target/minieditor.jar がありません。先に mvn package を実行してください。"; exit 1; }
+. packaging/edition.sh      # 版（引数）と VERSION を決める
 WORK=$(mktemp -d)
 mkdir -p "$WORK/in" dist
-cp target/minieditor.jar "$WORK/in/"
+edition_jar "$WORK/in"
 jpackage --type app-image \
   --name DATUM-Editor --app-version "$VERSION" --vendor wazaseisakujo \
   --input "$WORK/in" --main-jar minieditor.jar --main-class com.example.minieditor.Main \

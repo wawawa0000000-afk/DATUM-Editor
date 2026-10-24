@@ -216,7 +216,9 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         right.add(statusRight, BorderLayout.CENTER);
         JPanel east = new JPanel(new BorderLayout(24, 0));
         east.setOpaque(false);
-        east.add(goalMeter, BorderLayout.CENTER);
+        if (Edition.has(Edition.VERTICAL)) {
+            east.add(goalMeter, BorderLayout.CENTER);       // 目標字数は、小説を書く機能（縦書きの版から）
+        }
         east.add(createZoomControl(), BorderLayout.EAST);
         right.add(east, BorderLayout.EAST);
         bar.add(right, BorderLayout.EAST);
@@ -297,11 +299,18 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
 
         JMenu file = new JMenu("ファイル");
         file.add(item("新規（テキスト）", key(KeyEvent.VK_N, CTRL), () -> newDocument(EditorPane.Mode.TEXT)));
-        file.add(item("新規（縦書き）", key(KeyEvent.VK_N, CTRL | SHIFT), () -> newDocument(EditorPane.Mode.VERTICAL)));
-        file.add(item("新規（カードボード）", key(KeyEvent.VK_K, CTRL | SHIFT), () -> newDocument(EditorPane.Mode.BOARD)));
+        // 版（Edition）に入っていない機能は、メニューに出さない（コマンドパレットとショートカット一覧からも消える）
+        if (Edition.has(Edition.VERTICAL)) {
+            file.add(item("新規（縦書き）", key(KeyEvent.VK_N, CTRL | SHIFT), () -> newDocument(EditorPane.Mode.VERTICAL)));
+        }
+        if (Edition.has(Edition.BOARD)) {
+            file.add(item("新規（カードボード）", key(KeyEvent.VK_K, CTRL | SHIFT), () -> newDocument(EditorPane.Mode.BOARD)));
+        }
         file.addSeparator();
         file.add(item("開く…", key(KeyEvent.VK_O, CTRL), () -> openFile(false)));
-        file.add(item("縦書きで開く…", key(KeyEvent.VK_O, CTRL | SHIFT), () -> openFile(true)));
+        if (Edition.has(Edition.VERTICAL)) {
+            file.add(item("縦書きで開く…", key(KeyEvent.VK_O, CTRL | SHIFT), () -> openFile(true)));
+        }
         file.add(item("保存", key(KeyEvent.VK_S, CTRL), () -> save(currentPane())));
         file.add(item("名前を付けて保存…", key(KeyEvent.VK_S, CTRL | SHIFT), () -> saveAs(currentPane())));
         file.add(item("PDF として書き出す…", key(KeyEvent.VK_P, CTRL | SHIFT), this::exportPdf));
@@ -339,21 +348,9 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             }
         });
         format.add(wrapItem);
-        format.add(item("横書き ⇔ 縦書き を切り替え", key(KeyEvent.VK_T, CTRL | SHIFT), this::switchWriting));
-        manuscriptItem.setAccelerator(key(KeyEvent.VK_G, CTRL | SHIFT));
-        manuscriptItem.addActionListener(e -> {
-            if (currentPane() instanceof VerticalTextPane vertical) {
-                vertical.setManuscript(manuscriptItem.isSelected());
-            } else {
-                manuscriptItem.setSelected(true);
-                flash("原稿用紙の表示は、縦書きの文書で使えます");
-            }
-        });
-        format.add(manuscriptItem);
-        format.addSeparator();
-        format.add(item("ルビ（ふりがな）を振る…", key(KeyEvent.VK_R, CTRL), this::editRuby));
-        format.add(item("傍点を付ける", key(KeyEvent.VK_R, CTRL | SHIFT), this::addEmphasis));
-        format.add(item("ルビ・傍点を外す", null, this::removeRuby));
+        if (Edition.has(Edition.VERTICAL)) {
+            addVerticalFormatItems(format);
+        }
 
         JMenu view = new JMenu("表示");
         view.add(item("画面を分割 / 分割をやめる", key(KeyEvent.VK_BACK_SLASH, CTRL), this::toggleSplit));
@@ -391,14 +388,22 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         view.add(stripeItem);
         view.addSeparator();
         view.add(item("フォルダのサイドバー", key(KeyEvent.VK_E, CTRL | SHIFT), this::toggleSidebar));
-        view.add(item("校正の欄", key(KeyEvent.VK_F7, 0), () -> showRight("proof")));
-        view.add(item("AI の会話欄", key(KeyEvent.VK_A, CTRL | SHIFT), () -> showRight("ai")));
+        if (Edition.has(Edition.VERTICAL)) {
+            view.add(item("校正の欄", key(KeyEvent.VK_F7, 0), () -> showRight("proof")));
+        }
+        if (Edition.has(Edition.AI)) {
+            view.add(item("AI の会話欄", key(KeyEvent.VK_A, CTRL | SHIFT), () -> showRight("ai")));
+        }
         view.add(item("集中モード", key(KeyEvent.VK_F11, 0), this::toggleFocusMode));
-        view.add(item("執筆の記録…", null, this::showStats));
-        view.addSeparator();
-        terminalItem.setAccelerator(key(KeyEvent.VK_J, CTRL));
-        terminalItem.addActionListener(e -> setTerminalVisible(terminalItem.isSelected()));
-        view.add(terminalItem);
+        if (Edition.has(Edition.VERTICAL)) {
+            view.add(item("執筆の記録…", null, this::showStats));
+        }
+        if (Edition.has(Edition.AI)) {
+            view.addSeparator();
+            terminalItem.setAccelerator(key(KeyEvent.VK_J, CTRL));
+            terminalItem.addActionListener(e -> setTerminalVisible(terminalItem.isSelected()));
+            view.add(terminalItem);
+        }
 
         // カードボード専用の操作。ほかの種類の文書を開いているときは、案内を出すだけにする
         JMenu boardMenu = new JMenu("ボード");
@@ -434,8 +439,12 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         menuBar.add(edit);
         menuBar.add(format);
         menuBar.add(view);
-        menuBar.add(boardMenu);
-        menuBar.add(aiMenu);
+        if (Edition.has(Edition.BOARD)) {
+            menuBar.add(boardMenu);
+        }
+        if (Edition.has(Edition.AI)) {
+            menuBar.add(aiMenu);
+        }
 
         // 困ったときに引ける説明（ふつうのエディタと同じ操作が多いので、チュートリアルは出さない）
         JMenu help = new JMenu("ヘルプ");
@@ -457,11 +466,34 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         };
         tools.setOpaque(false);
         for (JToggleButton button : new JToggleButton[]{paletteButton, folderButton, splitButton, proofButton, aiButton, terminalButton, focusButton}) {
+            if ((button == proofButton && !Edition.has(Edition.VERTICAL))
+                    || ((button == aiButton || button == terminalButton) && !Edition.has(Edition.AI))) {
+                continue;           // 版に入っていない機能のボタンは出さない
+            }
             tools.add(button);
         }
         menuBar.add(Box.createHorizontalGlue());
         menuBar.add(tools);
         return menuBar;
+    }
+
+    /** 書式メニューの、縦書き（1.1.1 から）の項目。 */
+    private void addVerticalFormatItems(JMenu format) {
+        format.add(item("横書き ⇔ 縦書き を切り替え", key(KeyEvent.VK_T, CTRL | SHIFT), this::switchWriting));
+        manuscriptItem.setAccelerator(key(KeyEvent.VK_G, CTRL | SHIFT));
+        manuscriptItem.addActionListener(e -> {
+            if (currentPane() instanceof VerticalTextPane vertical) {
+                vertical.setManuscript(manuscriptItem.isSelected());
+            } else {
+                manuscriptItem.setSelected(true);
+                flash("原稿用紙の表示は、縦書きの文書で使えます");
+            }
+        });
+        format.add(manuscriptItem);
+        format.addSeparator();
+        format.add(item("ルビ（ふりがな）を振る…", key(KeyEvent.VK_R, CTRL), this::editRuby));
+        format.add(item("傍点を付ける", key(KeyEvent.VK_R, CTRL | SHIFT), this::addEmphasis));
+        format.add(item("ルビ・傍点を外す", null, this::removeRuby));
     }
 
     /** メニューバーの右端に置く、1回押すだけで欄を出し入れするボタン。出ている間は青くなる。 */
@@ -668,6 +700,9 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
 
     /** 右の欄を切り替える。今出ている欄をもう一度選んだときは、隠す。 */
     private void showRight(String which) {
+        if (("proof".equals(which) && !Edition.has(Edition.VERTICAL)) || ("ai".equals(which) && !Edition.has(Edition.AI))) {
+            return;
+        }
         String next = which != null && which.equals(rightPanel) ? null : which;
         if ("proof".equals(next) && proofPanel == null) {
             proofPanel = new ProofreadPanel(() -> currentPane() instanceof Searchable s ? s : null,
@@ -838,7 +873,13 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         new HistoryDialog(this, pane.getTitle(), versions, history, current,
                 content -> restoreVersion(pane, path, current, content),
                 content -> {
-                    EditorPane copy = paneFromFile(path, content, pane instanceof VerticalTextPane);
+                    EditorPane copy;
+                    try {
+                        copy = paneFromFile(path, content, pane instanceof VerticalTextPane);
+                    } catch (IOException ex) {
+                        flash(ex.getMessage());
+                        return;
+                    }
                     addPane(activeGroup, copy);
                     copy.setDirty(true);
                     flash("過去の版を、新しいタブ（無題）に開きました");
@@ -847,8 +888,14 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
 
     /** 過去の版に戻す。今の内容は先に履歴へ残すので、戻したあとでも、元に戻れる。 */
     private void restoreVersion(EditorPane pane, Path path, String current, String content) {
+        EditorPane fresh;
+        try {
+            fresh = paneFromFile(path, content, pane instanceof VerticalTextPane);
+        } catch (IOException ex) {
+            flash(ex.getMessage());
+            return;
+        }
         history.record(path, current, appSettings.getInt(AppSettings.HISTORY_LIMIT, 50) + 1);
-        EditorPane fresh = paneFromFile(path, content, pane instanceof VerticalTextPane);
         fresh.setListener(this);
         fresh.setRawFile(pane.isRawFile());
         fresh.setPath(path);
@@ -895,7 +942,9 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
                 }
             }
         }));
-        extras.add(new CommandPalette.Command("extra/目標字数", "1日の目標字数を決める…", "執筆", "", () -> goalMeter.openEditor()));
+        if (Edition.has(Edition.VERTICAL)) {
+            extras.add(new CommandPalette.Command("extra/目標字数", "1日の目標字数を決める…", "執筆", "", () -> goalMeter.openEditor()));
+        }
         CommandPalette.show(this, appSettings, CommandPalette.collect(getJMenuBar(), extras, paletteItem));
     }
 
@@ -1008,7 +1057,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         EditorPane pane;
         try {
             pane = paneFromJson(entry.document());
-        } catch (RuntimeException ex) {
+        } catch (IOException | RuntimeException ex) {
             flash("復元できなかった文書があります: " + entry.title());
             return;
         }
@@ -1126,7 +1175,8 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
                         continue;
                     }
                     try {
-                        boolean vertical = EditorPane.Mode.VERTICAL.id.equals(Json.str(tab, "mode", ""));
+                        boolean vertical = EditorPane.Mode.VERTICAL.id.equals(Json.str(tab, "mode", ""))
+                                && Edition.has(Edition.VERTICAL);
                         EditorPane pane = openPath(path, vertical, false);
                         if (pane instanceof Searchable s) {
                             int caret = Math.min(Json.num(tab, "caret", 0), s.getText().length());
@@ -1164,6 +1214,9 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
 
     /** エディタの下にターミナルを出す、または隠す。隠しても、中で動いているコマンドは止めない。 */
     private void setTerminalVisible(boolean visible) {
+        if (visible && !Edition.has(Edition.AI)) {
+            return;
+        }
         terminalButton.setSelected(visible);
         terminalItem.setSelected(visible);
         if (visible == terminalVisible) {
@@ -1476,7 +1529,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     private void updateTitle() {
         EditorPane pane = currentPane();
         if (pane == null) {
-            setTitle(APP_NAME);
+            setTitle(APP_NAME + " " + Edition.title());
         } else {
             setTitle(pane.getTitle() + (pane.isDirty() ? " ●" : "") + " - " + APP_NAME);
         }
@@ -1499,7 +1552,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         } else {
             format = "テキスト";
         }
-        String sheets = pane instanceof TextEditorPane text
+        String sheets = pane instanceof TextEditorPane text && Edition.has(Edition.VERTICAL)
                 ? "    原稿用紙換算 " + WritingStats.manuscriptSheets(text.getText()) + " 枚" : "";
         statusRight.setText(pane.statusText() + sheets + "    UTF-8    " + format
                 + (mcp.isRunning() ? "    AI 連携中" : ""));
@@ -1566,6 +1619,10 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     @Override
     public void newRequested(EditorGroup group, Component invoker) {
         setActiveGroup(group);
+        if (!Edition.has(Edition.VERTICAL)) {
+            newDocument(EditorPane.Mode.TEXT);      // 選べる種類が横書きだけなら、選ばせずに作る
+            return;
+        }
         JPopupMenu menu = new JPopupMenu();
         String[][] choices = {
             {"横書きのテキスト", "Ctrl+N"},
@@ -1573,6 +1630,9 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             {"カードボード（KJ法風のアイデア整理）", "Ctrl+Shift+K"},
         };
         for (EditorPane.Mode mode : EditorPane.Mode.values()) {
+            if (!Edition.allows(mode)) {
+                continue;
+            }
             String[] choice = choices[mode.ordinal()];
             JMenuItem item = new JMenuItem("<html><font color='" + BADGE_HEX[mode.ordinal()] + "'><b>" + mode.badge
                     + "</b></font>&nbsp;&nbsp;" + choice[0] + "&nbsp;&nbsp;&nbsp;<font color='" + hex(Theme.FG_DIM) + "'>"
@@ -1704,6 +1764,10 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     }
 
     private void newDocument(EditorPane.Mode mode) {
+        if (!Edition.allows(mode)) {
+            flash(Edition.notice(mode == EditorPane.Mode.VERTICAL ? Edition.VERTICAL : Edition.BOARD));
+            return;
+        }
         addPane(activeGroup, createPane(mode));
     }
 
@@ -1715,7 +1779,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
      * .json（このアプリの形式）は、保存したときの種類のまま開く。
      */
     private void openFile(boolean forceVertical) {
-        boolean vertical = forceVertical || currentPane() instanceof VerticalTextPane;
+        boolean vertical = Edition.has(Edition.VERTICAL) && (forceVertical || currentPane() instanceof VerticalTextPane);
         JFileChooser chooser = newFileChooser();
         chooser.setDialogTitle(vertical ? "縦書きで開く" : "開く");
         chooser.addChoosableFileFilter(new FileNameExtensionFilter("テキスト / JSON (*.txt, *.json)", "txt", "json"));
@@ -1790,7 +1854,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
 
     /** ファイルの中身から、合う種類の文書を作る。 */
     @SuppressWarnings("unchecked")
-    private EditorPane paneFromFile(Path path, String content, boolean vertical) {
+    private EditorPane paneFromFile(Path path, String content, boolean vertical) throws IOException {
         if (isJsonPath(path)) {
             try {
                 if (Json.parse(content) instanceof Map<?, ?> raw
@@ -1802,7 +1866,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             }
         }
         // このアプリの形式ではないファイルは、中身をそのまま文章として開く
-        if (vertical && !isJsonPath(path)) {
+        if (vertical && !isJsonPath(path) && Edition.has(Edition.VERTICAL)) {
             // 縦書き：「小説家になろう」の記法があれば、ルビとして読み取られる
             VerticalTextPane pane = new VerticalTextPane(Theme.editorFont());
             pane.loadText(content);
@@ -1815,8 +1879,19 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     }
 
     /** このアプリの JSON 形式から、文書を作る。 */
-    private static EditorPane paneFromJson(Map<String, Object> json) {
-        return switch (EditorPane.Mode.fromId(Json.str(json, "mode", "text"))) {
+    private EditorPane paneFromJson(Map<String, Object> json) throws IOException {
+        EditorPane.Mode mode = EditorPane.Mode.fromId(Json.str(json, "mode", "text"));
+        if (mode == EditorPane.Mode.BOARD && !Edition.allows(mode)) {
+            throw new IOException(Edition.notice(Edition.BOARD) + "（この版では開けません）");
+        }
+        if (mode == EditorPane.Mode.VERTICAL && !Edition.allows(mode)) {
+            // 縦書きの文書は、文章（ルビは「｜漢字《かんじ》」の形）を横書きで開く
+            TextEditorPane text = new TextEditorPane(Theme.editorFont());
+            text.loadText(VerticalTextPane.fromJson(json).toPlainText());
+            flash("縦書きの文書を、横書きで開きました（" + Edition.notice(Edition.VERTICAL) + "）");
+            return text;
+        }
+        return switch (mode) {
             case TEXT -> TextEditorPane.fromJson(json);
             case VERTICAL -> VerticalTextPane.fromJson(json);
             case BOARD -> BoardPane.fromJson(json);
@@ -2128,7 +2203,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
 
     /** 前回、AI 連携を動かしたまま終了していたら、起動したときに自動で始める。 */
     public void startMcpIfEnabled() {
-        if (!mcp.settings().enabled) {
+        if (!Edition.has(Edition.AI) || !mcp.settings().enabled) {
             return;
         }
         try {
@@ -2298,6 +2373,10 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
 
     /** 横書きと縦書きを入れ替える。文章・保存先・未保存の状態は引き継ぐ。 */
     private void switchWriting() {
+        if (!Edition.has(Edition.VERTICAL)) {
+            flash(Edition.notice(Edition.VERTICAL));
+            return;
+        }
         EditorPane old = currentPane();
         if (old == null || old.getMode() == EditorPane.Mode.BOARD) {
             flash("カードボードは、縦書き・横書きに切り替えられません");

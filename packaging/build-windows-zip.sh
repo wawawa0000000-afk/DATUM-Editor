@@ -5,11 +5,10 @@
 # 必要なもの: curl、unzip、zip、sha256sum。先に「mvn package」をしておくこと。
 set -e
 cd "$(dirname "$0")/.."
-VERSION=1.1.3
+. packaging/edition.sh      # 版（引数）と VERSION を決める
 JRE_URL="https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/OpenJDK21U-jre_x64_windows_hotspot_21.0.12.1_1.zip"
 JRE_SHA256="d35f31e712f0fcf6ac5a093edc90204fbff22f720ba3950bd09d331d5e621636"
 
-[ -f target/minieditor.jar ] || { echo "target/minieditor.jar がありません。先に mvn package を実行してください。"; exit 1; }
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/datum-editor"
 mkdir -p "$CACHE" dist
 JRE_ZIP="$CACHE/temurin-jre-windows-x64.zip"
@@ -25,7 +24,8 @@ APP="$WORK/DATUM-Editor"
 mkdir -p "$APP"
 unzip -q "$JRE_ZIP" -d "$WORK/jre"
 mv "$WORK"/jre/*/ "$APP/runtime"
-cp target/minieditor.jar LICENSE README.md packaging/icon.ico "$APP/"
+edition_jar "$APP"
+cp LICENSE README.md packaging/icon.ico "$APP/"
 cp packaging/windows/DATUM-Editor.bat packaging/windows/Create-Desktop-Shortcut.bat packaging/windows/START-HERE.txt "$APP/"
 OUT="$(pwd)/dist/DATUM-Editor-$VERSION-windows.zip"
 rm -f "$OUT"

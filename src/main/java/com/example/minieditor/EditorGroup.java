@@ -305,7 +305,8 @@ public class EditorGroup extends JPanel {
         plus.setForeground(Theme.FG_DIM);
         plus.setBorder(BorderFactory.createEmptyBorder(8, 16, 8, 16));
         plus.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        plus.setToolTipText("新しい文書（横書き・縦書き・カードボードから選ぶ）");
+        plus.setToolTipText(Edition.has(Edition.BOARD) ? "新しい文書（横書き・縦書き・カードボードから選ぶ）"
+                : Edition.has(Edition.VERTICAL) ? "新しい文書（横書き・縦書きから選ぶ）" : "新しい文書");
         plus.addMouseListener(new MouseAdapter() {
             @Override
             public void mousePressed(MouseEvent e) {
