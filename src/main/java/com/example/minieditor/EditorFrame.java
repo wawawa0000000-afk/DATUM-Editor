@@ -166,6 +166,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         add(statusBar, BorderLayout.SOUTH);
         setJMenuBar(createMenuBar());
         installExtraShortcuts();
+        installZoomKeys();
         layoutMain();
 
         // どちらのグループにカーソルがあるかを見張って、操作の対象を切り替える
@@ -1140,6 +1141,61 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         }
         item.addActionListener(e -> action.run());
         return item;
+    }
+
+    /**
+     * 倍率のキー（Ctrl+＋／Ctrl+－／Ctrl+0、本文だけは Ctrl+Alt）を、どの部品より先に受け取る。
+     * Windows では、キーボードの配列や日本語入力によって、メニューのキーの取り決めまで届かないことがあるため、
+     * キーの番号と、そのキーで出る文字の両方で判定する。
+     */
+    private void installZoomKeys() {
+        KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(e -> {
+            if (e.getID() != KeyEvent.KEY_PRESSED || !e.isControlDown() || e.isMetaDown()
+                    || e.getComponent() == null || SwingUtilities.getWindowAncestor(e.getComponent()) != this) {
+                return false;
+            }
+            int direction = zoomDirection(e);
+            if (direction == Integer.MIN_VALUE) {
+                return false;
+            }
+            // Windows では、Ctrl+Alt が AltGr（右 Alt）として届くこともある
+            boolean textOnly = e.isAltDown() || e.isAltGraphDown();
+            if (textOnly && direction == 0) {
+                withBoard(BoardPane::fitAll);
+            } else if (textOnly) {
+                zoom(direction);
+            } else {
+                setUiZoom(direction == 0 ? 100 : Theme.nextZoom(direction));
+            }
+            e.consume();
+            return true;
+        });
+    }
+
+    /** 倍率のキーなら 1（拡大）、-1（縮小）、0（元に戻す）。ほかのキーなら Integer.MIN_VALUE。 */
+    private static int zoomDirection(KeyEvent e) {
+        int code = e.getKeyCode();
+        int extended = e.getExtendedKeyCode();
+        for (int c : new int[]{code, extended}) {
+            switch (c) {
+                case KeyEvent.VK_SEMICOLON, KeyEvent.VK_EQUALS, KeyEvent.VK_PLUS, KeyEvent.VK_ADD:
+                    return 1;
+                case KeyEvent.VK_MINUS, KeyEvent.VK_SUBTRACT:
+                    return -1;
+                case KeyEvent.VK_0, KeyEvent.VK_NUMPAD0:
+                    return 0;
+                default:
+                    break;
+            }
+        }
+        char ch = e.getKeyChar();
+        if (ch == '+' || ch == ';' || ch == '=') {
+            return 1;
+        }
+        if (ch == '-') {
+            return -1;
+        }
+        return ch == '0' ? 0 : Integer.MIN_VALUE;
     }
 
     /** メニューには1つしかキーを付けられないので、別のキーでも動くようにする。 */
