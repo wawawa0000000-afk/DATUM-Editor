@@ -27,6 +27,7 @@ public final class AppSettings {
     // 設定の名前（settings.json の中の項目名）
     public static final String LAST_FOLDER = "lastFolder";          // 最後に保存したフォルダ
     public static final String THEME = "theme";                     // "white" / "gray" / "navy" / "black"
+    public static final String ZOOM = "zoom";                       // 表示の倍率（100 が等倍）
     public static final String RECENT_COMMANDS = "recentCommands";  // コマンドパレットで最近使った操作
     public static final String AUTO_SAVE = "autoSaveToFile";        // 保存済みのファイルを自動で上書き保存するか
     public static final String HISTORY_LIMIT = "historyLimit";      // 1つのファイルにつき残す版の数

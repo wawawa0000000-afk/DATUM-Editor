@@ -274,7 +274,8 @@ Miro・FigJam・Mural などのオンラインのボードにある機能を参�
 | 切り取り / コピー / 貼り付け / すべて選択 | Ctrl+X / Ctrl+C / Ctrl+V / Ctrl+A |
 | 検索 / 置換 | Ctrl+F / Ctrl+H |
 | 次を検索 / 前を検索 / 検索を閉じる | Enter / Shift+Enter / Esc（検索欄で） |
-| 文字を大きく / 小さく | Ctrl+;（Ctrl+Shift+; や Ctrl+= でも可） / Ctrl+- |
+| 画面全体を拡大 / 縮小 / 100% に戻す（ブラウザと同じ） | Ctrl+;（Ctrl++ や Ctrl+= でも可） / Ctrl+- / Ctrl+0 |
+| 本文の文字だけ大きく / 小さく | Ctrl+Alt+; / Ctrl+Alt+- |
 | 横書き ⇔ 縦書き | Ctrl+Shift+T |
 | ルビを振る / 傍点を付ける | Ctrl+R / Ctrl+Shift+R |
 | 原稿用紙の表示を切り替え | Ctrl+Shift+G |
@@ -291,7 +292,7 @@ Miro・FigJam・Mural などのオンラインのボードにある機能を参�
 | 次のタブ / 前のタブ | Ctrl+PageDown / Ctrl+PageUp |
 | ボード：一括追加 / 複製 / グループ枠で囲む | Ctrl+Shift+B / Ctrl+D / Ctrl+G |
 | ボード：整列 / 投票 +1 / 投票 −1 | Ctrl+Shift+L / Ctrl+Shift+↑ / Ctrl+Shift+↓ |
-| ボード：全体を表示 / 画像として書き出す | Ctrl+0 / Ctrl+Alt+E |
+| ボード：全体を表示 / 画像として書き出す | Ctrl+Alt+0 / Ctrl+Alt+E |
 
 縦書きでは、画面の見た目どおりに、↑↓ が文字の移動（↓ が次の文字）、←→ が行の移動（← が次の行）です。
 

@@ -19,7 +19,9 @@ public class Main {
         // invokeLater でその手順を予約し、画面を作って表示する。
         SwingUtilities.invokeLater(() -> {
             // 色とフォントは、部品を作る前に決めておく（設定で選んだ配色にする）
-            Theme.use(Theme.Scheme.fromId(AppSettings.load().getString(AppSettings.THEME, "gray")));
+            AppSettings settings = AppSettings.load();
+            Theme.use(Theme.Scheme.fromId(settings.getString(AppSettings.THEME, "gray")));
+            Theme.setZoom(settings.getInt(AppSettings.ZOOM, 100));
             Theme.apply();
             EditorFrame frame = new EditorFrame();
             frame.restoreSession();     // 前回閉じたときのタブ・分割・ウィンドウの大きさに戻す

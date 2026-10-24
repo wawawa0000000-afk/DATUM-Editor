@@ -74,6 +74,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     private static final String APP_NAME = "DATUM-Editor";
     private static final int CTRL = InputEvent.CTRL_DOWN_MASK;
     private static final int SHIFT = InputEvent.SHIFT_DOWN_MASK;
+    private static final int ALT = InputEvent.ALT_DOWN_MASK;
 
     private final FileService fileService = new FileService();
 
@@ -123,6 +124,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     private FolderSidebar sidebar;
     private boolean sidebarVisible;
     private ProofreadPanel proofPanel;
+    private final Map<EditorPane, Object[]> zoomMemo = new java.util.WeakHashMap<>();   // 倍率を変えた文書：{そのとき付けた文字, 等倍の大きさ}
     private final Map<Theme.Scheme, javax.swing.JRadioButtonMenuItem> schemeItems = new java.util.EnumMap<>(Theme.Scheme.class);
     private AiChatPanel chatPanel;
     private McpTools chatTools;
@@ -247,8 +249,8 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
 
         JMenu format = new JMenu("書式");
         format.add(item("フォント…", null, this::chooseFont));
-        format.add(item("文字を大きく", key(KeyEvent.VK_SEMICOLON, CTRL), () -> zoom(1)));
-        format.add(item("文字を小さく", key(KeyEvent.VK_MINUS, CTRL), () -> zoom(-1)));
+        format.add(item("本文の文字を大きく", key(KeyEvent.VK_SEMICOLON, CTRL | ALT), () -> zoom(1)));
+        format.add(item("本文の文字を小さく", key(KeyEvent.VK_MINUS, CTRL | ALT), () -> zoom(-1)));
         format.addSeparator();
         wrapItem.addActionListener(e -> {
             if (currentPane() instanceof TextEditorPane text) {
@@ -279,6 +281,11 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         view.add(item("画面を分割 / 分割をやめる", key(KeyEvent.VK_BACK_SLASH, CTRL), this::toggleSplit));
         view.add(item("分割の向きを切り替え（左右 ⇔ 上下）", null, this::toggleOrientation));
         view.add(item("タブを反対側へ移動", key(KeyEvent.VK_M, CTRL | SHIFT), this::moveTabToOtherGroup));
+        view.addSeparator();
+        // ブラウザと同じ、画面全体（メニュー・ボタン・本文）の拡大・縮小
+        view.add(item("拡大", key(KeyEvent.VK_SEMICOLON, CTRL), () -> setUiZoom(Theme.nextZoom(1))));
+        view.add(item("縮小", key(KeyEvent.VK_MINUS, CTRL), () -> setUiZoom(Theme.nextZoom(-1))));
+        view.add(item("100% に戻す", key(KeyEvent.VK_0, CTRL), () -> setUiZoom(100)));
         view.addSeparator();
         view.add(item("次のタブ", key(KeyEvent.VK_PAGE_DOWN, CTRL), () -> activeGroup.selectNext(1)));
         view.add(item("前のタブ", key(KeyEvent.VK_PAGE_UP, CTRL), () -> activeGroup.selectNext(-1)));
@@ -330,7 +337,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         boardMenu.addSeparator();
         boardMenu.add(item("拡大", null, () -> withBoard(board -> board.zoomBy(1.25))));
         boardMenu.add(item("縮小", null, () -> withBoard(board -> board.zoomBy(0.8))));
-        boardMenu.add(item("全体を表示", key(KeyEvent.VK_0, CTRL), () -> withBoard(BoardPane::fitAll)));
+        boardMenu.add(item("全体を表示", key(KeyEvent.VK_0, CTRL | ALT), () -> withBoard(BoardPane::fitAll)));
         boardMenu.addSeparator();
         // Ctrl+Shift+E はサイドバーに使っているので、画像の書き出しは Ctrl+Alt+E にする
         boardMenu.add(item("画像として書き出す（PNG）…", key(KeyEvent.VK_E, CTRL | InputEvent.ALT_DOWN_MASK), this::exportBoardImage));
@@ -364,12 +371,16 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         menuBar.add(help);
 
         // 右端（ウィンドウの最小化・最大化・×のすぐ下）に、1回押すだけで使えるボタンを並べる
-        JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+        JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0)) {
+            @Override
+            public Dimension getMaximumSize() {
+                return getPreferredSize();      // 表示の倍率を変えたときも、ボタンの大きさに合わせて広がるように
+            }
+        };
         tools.setOpaque(false);
         for (JToggleButton button : new JToggleButton[]{paletteButton, folderButton, splitButton, proofButton, aiButton, terminalButton, focusButton}) {
             tools.add(button);
         }
-        tools.setMaximumSize(tools.getPreferredSize());
         menuBar.add(Box.createHorizontalGlue());
         menuBar.add(tools);
         return menuBar;
@@ -810,8 +821,8 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         CommandPalette.show(this, appSettings, CommandPalette.collect(getJMenuBar(), extras, paletteItem));
     }
 
-    /** 起動したまま配色を変える。画面に出ていない部品（裏のタブ・閉じている欄）も一緒に塗り直す。 */
-    private void applyScheme(Theme.Scheme scheme) {
+    /** 配色や倍率を変えるときにたどる部品。画面に出ていない部品（裏のタブ・閉じている欄）も入れる。 */
+    private List<Component> themeRoots() {
         List<Component> roots = new ArrayList<>(List.of(getRootPane(), group1, group2, findBar));
         roots.addAll(allPanes());
         for (Component c : new Component[]{sidebar, proofPanel, chatPanel, terminal, statusBar, goalMeter}) {
@@ -819,7 +830,39 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
                 roots.add(c);
             }
         }
-        Theme.switchTo(scheme, roots);
+        return roots;
+    }
+
+    /** ブラウザのように、画面全体の倍率を変える（次に起動したときも同じ倍率）。 */
+    private void setUiZoom(int percent) {
+        int before = Theme.zoom();
+        // 文書の文字は、各文書で選んだ大きさに、同じ割合を掛ける（Theme.zoomTo が部品の文字を変える前に覚えておく）
+        Map<EditorPane, Font> fonts = new java.util.IdentityHashMap<>();
+        for (EditorPane pane : allPanes()) {
+            fonts.put(pane, pane.getEditorFont());
+        }
+        Theme.zoomTo(percent, themeRoots());
+        if (Theme.zoom() != before) {
+            fonts.forEach((pane, font) -> {
+                // 等倍のときの大きさを覚えておき、そこから計算する（50% と 200% を行き来しても、ずれが積もらないように）
+                Object[] memo = zoomMemo.get(pane);
+                float base = memo != null && memo[0] == font ? (Float) memo[1] : Theme.baseSize(font.getSize2D(), before);
+                Font next = font.deriveFont((float) Math.max(6, Math.round(base * Theme.zoom() / 100f)));
+                pane.setEditorFont(next);
+                zoomMemo.put(pane, new Object[]{next, base});
+            });
+            for (EditorGroup group : new EditorGroup[]{group1, group2}) {
+                group.refreshTabs();
+            }
+            appSettings.put(AppSettings.ZOOM, Theme.zoom());
+            appSettings.save();
+        }
+        flash("表示の倍率: " + Theme.zoom() + "%");
+    }
+
+    /** 起動したまま配色を変える。画面に出ていない部品（裏のタブ・閉じている欄）も一緒に塗り直す。 */
+    private void applyScheme(Theme.Scheme scheme) {
+        Theme.switchTo(scheme, themeRoots());
         JToggleButton[] buttons = {paletteButton, folderButton, splitButton, proofButton, aiButton, terminalButton, focusButton};
         for (JToggleButton button : buttons) {
             button.setForeground(button.isSelected() ? Color.WHITE : Theme.FG_STRONG);
@@ -1102,10 +1145,20 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     /** メニューには1つしかキーを付けられないので、別のキーでも動くようにする。 */
     private void installExtraShortcuts() {
         shortcut(key(KeyEvent.VK_Z, CTRL | SHIFT), "redo2", () -> withPane(EditorPane::redo));
-        shortcut(key(KeyEvent.VK_SEMICOLON, CTRL | SHIFT), "zoomIn2", () -> zoom(1));   // JIS 配列の「+」
-        shortcut(key(KeyEvent.VK_EQUALS, CTRL), "zoomIn3", () -> zoom(1));               // US 配列の「+」
-        shortcut(key(KeyEvent.VK_ADD, CTRL), "zoomIn4", () -> zoom(1));                  // テンキー
-        shortcut(key(KeyEvent.VK_SUBTRACT, CTRL), "zoomOut2", () -> zoom(-1));
+        // 「+」は、JIS 配列では Shift+;、US 配列では Shift+= なので、Shift があってもなくても動くようにする
+        Runnable uiIn = () -> setUiZoom(Theme.nextZoom(1));
+        shortcut(key(KeyEvent.VK_SEMICOLON, CTRL | SHIFT), "uiZoomIn2", uiIn);
+        shortcut(key(KeyEvent.VK_EQUALS, CTRL), "uiZoomIn3", uiIn);
+        shortcut(key(KeyEvent.VK_EQUALS, CTRL | SHIFT), "uiZoomIn4", uiIn);
+        shortcut(key(KeyEvent.VK_ADD, CTRL), "uiZoomIn5", uiIn);                  // テンキー
+        shortcut(key(KeyEvent.VK_SUBTRACT, CTRL), "uiZoomOut2", () -> setUiZoom(Theme.nextZoom(-1)));
+        shortcut(key(KeyEvent.VK_NUMPAD0, CTRL), "uiZoomReset2", () -> setUiZoom(100));
+        // 本文の文字だけ：Ctrl+Alt（Ctrl+Shift+; は JIS 配列の Ctrl++ と同じキーになるので使えない）
+        shortcut(key(KeyEvent.VK_SEMICOLON, CTRL | ALT | SHIFT), "zoomIn2", () -> zoom(1));
+        shortcut(key(KeyEvent.VK_EQUALS, CTRL | ALT), "zoomIn3", () -> zoom(1));
+        shortcut(key(KeyEvent.VK_EQUALS, CTRL | ALT | SHIFT), "zoomIn4", () -> zoom(1));
+        shortcut(key(KeyEvent.VK_ADD, CTRL | ALT), "zoomIn5", () -> zoom(1));
+        shortcut(key(KeyEvent.VK_SUBTRACT, CTRL | ALT), "zoomOut2", () -> zoom(-1));
         // 集中モード中に Esc でも戻れるようにする（検索バーなどが Esc を使うときは、そちらが先に受け取る）
         // 集中モード中は Esc でも戻れるようにする。取り決めは集中モードの間だけ登録する（setFocusEscape）。
         // いつも登録しておくと、Swing がメニューを閉じるための Esc より先に受け取ってしまい、

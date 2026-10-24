@@ -177,7 +177,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
 
     public static VerticalTextPane fromJson(Map<String, Object> json) {
         Font font = new Font(Json.str(json, "fontName", "Monospaced"), Font.PLAIN,
-                Json.num(json, "fontSize", Theme.EDITOR_SIZE));
+                Theme.zoomed(Json.num(json, "fontSize", Theme.unzoomed(Theme.EDITOR_SIZE))));
         VerticalTextPane pane = new VerticalTextPane(font);
         pane.manuscript = Json.bool(json, "manuscript", true);
         pane.loadText(Json.str(json, "text", ""));
@@ -676,7 +676,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
     public Map<String, Object> toJson() {
         Map<String, Object> json = baseJson();
         json.put("fontName", view.getFont().getFamily());
-        json.put("fontSize", view.getFont().getSize());
+        json.put("fontSize", Theme.unzoomed(view.getFont().getSize()));   // 等倍のときの大きさで保存する
         json.put("manuscript", manuscript);
         json.put("text", toPlainText());    // ルビは、記法の形で本文に入れて保存する
         return json;

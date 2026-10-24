@@ -133,7 +133,7 @@ public class BoardPane extends EditorPane {
     @Override
     public Map<String, Object> toJson() {
         Map<String, Object> json = baseJson();
-        json.put("fontSize", cardFont.getSize());
+        json.put("fontSize", Theme.unzoomed(cardFont.getSize()));   // 等倍のときの大きさで保存する
         List<Object> cardList = new ArrayList<>();
         for (Card card : cards) {
             Map<String, Object> m = new LinkedHashMap<>();
@@ -167,7 +167,7 @@ public class BoardPane extends EditorPane {
         selection.clear();
         linkSource = null;
         nextId = 1;
-        cardFont = cardFont.deriveFont((float) Json.num(json, "fontSize", cardFont.getSize()));
+        cardFont = cardFont.deriveFont((float) Theme.zoomed(Json.num(json, "fontSize", Theme.unzoomed(cardFont.getSize()))));
         for (Object o : Json.list(json, "cards")) {
             if (o instanceof Map<?, ?> raw) {
                 Map<String, Object> m = (Map<String, Object>) raw;

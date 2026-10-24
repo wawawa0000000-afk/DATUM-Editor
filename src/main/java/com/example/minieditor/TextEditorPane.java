@@ -98,7 +98,7 @@ public class TextEditorPane extends EditorPane implements Searchable {
     /** JSON から読み込んで作る。 */
     public static TextEditorPane fromJson(Map<String, Object> json) {
         Font font = new Font(Json.str(json, "fontName", "Monospaced"), Font.PLAIN,
-                Json.num(json, "fontSize", Theme.EDITOR_SIZE));
+                Theme.zoomed(Json.num(json, "fontSize", Theme.unzoomed(Theme.EDITOR_SIZE))));
         TextEditorPane pane = new TextEditorPane(font);
         pane.setWrap(Json.bool(json, "wrap", false));
         pane.loadText(Json.str(json, "text", ""));
@@ -207,7 +207,7 @@ public class TextEditorPane extends EditorPane implements Searchable {
     public Map<String, Object> toJson() {
         Map<String, Object> json = baseJson();
         json.put("fontName", area.getFont().getFamily());
-        json.put("fontSize", area.getFont().getSize());
+        json.put("fontSize", Theme.unzoomed(area.getFont().getSize()));   // 等倍のときの大きさで保存する
         json.put("wrap", area.getLineWrap());
         json.put("text", area.getText());
         return json;

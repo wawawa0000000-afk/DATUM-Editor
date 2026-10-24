@@ -288,9 +288,17 @@ public final class Theme {
     // 文字の大きさ。Windows などで画面の拡大（125%・150% など）が効いているときは、
     // Java が自動で拡大して描くので、そのぶん小さい数字にして二重に大きくならないようにする。
     private static final double SCREEN_SCALE = screenScale();
-    public static final int UI_SIZE = scaled(22);
-    public static final int SMALL_SIZE = scaled(18);
-    public static final int EDITOR_SIZE = scaled(48);
+    private static final int BASE_UI = scaled(22);
+    private static final int BASE_SMALL = scaled(18);
+    private static final int BASE_EDITOR = scaled(48);
+    // 表示の倍率（ブラウザの拡大・縮小と同じ考え方）を掛けた大きさ。倍率を変えると、ここも変わる
+    public static int UI_SIZE = BASE_UI;
+    public static int SMALL_SIZE = BASE_SMALL;
+    public static int EDITOR_SIZE = BASE_EDITOR;
+
+    /** 選べる表示の倍率（ブラウザと同じような刻み）。 */
+    public static final int[] ZOOM_STEPS = {50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200};
+    private static int zoom = 100;
 
     /** 行の縞模様を表示するか（表示メニューで切り替える）。 */
     public static boolean stripes = true;
@@ -309,6 +317,127 @@ public final class Theme {
 
     private static int scaled(int size) {
         return Math.max(12, (int) Math.round(size / SCREEN_SCALE));
+    }
+
+    /** 今の表示の倍率（100 が等倍）。 */
+    public static int zoom() {
+        return zoom;
+    }
+
+    /** 倍率を掛けた大きさにする（文書に保存されている文字の大きさを、画面の大きさに直すときに使う）。 */
+    public static int zoomed(int size) {
+        return Math.max(6, (int) Math.round(size * zoom / 100.0));
+    }
+
+    /** 倍率を外した大きさにする（文書には、等倍のときの大きさで保存する）。 */
+    public static int unzoomed(int size) {
+        return Math.max(6, (int) Math.round(size * 100.0 / zoom));
+    }
+
+    /** 刻みの中で、今の倍率の次（direction が 1 なら大きい方、-1 なら小さい方）の倍率。端ならそのまま。 */
+    public static int nextZoom(int direction) {
+        if (direction > 0) {
+            for (int step : ZOOM_STEPS) {
+                if (step > zoom) {
+                    return step;
+                }
+            }
+            return ZOOM_STEPS[ZOOM_STEPS.length - 1];
+        }
+        for (int i = ZOOM_STEPS.length - 1; i >= 0; i--) {
+            if (ZOOM_STEPS[i] < zoom) {
+                return ZOOM_STEPS[i];
+            }
+        }
+        return ZOOM_STEPS[0];
+    }
+
+    /** 画面を作る前に、表示の倍率を決める（起動したときに、設定から読んで呼ぶ）。 */
+    public static void setZoom(int percent) {
+        zoom = Math.max(ZOOM_STEPS[0], Math.min(ZOOM_STEPS[ZOOM_STEPS.length - 1], percent));
+        UI_SIZE = Math.max(6, (int) Math.round(BASE_UI * zoom / 100.0));
+        SMALL_SIZE = Math.max(6, (int) Math.round(BASE_SMALL * zoom / 100.0));
+        EDITOR_SIZE = Math.max(6, (int) Math.round(BASE_EDITOR * zoom / 100.0));
+    }
+
+    /**
+     * 起動したまま表示の倍率を変える。roots から下の部品の文字を、全部同じ割合で大きく（小さく）する。
+     * 文書の文字（エディタの本文・カード）は、呼ぶ側で setEditorFont し直す。
+     */
+    public static void zoomTo(int percent, java.util.Collection<? extends java.awt.Component> roots) {
+        int before = zoom;
+        setZoom(percent);
+        if (zoom == before) {
+            return;
+        }
+        apply();
+        new javax.swing.JPopupMenu();       // switchTo と同じ理由（メニューを閉じる仕組みを付け直す）
+        java.util.Set<java.awt.Component> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        for (java.awt.Component root : roots) {
+            if (root != null) {
+                resize(root, before, seen);
+            }
+        }
+        for (java.awt.Window window : java.awt.Window.getWindows()) {
+            window.validate();
+            window.repaint();
+        }
+    }
+
+    /**
+     * 倍率 percent のときの文字の大きさから、等倍のときの大きさを求める。
+     * Theme の決まった大きさ（UI_SIZE など）と同じなら、四捨五入で狂わないように、その元の値を返す。
+     */
+    public static float baseSize(float size, int percent) {
+        for (int base : new int[]{BASE_UI, BASE_SMALL, BASE_EDITOR, BASE_UI + 2}) {
+            if (Math.round(size) == Math.max(6, (int) Math.round(base * percent / 100.0))) {
+                return base;
+            }
+        }
+        return size * 100f / percent;
+    }
+
+    // 部品ごとに「等倍のときの文字の大きさ」を覚えておき、そこから計算する（何度変えても、ずれが積もらないように）
+    private static final String BASE_SIZE = "datum.baseFontSize";
+    private static final String ZOOMED_FONT = "datum.zoomedFont";
+
+    private static void resize(java.awt.Component c, int before, java.util.Set<java.awt.Component> seen) {
+        if (!seen.add(c)) {
+            return;
+        }
+        Font font = c.isFontSet() ? c.getFont() : null;
+        if (font != null) {
+            float base;
+            if (c instanceof JComponent jc && jc.getClientProperty(ZOOMED_FONT) == font
+                    && jc.getClientProperty(BASE_SIZE) instanceof Float saved) {
+                base = saved;
+            } else {
+                base = baseSize(font.getSize2D(), before);   // 初めて変えるとき・部品が自分で文字を変えたとき
+            }
+            Font next = font.deriveFont(Math.max(6f, Math.round(base * zoom / 100f)));
+            if (font instanceof javax.swing.plaf.UIResource) {
+                next = new FontUIResource(next);
+            }
+            c.setFont(next);
+            if (c instanceof JComponent jc) {
+                jc.putClientProperty(BASE_SIZE, base);
+                jc.putClientProperty(ZOOMED_FONT, next);
+            }
+        }
+        if (c instanceof javax.swing.JMenu menu) {
+            resize(menu.getPopupMenu(), before, seen);     // 閉じているメニューの中身は、部品の木に入っていない
+        }
+        if (c instanceof JComponent jc && jc.getComponentPopupMenu() != null) {
+            resize(jc.getComponentPopupMenu(), before, seen);
+        }
+        if (c instanceof JComponent jc) {
+            jc.revalidate();
+        }
+        if (c instanceof java.awt.Container container) {
+            for (java.awt.Component child : container.getComponents()) {
+                resize(child, before, seen);
+            }
+        }
     }
 
     public static Font ui() {
