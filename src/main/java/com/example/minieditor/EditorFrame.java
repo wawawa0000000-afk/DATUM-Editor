@@ -57,6 +57,7 @@ import javax.swing.JTextArea;
 import javax.swing.JToggleButton;
 import javax.swing.KeyStroke;
 import javax.swing.MenuSelectionManager;
+import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import javax.swing.filechooser.FileNameExtensionFilter;
@@ -110,6 +111,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     private final FindBar findBar = new FindBar(this::currentPane);
     private final JLabel statusLeft = new JLabel(" ");
     private final JLabel statusRight = new JLabel(" ");
+    private JLabel zoomLabel;       // ステータスバーの「100%」
     private final JCheckBoxMenuItem wrapItem = new JCheckBoxMenuItem("折り返し");
     private final JCheckBoxMenuItem manuscriptItem = new JCheckBoxMenuItem("原稿用紙（20字×20行）", true);
     private final AppSettings appSettings = AppSettings.load();  // 最後に保存したフォルダなど
@@ -212,9 +214,82 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         JPanel right = new JPanel(new BorderLayout(24, 0));
         right.setOpaque(false);
         right.add(statusRight, BorderLayout.CENTER);
-        right.add(goalMeter, BorderLayout.EAST);
+        JPanel east = new JPanel(new BorderLayout(24, 0));
+        east.setOpaque(false);
+        east.add(goalMeter, BorderLayout.CENTER);
+        east.add(createZoomControl(), BorderLayout.EAST);
+        right.add(east, BorderLayout.EAST);
         bar.add(right, BorderLayout.EAST);
         return bar;
+    }
+
+    /**
+     * ステータスバーの右端の「－ 100% ＋」。タッチパッドしかないノートパソコンでも、クリックだけで倍率を変えられるように。
+     * 真ん中の「100%」を押すと、100% に戻る。
+     */
+    private JPanel createZoomControl() {
+        JPanel box = new JPanel(new FlowLayout(FlowLayout.RIGHT, 2, 0));
+        box.setOpaque(false);
+        box.add(statusButton("－", "縮小（Ctrl+ホイールでも変えられます）", () -> setUiZoom(Theme.nextZoom(-1))));
+        zoomLabel = statusButton(Theme.zoom() + "%", "表示の倍率（押すと 100% に戻ります）", () -> setUiZoom(100));
+        box.add(zoomLabel);
+        box.add(statusButton("＋", "拡大（Ctrl+ホイールでも変えられます）", () -> setUiZoom(Theme.nextZoom(1))));
+        return box;
+    }
+
+    /** ステータスバーの上で押せる文字。マウスを乗せると、少し明るい地になる。 */
+    private JLabel statusButton(String text, String tooltip, Runnable action) {
+        JLabel label = new JLabel(text, SwingConstants.CENTER) {
+            boolean hover;
+            {
+                addMouseListener(new java.awt.event.MouseAdapter() {
+                    @Override
+                    public void mouseEntered(java.awt.event.MouseEvent e) {
+                        hover = true;
+                        repaint();
+                    }
+
+                    @Override
+                    public void mouseExited(java.awt.event.MouseEvent e) {
+                        hover = false;
+                        repaint();
+                    }
+
+                    @Override
+                    public void mouseClicked(java.awt.event.MouseEvent e) {
+                        action.run();
+                    }
+                });
+            }
+
+            @Override
+            public Dimension getPreferredSize() {
+                // 「100%」の文字は、倍率が変わっても幅が変わらないように、いちばん長い「200%」の幅にそろえる
+                Dimension size = super.getPreferredSize();
+                if (getText().endsWith("%")) {
+                    size.width = Math.max(size.width, getFontMetrics(getFont()).stringWidth("200%") + 16);
+                }
+                return size;
+            }
+
+            @Override
+            protected void paintComponent(Graphics g) {
+                if (hover) {
+                    Graphics2D g2 = (Graphics2D) g.create();
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                    g2.setColor(new Color(255, 255, 255, 50));
+                    g2.fillRoundRect(0, 0, getWidth(), getHeight(), 6, 6);
+                    g2.dispose();
+                }
+                super.paintComponent(g);
+            }
+        };
+        label.setFont(Theme.small());
+        label.setForeground(Color.WHITE);
+        label.setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 8));
+        label.setToolTipText(tooltip);
+        label.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+        return label;
     }
 
     private JMenuBar createMenuBar() {
@@ -860,6 +935,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             appSettings.put(AppSettings.ZOOM, Theme.zoom());
             appSettings.save();
         }
+        zoomLabel.setText(Theme.zoom() + "%");
         flash("表示の倍率: " + Theme.zoom() + "%");
     }
 
@@ -1152,8 +1228,21 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
      */
     private void installZoomKeys() {
         KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(e -> {
-            if (e.getID() != KeyEvent.KEY_PRESSED || !e.isControlDown() || e.isMetaDown()
+            if (e.getID() != KeyEvent.KEY_PRESSED || e.isMetaDown()
                     || e.getComponent() == null || SwingUtilities.getWindowAncestor(e.getComponent()) != this) {
+                return false;
+            }
+            // Alt+↑／Alt+↓／Alt+0：Ctrl+＋ などが、ほかのアプリに取られてしまう PC のための、もう1組のキー
+            if (e.isAltDown() && !e.isControlDown() && !e.isShiftDown() && !e.isAltGraphDown()) {
+                int code = e.getKeyCode();
+                if (code == KeyEvent.VK_UP || code == KeyEvent.VK_DOWN || code == KeyEvent.VK_0) {
+                    setUiZoom(code == KeyEvent.VK_0 ? 100 : Theme.nextZoom(code == KeyEvent.VK_UP ? 1 : -1));
+                    e.consume();
+                    return true;
+                }
+                return false;
+            }
+            if (!e.isControlDown()) {
                 return false;
             }
             int direction = zoomDirection(e);
