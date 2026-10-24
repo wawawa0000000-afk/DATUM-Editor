@@ -53,6 +53,12 @@ final class AiBackends {
         void stop();
 
         void reset();
+
+        /** 会話の続きを保存するための中身（JSON にできる形）。まだ何も話していなければ null。 */
+        Object state();
+
+        /** state() で取り出した中身から、その会話の続きに戻す。 */
+        void restore(Object state);
     }
 
     static final String SYSTEM = """
@@ -114,6 +120,19 @@ final class AiBackends {
         @Override
         public void reset() {
             messages.clear();
+        }
+
+        @Override
+        public Object state() {
+            return messages.isEmpty() ? null : new ArrayList<>(messages);
+        }
+
+        @Override
+        public void restore(Object state) {
+            messages.clear();
+            if (state instanceof List<?> saved) {
+                messages.addAll(saved);
+            }
         }
 
         @Override
@@ -233,6 +252,19 @@ final class AiBackends {
         @Override
         public void reset() {
             messages.clear();
+        }
+
+        @Override
+        public Object state() {
+            return messages.isEmpty() ? null : new ArrayList<>(messages);
+        }
+
+        @Override
+        public void restore(Object state) {
+            messages.clear();
+            if (state instanceof List<?> saved) {
+                messages.addAll(saved);
+            }
         }
 
         @Override
@@ -365,6 +397,16 @@ final class AiBackends {
         @Override
         public void reset() {
             sessionId = null;
+        }
+
+        @Override
+        public Object state() {
+            return sessionId;       // 会話の中身は Claude Code が覚えているので、続きの番号だけ持っておけばよい
+        }
+
+        @Override
+        public void restore(Object state) {
+            sessionId = state instanceof String id ? id : null;
         }
 
         @Override

@@ -7,14 +7,23 @@ import java.awt.FlowLayout;
 import java.awt.event.ActionEvent;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
+import java.io.IOException;
 import java.nio.file.Path;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 
 import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
+import javax.swing.JMenuItem;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.JTextPane;
@@ -29,6 +38,7 @@ import javax.swing.text.StyledDocument;
  * 画面の右に出す「AI」の会話欄。ここに書いた頼みごとを、設定で選んだ AI に送る。
  * AI は、エディタの道具（文書を読む・直す・探す・保存する など）を使って作業する。
  * 直した所は Ctrl+Z で戻せる（AI 連携と同じしくみ）。
+ * やり取りは1回ごとに保存され（ChatHistory）、「履歴」から選ぶと、その続きから話せる。
  */
 public final class AiChatPanel extends JPanel {
 
@@ -56,6 +66,14 @@ public final class AiChatPanel extends JPanel {
     private AiBackends.Backend backend;
     private String backendKey;
     private volatile boolean busy;
+    private String backendKind;             // 今のつなぎ先の種類（claude-code / anthropic / openai）
+    private Path backendWorkspace;          // Claude Code を起動したフォルダ
+
+    // ---------- 履歴 ----------
+    private final List<Object> entries = new ArrayList<>();    // 表示したやり取り（保存する分）
+    private String chatId;                  // 保存先の名前。まだ保存していなければ null
+    private Map<String, Object> pending;    // 履歴から開いて、まだつなぎ先に戻していない会話
+    private String carryOver;               // 前と違う AI で続けるとき、次の頼みごとの前に付けるこれまでのやり取り
 
     public AiChatPanel(Host host, Runnable onClose) {
         super(new BorderLayout());
@@ -67,6 +85,9 @@ public final class AiChatPanel extends JPanel {
         title.setForeground(Theme.FG);
         backendLabel.setFont(Theme.small());
         backendLabel.setForeground(Theme.FG_DIM);
+        JButton history = Theme.flatButton("履歴");
+        history.setToolTipText("前の会話を選んで、その続きから話す");
+        history.addActionListener(e -> showHistory(history));
         JButton fresh = Theme.flatButton("新しい会話");
         fresh.setToolTipText("これまでのやり取りを忘れて、最初から話す");
         fresh.addActionListener(e -> newConversation());
@@ -77,7 +98,7 @@ public final class AiChatPanel extends JPanel {
         close.addActionListener(e -> onClose.run());
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
         buttons.setOpaque(false);
-        for (JButton button : new JButton[]{fresh, settingsButton, close}) {
+        for (JButton button : new JButton[]{history, fresh, settingsButton, close}) {
             button.setFocusable(false);
             buttons.add(button);
         }
@@ -200,7 +221,127 @@ public final class AiChatPanel extends JPanel {
         } catch (BadLocationException ex) {
             throw new IllegalStateException(ex);
         }
-        append(Kind.INFO, "新しい会話を始めました。\n");
+        entries.clear();
+        chatId = null;
+        pending = null;
+        carryOver = null;
+        append(Kind.INFO, "新しい会話を始めました。前の会話は「履歴」から開けます。\n");
+    }
+
+    // ---------- 履歴 ----------
+
+    private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("M/d HH:mm");
+
+    /** 保存してある会話を、ボタンの下に新しい順で並べる。 */
+    private void showHistory(JComponent anchor) {
+        JPopupMenu menu = new JPopupMenu();
+        List<ChatHistory.Summary> all = ChatHistory.list();
+        if (all.isEmpty()) {
+            JMenuItem none = new JMenuItem("まだ保存された会話はありません");
+            none.setEnabled(false);
+            menu.add(none);
+        }
+        for (ChatHistory.Summary summary : all.subList(0, Math.min(20, all.size()))) {
+            String when = WHEN.format(Instant.ofEpochMilli(summary.updated()).atZone(ZoneId.systemDefault()));
+            JMenuItem item = new JMenuItem(when + "　" + summary.title()
+                    + (summary.id().equals(chatId) ? "　（今の会話）" : ""));
+            item.addActionListener(e -> openChat(summary.id()));
+            menu.add(item);
+        }
+        menu.show(anchor, 0, anchor.getHeight());
+    }
+
+    /** 保存してある会話を表示し、次に送るときに、その続きとして AI に頼めるようにする。 */
+    @SuppressWarnings("unchecked")
+    void openChat(String id) {
+        if (busy) {
+            append(Kind.INFO, "AI の作業中は切り替えられません。終わるのを待つか、「停止」を押してください。\n");
+            return;
+        }
+        Map<String, Object> record = ChatHistory.load(id);
+        if (record == null) {
+            append(Kind.ERROR, "その会話を読めませんでした。\n");
+            return;
+        }
+        newConversation();
+        try {
+            transcript.getStyledDocument().remove(0, transcript.getStyledDocument().getLength());
+        } catch (BadLocationException ex) {
+            throw new IllegalStateException(ex);
+        }
+        for (Object item : Json.list(record, "entries")) {
+            if (item instanceof Map<?, ?> m) {
+                Kind kind = kindOf(String.valueOf(m.get("kind")));
+                if (kind != null) {
+                    record(kind, String.valueOf(m.get("text")));
+                }
+            }
+        }
+        chatId = id;
+        pending = record;
+        backend = null;         // 次に送るときに、つなぎ先を作り直して、この会話に戻す
+        backendKey = null;
+        append(Kind.INFO, "（ここまでが前の会話です。続けて書くと、AI もこの続きとして答えます）\n");
+    }
+
+    private static Kind kindOf(String name) {
+        try {
+            return Kind.valueOf(name);
+        } catch (IllegalArgumentException ex) {
+            return null;
+        }
+    }
+
+    /** 作り直したつなぎ先を、履歴から開いた会話に戻す。 */
+    private void applyPending() {
+        Map<String, Object> record = pending;
+        pending = null;
+        Object state = record.get("state");
+        boolean sameAi = backendKind.equals(Json.str(record, "kind", ""))
+                && (!backendKind.equals("claude-code") || String.valueOf(backendWorkspace).equals(Json.str(record, "workspace", "null")));
+        if (sameAi && state != null) {
+            backend.restore(state);
+            return;
+        }
+        // 違う AI では、前の AI の覚えている中身を使えないので、やり取りを文章にして一緒に送る
+        StringBuilder sb = new StringBuilder();
+        for (Object item : entries) {
+            if (item instanceof Map<?, ?> m && ("USER".equals(m.get("kind")) || "AI".equals(m.get("kind")))) {
+                sb.append("USER".equals(m.get("kind")) ? "利用者: " : "AI: ").append(m.get("text"));
+            }
+        }
+        String text = sb.length() > 8000 ? sb.substring(sb.length() - 8000) : sb.toString();
+        if (!text.isBlank()) {
+            carryOver = "（ここまでの会話。この続きとして答えてください）\n" + text + "\n（ここから今回の頼みごと）\n";
+            append(Kind.INFO, "（前の会話とは違う AI なので、これまでのやり取りを文章にして一緒に送ります）\n");
+        }
+    }
+
+    /** 今の会話を保存する。まだ何も頼んでいなければ、何もしない。 */
+    private void saveChat(AiBackends.Backend used) {
+        String title = null;
+        for (Object item : entries) {
+            if (item instanceof Map<?, ?> m && "USER".equals(m.get("kind"))) {
+                title = String.valueOf(m.get("text")).strip().lines().findFirst().orElse("");
+                break;
+            }
+        }
+        if (title == null) {
+            return;
+        }
+        if (title.length() > 30) {
+            title = title.substring(0, 30) + "…";
+        }
+        if (chatId == null) {
+            chatId = ChatHistory.newId();
+        }
+        try {
+            ChatHistory.save(chatId, McpServer.map("title", title, "updated", System.currentTimeMillis(),
+                    "kind", backendKind, "workspace", String.valueOf(backendWorkspace),
+                    "entries", new ArrayList<>(entries), "state", used.state()));
+        } catch (IOException ex) {
+            append(Kind.ERROR, "会話を保存できませんでした：" + ex.getMessage() + "\n");
+        }
     }
 
     private void stop() {
@@ -216,13 +357,15 @@ public final class AiChatPanel extends JPanel {
         if (chosen == null) {
             return;
         }
-        append(Kind.USER_NAME, "あなた\n");
-        append(Kind.USER, text + "\n");
-        append(Kind.AI_NAME, "AI\n");
+        record(Kind.USER_NAME, "あなた\n");
+        record(Kind.USER, text + "\n");
+        record(Kind.AI_NAME, "AI\n");
+        String request = carryOver == null ? text : carryOver + text;
+        carryOver = null;
         setBusy(true);
         Thread worker = new Thread(() -> {
             try {
-                chosen.send(text, new AiBackends.Listener() {
+                chosen.send(request, new AiBackends.Listener() {
                     @Override
                     public void text(String t) {
                         later(Kind.AI, t.strip() + "\n");
@@ -246,7 +389,10 @@ public final class AiChatPanel extends JPanel {
             } catch (Exception ex) {
                 later(Kind.ERROR, "うまくいきませんでした：" + ex.getMessage() + "\n");
             } finally {
-                SwingUtilities.invokeLater(() -> setBusy(false));
+                SwingUtilities.invokeLater(() -> {
+                    setBusy(false);
+                    saveChat(chosen);
+                });
             }
         }, "ai-chat");
         worker.setDaemon(true);
@@ -293,6 +439,11 @@ public final class AiChatPanel extends JPanel {
                 default -> backend = new AiBackends.ClaudeCode(command, model, host.workspace());
             }
             backendKey = fingerprint;
+            backendKind = claudeCode ? "claude-code" : kind;
+            backendWorkspace = claudeCode ? host.workspace() : null;
+            if (pending != null) {
+                applyPending();
+            }
             refreshBackendLabel();
         }
         return backend;
@@ -315,8 +466,15 @@ public final class AiChatPanel extends JPanel {
 
     private enum Kind { USER_NAME, USER, AI_NAME, AI, TOOL, INFO, ERROR }
 
+    /** 別のスレッドから、会話のやり取りとして表示する。 */
     private void later(Kind kind, String text) {
-        SwingUtilities.invokeLater(() -> append(kind, text));
+        SwingUtilities.invokeLater(() -> record(kind, text));
+    }
+
+    /** 会話のやり取りとして表示し、保存する分にも入れる（案内の文は append だけで、保存しない）。 */
+    private void record(Kind kind, String text) {
+        entries.add(McpServer.map("kind", kind.name(), "text", text));
+        append(kind, text);
     }
 
     private void append(Kind kind, String text) {

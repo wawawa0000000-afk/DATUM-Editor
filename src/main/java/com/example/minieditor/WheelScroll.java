@@ -14,7 +14,7 @@ import javax.swing.JScrollPane;
 final class WheelScroll {
 
     /** OS の設定の1行あたりに動かす量（倍率 100% のとき、ピクセル） */
-    static final int LINE = 16;
+    static final int LINE = 8;
 
     /** 1ピクセルに満たない残り。[0] は縦のバー、[1] は横のバー */
     private final double[] rest = new double[2];

@@ -238,6 +238,7 @@ Miro・FigJam・Mural などのオンラインのボードにある機能を参�
 
 ### AI の会話欄
 - 「AI」（Ctrl+Shift+A）で、右に会話欄を出します。頼みごとを書いて Enter で送ります（改行は Shift+Enter）。「誤字・脱字」「表記ゆれ」「要約」はボタン1つで頼めます。
+- やり取りは自動で保存されます（設定フォルダの `ai-chats`、新しいものから50件）。「履歴」から前の会話を選ぶと、その続きから話せます。前と違う AI に切り替えたときは、これまでのやり取りを文章にして一緒に送ります。
 - AI は、AI 連携（MCP）と同じ道具（文書を読む・直す・探す・保存する、フォルダの中のファイルを扱う）を使います。AI が直した所は Ctrl+Z で戻せます。
 - 使う AI は「ファイル → 設定…」で選びます。
 
@@ -333,6 +334,8 @@ src/main/java/com/example/minieditor/
 ├── WritingStats.java       執筆の記録（今日の字数・目標・グラフ）
 ├── AiChatPanel.java        AI の会話欄
 ├── AiBackends.java         会話欄のつなぎ先（Claude Code / Anthropic API / OpenAI 互換）
+├── ChatHistory.java        会話欄のやり取りの保存と履歴
+├── WheelScroll.java        ホイール・タッチパッドのスクロール（全画面で同じ速さ）
 ├── SettingsDialog.java     設定の画面
 ├── TerminalPane.java       下に出す、かんたんなターミナル
 ├── Theme.java              色とフォント
