@@ -120,6 +120,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
     private VerticalLayout layout = new VerticalLayout("", 1, List.of());
     private int layoutHeight = -1;
     private boolean layoutDirty = true;
+    private double wheelRemainder;      // タッチパッドの、1ドットに満たない動きをためておく
 
     private boolean caretVisible = true;
     private final Timer blinkTimer = new Timer(530, e -> {
@@ -156,11 +157,17 @@ public class VerticalTextPane extends EditorPane implements Searchable {
 
         scrollPane.setBorder(null);
         scrollPane.getViewport().setBackground(Theme.BG);
-        // 縦書きは左へ読み進めるので、ホイールを下に回したら左へ動かす
+        // 縦書きは左へ読み進めるので、ホイール（タッチパッドの上下）を下に回したら左へ動かす。
+        // タッチパッドの横スライド（Java には Shift+ホイールとして届く）と Shift+ホイールは、
+        // ほかのアプリと同じ向き（横書きやブラウザと同じ）で横に動かす
         scrollPane.setWheelScrollingEnabled(false);
         scrollPane.addMouseWheelListener(e -> {
             JScrollBar bar = scrollPane.getHorizontalScrollBar();
-            bar.setValue(bar.getValue() - e.getWheelRotation() * columnWidth());
+            double amount = e.getPreciseWheelRotation() * columnWidth();    // タッチパッドの細かい動きも、なめらかに
+            wheelRemainder += e.isShiftDown() ? amount : -amount;
+            int move = (int) wheelRemainder;
+            wheelRemainder -= move;
+            bar.setValue(bar.getValue() + move);
         });
         // 枠の大きさが変わると、1列に入る文字数が変わるので、並べ直す
         scrollPane.getViewport().addComponentListener(new ComponentAdapter() {
@@ -420,7 +427,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
     }
 
     /**
-     * 原稿用紙のマス1つの大きさ。20マスと、その下のぶら下げ用の余白が、
+     * 原稿用紙のマス1つの大きさ。20マスと、その下の余白（何枚目かを書く所など）が、
      * ちょうど画面の高さに収まるように決める（ウィンドウを大きくすると、マスも大きくなる）。
      */
     private int sheetCell() {
@@ -537,7 +544,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
         layoutDirty = false;
 
         // 配置は「画面に出す文章」（変換中の文字をはさんだもの）で計算する。
-        // 一番下の1文字ぶんは、句読点の「ぶら下げ」用に空けておく。
+        // 一番下の1文字ぶんは、余白として空けておく。
         int rowsPerColumn = manuscript ? SHEET_ROWS
                 : Math.max(1, (height - 2 * margin() - cellHeight()) / cellHeight());
         layout = new VerticalLayout(shownText(), rowsPerColumn, shownRuns());

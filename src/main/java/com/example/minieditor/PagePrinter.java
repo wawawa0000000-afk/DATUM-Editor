@@ -129,7 +129,7 @@ public final class PagePrinter {
         Font font = new Font(fontFamily, Font.PLAIN, size);
         double cellHeight = size * 1.12;                    // 1文字ぶんの高さ
         double columnWidth = size * 1.9;                    // 1行ぶんの幅（行間とルビのぶんを含む）
-        // 一番下の1文字ぶんは、句読点の「ぶら下げ」用に空けておく
+        // 一番下の1文字ぶんは、余白として空けておく（以前の、句読点をマスの外へ出していた版の名残り）
         int rowsPerColumn = (int) ((PAGE_HEIGHT - 2 * MARGIN) / cellHeight) - 1;
         int columnsPerPage = (int) ((PAGE_WIDTH - 2 * MARGIN) / columnWidth);
 

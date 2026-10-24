@@ -12,7 +12,9 @@ import java.util.List;
  *
  * ここで扱っている、縦書きならではの決まり：
  *   ルビ       … 親文字の右に、小さくルビを描く
- *   ぶら下げ   … 行の先頭に「、」「。」や閉じかっこが来そうなときは、前の行の一番下に置く（禁則処理）
+ *   禁則処理   … 行の先頭に「、」「。」や閉じかっこが来そうなときは、原稿用紙の書き方と同じく、
+ *                前の行の一番下のマスに、その文字と一緒に入れる（2つまで。マスの外にははみ出さない）。
+ *                行の一番下に開きかっこが来そうなときは、次の行の頭へ送る
  *   縦中横     … 半角の数字2桁や「!?」は、横に並べたまま1文字ぶんのマスに入れる
  */
 public final class VerticalLayout {
@@ -23,8 +25,10 @@ public final class VerticalLayout {
     private static final String PUNCTUATION = "、。，．";
     // 少し右上に寄せる小さい仮名
     private static final String SMALL_KANA = "ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮ";
-    // 行の先頭に置かない文字（前の行の下に「ぶら下げる」）
+    // 行の先頭に置かない文字（前の行の一番下のマスに、一緒に入れる）
     private static final String HANGING = "、。，．」』）】〕〉》";
+    // 行の一番下に置かない文字（次の行の頭へ送る）
+    private static final String OPENING = "「『（【〔〈《［｛";
 
     /** 親文字の範囲と、その右に描くルビ。 */
     public record RubyRun(int baseStart, int baseEnd, String ruby) {
@@ -41,6 +45,8 @@ public final class VerticalLayout {
     public final int[] row;             // row[i]：i 文字目が、上から何文字目か
     private final boolean[] pairHead;   // 縦中横の1文字目
     private final boolean[] pairTail;   // 縦中横の2文字目（1文字目と一緒に描くので、単独では描かない）
+    private final int[] tucked;         // 禁則処理で前の行の一番下のマスに入れた句読点：そのマスの何個目か（1 か 2）。ふつうは 0
+    private final boolean[] hasTucked;  // 一番下のマスに、句読点を一緒に入れられた文字
     public final List<RubyRun> rubies;
     public final int totalColumns;
     private final String text;
@@ -49,7 +55,7 @@ public final class VerticalLayout {
      * 配置を計算する。
      *
      * @param text          並べる文章（ルビの記号を含まない、本文だけ）
-     * @param rowsPerColumn 1列に入る文字数（ぶら下げ用の1文字ぶんは、これとは別に下に取ってあること）
+     * @param rowsPerColumn 1列に入る文字数
      * @param rubies        ルビの一覧（親文字の範囲と、ルビの文字）
      */
     public VerticalLayout(String text, int rowsPerColumn, List<RubyRun> rubies) {
@@ -60,6 +66,8 @@ public final class VerticalLayout {
         row = new int[n + 1];
         pairHead = new boolean[n + 1];
         pairTail = new boolean[n + 1];
+        tucked = new int[n + 1];
+        hasTucked = new boolean[n + 1];
 
         // 1) 縦中横にする2文字の組を探す
         for (int i = 0; i + 1 < n; i++) {
@@ -74,8 +82,9 @@ public final class VerticalLayout {
         int rows = Math.max(1, rowsPerColumn);
         int c = 0;
         int r = 0;
-        boolean wrapped = false;        // 今の列が、折り返しで始まったか（改行で始まった列では、ぶら下げない）
-        boolean hung = false;           // 前の列に、もう1文字ぶら下げたか
+        boolean wrapped = false;        // 今の列が、折り返しで始まったか（改行で始まった列では、前の行へ入れない）
+        int tuckedCount = 0;            // 前の列の一番下のマスに、いくつ入れたか
+        int lastPlaced = -1;            // 最後にマスへ置いた文字（句読点を一緒に入れる相手）
         for (int i = 0; i < n; i++) {
             char ch = text.charAt(i);
             boolean lowSurrogate = i > 0 && Character.isLowSurrogate(ch)
@@ -85,11 +94,20 @@ public final class VerticalLayout {
                 row[i] = row[i - 1];
                 continue;
             }
-            if (ch != '\n' && r == 0 && wrapped && !hung && HANGING.indexOf(ch) >= 0) {
-                col[i] = c - 1;         // ぶら下げ：前の列の、一番下のさらに下に置く
-                row[i] = rows;
-                hung = true;
+            if (ch != '\n' && r == 0 && wrapped && tuckedCount < 2 && lastPlaced >= 0 && HANGING.indexOf(ch) >= 0) {
+                col[i] = c - 1;         // 前の列の、一番下のマス（直前の文字と同じマス）に入れる
+                row[i] = rows - 1;
+                tucked[i] = ++tuckedCount;
+                hasTucked[lastPlaced] = true;
                 continue;
+            }
+            if (ch != '\n' && r == rows - 1 && rows > 1 && OPENING.indexOf(ch) >= 0
+                    && i + 1 < n && text.charAt(i + 1) != '\n') {
+                c++;                    // 開きかっこは行の一番下に置かず、次の行の頭へ送る（一番下のマスは空ける）
+                r = 0;
+                wrapped = true;
+                tuckedCount = 0;
+                lastPlaced = -1;        // 空けたマスには、句読点を入れない
             }
             col[i] = c;
             row[i] = r;
@@ -97,14 +115,16 @@ public final class VerticalLayout {
                 c++;                    // 改行したら、左の列の一番上へ
                 r = 0;
                 wrapped = false;
-                hung = false;
+                tuckedCount = 0;
+                lastPlaced = -1;
             } else {
+                lastPlaced = i;
                 r++;
                 if (r >= rows) {        // 下まで来たら、折り返して左の列へ
                     c++;
                     r = 0;
                     wrapped = true;
-                    hung = false;
+                    tuckedCount = 0;
                 }
             }
         }
@@ -152,6 +172,42 @@ public final class VerticalLayout {
         if (!isDrawn(i)) {
             return;
         }
+        if (tucked[i] == 0 && !hasTucked[i]) {
+            drawPlain(g2, fm, i, centerX, centerY, size);
+            return;
+        }
+        // 一番下のマスに、文字と句読点を一緒に入れる：文字は少し小さくして左上へ、句読点は小さくして右下へ
+        if (tucked[i] == 0) {
+            Graphics2D small = (Graphics2D) g2.create();
+            small.translate(centerX - size * 0.12, centerY - size * 0.12);
+            small.scale(0.75, 0.75);
+            drawPlain(small, fm, i, 0, 0, size);
+            small.dispose();
+            return;
+        }
+        // 句読点は、ふだんの「右上に寄せる」ずらしを使わず、見た目の中心を置きたい場所に合わせる。
+        // 1つなら右下の角、2つなら右側に上下に並べる（。」なら「。」が上）
+        boolean two = tucked[i] == 2 || (i + 1 < tucked.length && tucked[i + 1] == 2);
+        double x = centerX + size * 0.42;
+        double y = !two ? centerY + size * 0.38 : tucked[i] == 1 ? centerY + size * 0.02 : centerY + size * 0.4;
+        drawCentered(g2, String.valueOf(text.charAt(i)), x, y, 0.6);
+    }
+
+    /** 1文字を、見た目の中心が (x, y) に来るように、scale 倍の大きさで描く。かっこなどは 90 度回す。 */
+    private static void drawCentered(Graphics2D g2, String s, double x, double y, double scale) {
+        java.awt.font.GlyphVector glyphs = g2.getFont().createGlyphVector(g2.getFontRenderContext(), s);
+        java.awt.geom.Rectangle2D box = glyphs.getVisualBounds();
+        Graphics2D g = (Graphics2D) g2.create();
+        g.translate(x, y);
+        g.scale(scale, scale);
+        if (ROTATED.indexOf(s.charAt(0)) >= 0) {
+            g.rotate(Math.PI / 2);
+        }
+        g.drawGlyphVector(glyphs, (float) -box.getCenterX(), (float) -box.getCenterY());
+        g.dispose();
+    }
+
+    private void drawPlain(Graphics2D g2, FontMetrics fm, int i, double centerX, double centerY, int size) {
         char ch = text.charAt(i);
         if (pairHead[i]) {
             // 縦中横：2文字を横に並べたまま、マスの中央に描く
