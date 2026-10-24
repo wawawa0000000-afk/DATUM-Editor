@@ -27,7 +27,7 @@ public final class McpServer {
     }
 
     public static final String SERVER_NAME = "datum-editor";
-    public static final String SERVER_VERSION = "1.1.2";
+    public static final String SERVER_VERSION = "1.1.3";
 
     // 対応している決まりの版。相手が言ってきた版がこの中にあればそれで、なければ一番上の版で返事をする
     private static final List<String> PROTOCOL_VERSIONS = List.of("2025-06-18", "2025-03-26", "2024-11-05");
