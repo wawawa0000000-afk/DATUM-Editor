@@ -42,7 +42,6 @@ import javax.swing.JComponent;
 import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.JPopupMenu;
-import javax.swing.JScrollBar;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.JViewport;
@@ -111,6 +110,7 @@ public class BoardPane extends EditorPane {
 
     private final Board board = new Board();
     private final JScrollPane scrollPane = new JScrollPane(board);
+    private final WheelScroll wheelScroll = new WheelScroll(scrollPane, false);
     private JTextArea editor;                   // 文字を編集している間だけ出す入力欄
     private Card editingCard;
 
@@ -989,12 +989,12 @@ public class BoardPane extends EditorPane {
 
         private void wheel(MouseWheelEvent e) {
             if (e.isControlDown()) {
-                setScale(scale * (e.getWheelRotation() < 0 ? 1.1 : 1 / 1.1), e.getPoint());
+                // タッチパッドの細かい動きでは、少しずつ拡大・縮小する
+                setScale(scale * Math.pow(1.1, -e.getPreciseWheelRotation()), e.getPoint());
                 return;
             }
             // ふつうのホイールは縦、Shift を押していたら横にスクロールする
-            JScrollBar bar = e.isShiftDown() ? scrollPane.getHorizontalScrollBar() : scrollPane.getVerticalScrollBar();
-            bar.setValue(bar.getValue() + e.getWheelRotation() * 60);
+            wheelScroll.scroll(e);
         }
 
         private void press(MouseEvent e) {

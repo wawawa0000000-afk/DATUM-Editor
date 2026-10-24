@@ -91,7 +91,7 @@ public class TextEditorPane extends EditorPane implements Searchable {
                 }
             }
         });
-        scrollPane.getVerticalScrollBar().setUnitIncrement(24);
+        WheelScroll.install(scrollPane, false);
         add(scrollPane, BorderLayout.CENTER);
     }
 

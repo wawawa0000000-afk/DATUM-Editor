@@ -213,7 +213,7 @@ final class HelpDialog {
 
         JScrollPane scroll = new JScrollPane(pane);
         scroll.setBorder(null);
-        scroll.getVerticalScrollBar().setUnitIncrement(24);
+        WheelScroll.install(scroll, false);
 
         JDialog dialog = new JDialog(owner, title, false);      // 開いたまま、エディタも使えるようにする
         JButton close = new JButton("閉じる");

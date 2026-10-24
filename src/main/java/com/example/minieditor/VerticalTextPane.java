@@ -35,7 +35,6 @@ import java.util.List;
 import java.util.Map;
 
 import javax.swing.JComponent;
-import javax.swing.JScrollBar;
 import javax.swing.JScrollPane;
 import javax.swing.JTextField;
 import javax.swing.Scrollable;
@@ -120,7 +119,6 @@ public class VerticalTextPane extends EditorPane implements Searchable {
     private VerticalLayout layout = new VerticalLayout("", 1, List.of());
     private int layoutHeight = -1;
     private boolean layoutDirty = true;
-    private double wheelRemainder;      // タッチパッドの、1ドットに満たない動きをためておく
 
     private boolean caretVisible = true;
     private final Timer blinkTimer = new Timer(530, e -> {
@@ -157,18 +155,8 @@ public class VerticalTextPane extends EditorPane implements Searchable {
 
         scrollPane.setBorder(null);
         scrollPane.getViewport().setBackground(Theme.BG);
-        // 縦書きは左へ読み進めるので、ホイール（タッチパッドの上下）を下に回したら左へ動かす。
-        // タッチパッドの横スライド（Java には Shift+ホイールとして届く）と Shift+ホイールは、
-        // ほかのアプリと同じ向き（横書きやブラウザと同じ）で横に動かす
-        scrollPane.setWheelScrollingEnabled(false);
-        scrollPane.addMouseWheelListener(e -> {
-            JScrollBar bar = scrollPane.getHorizontalScrollBar();
-            double amount = e.getPreciseWheelRotation() * columnWidth();    // タッチパッドの細かい動きも、なめらかに
-            wheelRemainder += e.isShiftDown() ? amount : -amount;
-            int move = (int) wheelRemainder;
-            wheelRemainder -= move;
-            bar.setValue(bar.getValue() + move);
-        });
+        // 縦書きは左へ読み進めるので、ホイール（タッチパッドの上下）を下に回したら左へ動かす
+        WheelScroll.install(scrollPane, true);
         // 枠の大きさが変わると、1列に入る文字数が変わるので、並べ直す
         scrollPane.getViewport().addComponentListener(new ComponentAdapter() {
             @Override

@@ -146,7 +146,7 @@ final class SettingsDialog extends JDialog {
         JScrollPane scroll = new JScrollPane(form, JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
                 JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
         scroll.setBorder(null);
-        scroll.getVerticalScrollBar().setUnitIncrement(24);
+        WheelScroll.install(scroll, false);
         JPanel root = new JPanel(new BorderLayout());
         root.add(scroll, BorderLayout.CENTER);
         root.add(buttons, BorderLayout.SOUTH);
