@@ -41,13 +41,14 @@ public final class WritingStats {
 
     /** 数え始める（文書を開いた・作ったとき）。この時点の字数は、今日の分に入れない。 */
     public void track(EditorPane pane) {
-        last.put(pane, count(pane));
+        last.put(pane.firstView(), count(pane));
     }
 
     /** 文書が書き換えられたときに呼ぶ。 */
     public void changed(EditorPane pane) {
         int now = count(pane);
-        Integer before = last.put(pane, now);
+        // 同じ文書を2つのタブで映していると、1回の書き換えで両方から知らせが来るので、文書ごとに数える
+        Integer before = last.put(pane.firstView(), now);
         if (before != null && before != now) {
             add(now - before);
         }

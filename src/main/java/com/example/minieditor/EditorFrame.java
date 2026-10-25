@@ -102,10 +102,12 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     private final JToggleButton paletteButton = createIconButton(ToolIcons.search(), "すべての操作を探す",
             "すべての操作を、名前で探して実行する（Ctrl+P）", this::showPalette);
     private JMenuItem paletteItem;
-    private final JToggleButton splitButton = createIconButton(
-            ToolIcons.split(() -> splitOrientation == JSplitPane.VERTICAL_SPLIT), "分割",
-            "画面を分割する / 分割をやめる（Ctrl+\\）。タブは引きずって反対側へ移せます。右クリックでも操作できます",
-            this::toggleSplit);
+    private final JToggleButton splitSideButton = createIconButton(ToolIcons.split(() -> false), "左右に分割",
+            "左右に分割する / 分割をやめる（Ctrl+\\）。タブが2枚以上なら今のタブを右へ、1枚なら同じ文書を右にも出します",
+            () -> splitTo(JSplitPane.HORIZONTAL_SPLIT));
+    private final JToggleButton splitDownButton = createIconButton(ToolIcons.split(() -> true), "上下に分割",
+            "上下に分割する / 分割をやめる。タブが2枚以上なら今のタブを下へ、1枚なら同じ文書を下にも出します",
+            () -> splitTo(JSplitPane.VERTICAL_SPLIT));
     private final JCheckBoxMenuItem terminalItem = new JCheckBoxMenuItem("ターミナル");
 
     private final FindBar findBar = new FindBar(this::currentPane);
@@ -465,7 +467,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             }
         };
         tools.setOpaque(false);
-        for (JToggleButton button : new JToggleButton[]{paletteButton, folderButton, splitButton, proofButton, aiButton, terminalButton, focusButton}) {
+        for (JToggleButton button : new JToggleButton[]{paletteButton, folderButton, splitSideButton, splitDownButton, proofButton, aiButton, terminalButton, focusButton}) {
             if ((button == proofButton && !Edition.has(Edition.VERTICAL))
                     || ((button == aiButton || button == terminalButton) && !Edition.has(Edition.AI))) {
                 continue;           // 種類に入っていない機能のボタンは出さない
@@ -901,10 +903,11 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         fresh.setPath(path);
         fresh.setDirty(true);           // 戻しただけでは、ファイルはまだ書き換えていない
         stats.track(fresh);
+        closeOtherViews(pane);
         EditorGroup group = groupOf(pane);
         group.replacePane(pane, fresh);
         setActiveGroup(group);
-        currentPaneChanged();
+        tidyGroups();
         SwingUtilities.invokeLater(fresh::focusEditor);
         flash("過去の版に戻しました（保存すると、ファイルに書き込みます）");
     }
@@ -991,7 +994,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     /** 起動したまま配色を変える。画面に出ていない部品（裏のタブ・閉じている欄）も一緒に塗り直す。 */
     private void applyScheme(Theme.Scheme scheme) {
         Theme.switchTo(scheme, themeRoots());
-        JToggleButton[] buttons = {paletteButton, folderButton, splitButton, proofButton, aiButton, terminalButton, focusButton};
+        JToggleButton[] buttons = {paletteButton, folderButton, splitSideButton, splitDownButton, proofButton, aiButton, terminalButton, focusButton};
         for (JToggleButton button : buttons) {
             button.setForeground(button.isSelected() ? Color.WHITE : Theme.FG_STRONG);
         }
@@ -1013,13 +1016,13 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     /** 30 秒ごとに呼ばれる。自動保存（設定で選んだときだけ）と、未保存の文書の控えを取る。 */
     private void autosaveTick() {
         if (appSettings.getBool(AppSettings.AUTO_SAVE, false)) {
-            for (EditorPane pane : allPanes()) {
+            for (EditorPane pane : documentPanes()) {
                 if (pane.isDirty() && pane.getPath() != null && Files.isRegularFile(pane.getPath())) {
                     write(pane, pane.getPath(), false);
                 }
             }
         }
-        recovery.save(allPanes());
+        recovery.save(documentPanes());
         appSettings.save();             // 今日の執筆量なども、ときどき書いておく
     }
 
@@ -1070,6 +1073,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             pane.setPath(path);
             pane.setDirty(true);
             stats.track(pane);
+            closeOtherViews(open);
             groupOf(open).replacePane(open, pane);
         } else {
             EditorPane previous = currentPane();
@@ -1177,7 +1181,17 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
                     try {
                         boolean vertical = EditorPane.Mode.VERTICAL.id.equals(Json.str(tab, "mode", ""))
                                 && Edition.has(Edition.VERTICAL);
-                        EditorPane pane = openPath(path, vertical, false);
+                        EditorPane open = findOpenDocument(path);
+                        EditorPane pane;
+                        if (open != null && groupOf(open) != targets[index]) {
+                            // 分割して同じ文書を左右に出していたときは、同じ文書を映すタブとして開き直す
+                            pane = open.newView();
+                            pane.setListener(this);
+                            stats.track(pane);
+                            targets[index].addPane(pane);
+                        } else {
+                            pane = openPath(path, vertical, false);
+                        }
                         if (pane instanceof Searchable s) {
                             int caret = Math.min(Json.num(tab, "caret", 0), s.getText().length());
                             SwingUtilities.invokeLater(() -> s.reveal(caret));
@@ -1827,6 +1841,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     private void removeIfPristine(EditorPane pane) {
         if (pane != null && pane != currentPane() && pane.getPath() == null && !pane.isDirty() && pane.isEmpty()) {
             groupOf(pane).removePane(pane);
+            pane.unlinkView();
         }
     }
 
@@ -2098,11 +2113,32 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     }
 
     private void closePane(EditorGroup group, EditorPane pane) {
-        if (pane == null || !confirmDiscard(pane)) {
+        // 同じ文書をほかのタブでも映しているなら、そちらに中身が残るので、保存するかは聞かない
+        if (pane == null || (pane.otherViews().isEmpty() && !confirmDiscard(pane))) {
             return;
         }
         group.removePane(pane);
+        pane.unlinkView();
         tidyGroups();
+    }
+
+    /** 同じ文書を映しているほかのタブを閉じる（その文書を、別のタブに入れ替える前に呼ぶ）。 */
+    private void closeOtherViews(EditorPane pane) {
+        for (EditorPane other : pane.otherViews()) {
+            groupOf(other).removePane(other);
+            other.unlinkView();
+        }
+    }
+
+    /** 開いている文書を1つずつ（同じ文書を2つのタブで映していても、1回だけ）。 */
+    private List<EditorPane> documentPanes() {
+        List<EditorPane> documents = new ArrayList<>();
+        for (EditorPane pane : allPanes()) {
+            if (!documents.contains(pane.firstView())) {
+                documents.add(pane.firstView());
+            }
+        }
+        return documents;
     }
 
     /** タブがなくなったグループを片付ける。 */
@@ -2128,7 +2164,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     }
 
     private void exitApp() {
-        for (EditorPane pane : allPanes()) {
+        for (EditorPane pane : documentPanes()) {
             if (!confirmDiscard(pane)) {
                 return;                 // 1つでも「キャンセル」なら、終了をやめる
             }
@@ -2145,7 +2181,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     // 必ず、画面のスレッド（EDT）から呼ぶこと。
 
     List<EditorPane> documents() {
-        return allPanes();
+        return documentPanes();
     }
 
     EditorPane activeDocument() {
@@ -2191,7 +2227,9 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
 
     /** 確認をせずに、タブを閉じる（未保存かどうかは、呼ぶ側で確かめておくこと）。 */
     void closeDocumentSilently(EditorPane pane) {
+        closeOtherViews(pane);
         groupOf(pane).removePane(pane);
+        pane.unlinkView();
         tidyGroups();
     }
 
@@ -2314,38 +2352,65 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         } else {
             editorArea.add(group1, BorderLayout.CENTER);
         }
-        splitButton.setSelected(split);
+        splitSideButton.setSelected(split && splitOrientation == JSplitPane.HORIZONTAL_SPLIT);
+        splitDownButton.setSelected(split && splitOrientation == JSplitPane.VERTICAL_SPLIT);
         editorArea.revalidate();
         editorArea.repaint();
     }
 
     private void toggleSplit() {
         if (split) {
-            // 分割をやめるときは、右（下）側のタブを左（上）側へ移す
+            // 分割をやめるときは、右（下）側のタブを左（上）側へ移す。
+            // 左（上）にも同じ文書を映しているタブは、移さずに閉じる（同じ文書のタブが2枚並ばないように）
             for (EditorPane pane : new ArrayList<>(group2.getPanes())) {
                 group2.removePane(pane);
-                group1.addPane(pane);
+                if (pane.otherViews().stream().anyMatch(group1.getPanes()::contains)) {
+                    pane.unlinkView();
+                } else {
+                    group1.addPane(pane);
+                }
             }
             tidyGroups();
             return;
         }
+        // VSCode と同じように分ける：タブが2枚以上なら、今のタブを反対側へ移して2つの文書を並べる。
+        // 1枚だけなら、同じ文書をもう1つのタブで映して並べる（どちらで書いても、両方に出る）
+        EditorPane pane = currentPane();
+        if (pane == null) {
+            return;
+        }
+        if (activeGroup.getPanes().size() > 1) {
+            moveTabToOtherGroup();
+            return;
+        }
+        EditorPane view = pane.newView();
+        view.setListener(this);
+        stats.track(view);
         split = true;
         layoutGroups();
         setActiveGroup(group2);
-        if (group2.isEmpty()) {
-            newDocument(EditorPane.Mode.TEXT);
-        }
+        group2.addPane(view);
+        currentPaneChanged();
+        SwingUtilities.invokeLater(view::focusEditor);
     }
 
-    private void toggleOrientation() {
-        splitOrientation = (splitOrientation == JSplitPane.HORIZONTAL_SPLIT)
-                ? JSplitPane.VERTICAL_SPLIT : JSplitPane.HORIZONTAL_SPLIT;
+    /** ツールバーの「左右に分割」「上下に分割」。同じ向きで分割中なら、分割をやめる。 */
+    private void splitTo(int orientation) {
+        if (split && splitOrientation == orientation) {
+            toggleSplit();
+            return;
+        }
+        splitOrientation = orientation;
         if (split) {
             layoutGroups();
         } else {
             toggleSplit();
         }
-        splitButton.repaint();              // アイコンの線の向き（縦・横）を合わせる
+        layoutGroups();                     // ボタンの押された状態を、今の分割に合わせる
+    }
+
+    private void toggleOrientation() {
+        splitTo(splitOrientation == JSplitPane.HORIZONTAL_SPLIT ? JSplitPane.VERTICAL_SPLIT : JSplitPane.HORIZONTAL_SPLIT);
     }
 
     private void moveTabToOtherGroup() {
@@ -2397,7 +2462,11 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         fresh.setPath(old.getPath());
         fresh.setDirty(old.isDirty());
         stats.track(fresh);
-        activeGroup.replacePane(old, fresh);
+        closeOtherViews(old);           // 分割して同じ文書を映していたら、もう片方は閉じる（縦と横を別々にしない）
+        EditorGroup group = groupOf(old);
+        group.replacePane(old, fresh);
+        setActiveGroup(group);
+        tidyGroups();
         SwingUtilities.invokeLater(fresh::focusEditor);
     }
 

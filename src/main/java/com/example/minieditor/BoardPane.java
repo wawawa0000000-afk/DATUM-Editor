@@ -104,9 +104,9 @@ public class BoardPane extends EditorPane {
     private Font cardFont = new Font("Dialog", Font.PLAIN, Theme.UI_SIZE + 2);
     private double scale = 1.0;                 // 表示の倍率（保存はしない）
 
-    // 「元に戻す」は、変更前のボード全体を JSON の文字列で覚えておく方式
-    private final Deque<String> undoStack = new ArrayDeque<>();
-    private final Deque<String> redoStack = new ArrayDeque<>();
+    // 「元に戻す」は、変更前のボード全体を JSON の文字列で覚えておく方式（同じボードを映すタブとは共有する）
+    private Deque<String> undoStack = new ArrayDeque<>();
+    private Deque<String> redoStack = new ArrayDeque<>();
 
     private final Board board = new Board();
     private final JScrollPane scrollPane = new JScrollPane(board);
@@ -261,7 +261,40 @@ public class BoardPane extends EditorPane {
     private void contentUpdated() {
         board.revalidate();
         board.repaint();
+        if (!otherViews().isEmpty()) {
+            Map<String, Object> json = toJson();
+            for (EditorPane other : otherViews()) {
+                ((BoardPane) other).mirror(json);
+            }
+        }
         fireContentChanged();
+    }
+
+    /** 同じボードを映すほかのタブで変わった中身を、こちらにも写す。選んでいたカードは、そのまま選んでおく。 */
+    private void mirror(Map<String, Object> json) {
+        stopEditing(false);
+        List<Integer> selected = new ArrayList<>();
+        for (Card card : selection) {
+            selected.add(card.id);
+        }
+        load(json);
+        for (int id : selected) {
+            Card card = find(id);
+            if (card != null) {
+                selection.add(card);
+            }
+        }
+        board.repaint();
+    }
+
+    @Override
+    public EditorPane newView() {
+        BoardPane other = new BoardPane();
+        other.load(toJson());
+        other.scale = scale;
+        other.undoStack = undoStack;
+        other.redoStack = redoStack;
+        return linkView(other);
     }
 
     @SuppressWarnings("unchecked")

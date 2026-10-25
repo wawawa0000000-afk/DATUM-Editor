@@ -30,18 +30,48 @@ import javax.swing.undo.UndoManager;
  */
 public class TextEditorPane extends EditorPane implements Searchable {
 
+    /** 同じ文書を2つのタブで映すときに、共有するもの（文章と「元に戻す」の履歴）。 */
+    private static final class Shared {
+        final javax.swing.text.Document document;
+        final UndoManager undoManager = new UndoManager();
+        CompoundEdit compound;          // 複数の変更を「元に戻す1回ぶん」にまとめるときに使う
+        boolean loading;                // ファイルを読み込んでいる最中か
+
+        Shared(javax.swing.text.Document document) {
+            this.document = document;
+            document.addUndoableEditListener(e -> {
+                if (loading) {
+                    return;             // 読み込みは「元に戻す」の対象にしない
+                }
+                if (compound != null) {
+                    compound.addEdit(e.getEdit());
+                } else {
+                    undoManager.addEdit(e.getEdit());
+                }
+            });
+        }
+    }
+
     private final StripedTextArea area = new StripedTextArea();
-    private final UndoManager undoManager = new UndoManager();
+    private final Shared shared;
     private final List<Object> highlightTags = new ArrayList<>();
-    private CompoundEdit compound;      // 複数の変更を「元に戻す1回ぶん」にまとめるときに使う
-    private boolean loading;            // ファイルを読み込んでいる最中か
     private final JScrollPane scrollPane;
     private final LineNumberGutter gutter;
     private boolean focusMode;          // 集中モード（文字の列を中央に寄せ、カーソルの行を画面の真ん中に保つ）
     private boolean wrapBeforeFocus;
 
     public TextEditorPane(Font font) {
+        this(font, null);
+    }
+
+    private TextEditorPane(Font font, Shared from) {
         area.setFont(font);
+        if (from != null) {
+            area.setDocument(from.document);
+            shared = from;
+        } else {
+            shared = new Shared(area.getDocument());
+        }
 
         area.getDocument().addDocumentListener(new DocumentListener() {
             public void insertUpdate(DocumentEvent e) {
@@ -62,17 +92,6 @@ public class TextEditorPane extends EditorPane implements Searchable {
                 SwingUtilities.invokeLater(this::centerCaret);
             }
         });
-        area.getDocument().addUndoableEditListener(e -> {
-            if (loading) {
-                return;                 // 読み込みは「元に戻す」の対象にしない
-            }
-            if (compound != null) {
-                compound.addEdit(e.getEdit());
-            } else {
-                undoManager.addEdit(e.getEdit());
-            }
-        });
-
         // JTextArea は Ctrl+H に「1文字削除」が割り当てられている。
         // "none" を入れて無効にし、メニューの「置換」(Ctrl+H) が動くようにする。
         area.getInputMap(JComponent.WHEN_FOCUSED).put(
@@ -105,19 +124,27 @@ public class TextEditorPane extends EditorPane implements Searchable {
         return pane;
     }
 
+    @Override
+    public EditorPane newView() {
+        TextEditorPane view = new TextEditorPane(area.getFont(), shared);
+        view.setWrap(isWrap());
+        view.area.setCaretPosition(Math.min(area.getCaretPosition(), area.getDocument().getLength()));
+        return linkView(view);
+    }
+
     private void changed() {
-        if (!loading) {
+        if (!shared.loading) {
             fireContentChanged();
         }
     }
 
     /** ファイルの中身を入れる。未保存マークは付けず、「元に戻す」の履歴も空にする。 */
     public void loadText(String text) {
-        loading = true;
+        shared.loading = true;
         area.setText(text);
         area.setCaretPosition(0);
-        loading = false;
-        undoManager.discardAllEdits();
+        shared.loading = false;
+        shared.undoManager.discardAllEdits();
         setDirty(false);
     }
 
@@ -259,15 +286,15 @@ public class TextEditorPane extends EditorPane implements Searchable {
 
     @Override
     public void undo() {
-        if (undoManager.canUndo()) {
-            undoManager.undo();
+        if (shared.undoManager.canUndo()) {
+            shared.undoManager.undo();
         }
     }
 
     @Override
     public void redo() {
-        if (undoManager.canRedo()) {
-            undoManager.redo();
+        if (shared.undoManager.canRedo()) {
+            shared.undoManager.redo();
         }
     }
 
@@ -339,7 +366,7 @@ public class TextEditorPane extends EditorPane implements Searchable {
 
     @Override
     public void replaceRange(String replacement, int start, int end) {
-        compound = new CompoundEdit();
+        shared.compound = new CompoundEdit();
         area.replaceRange(replacement, start, end);
         finishCompound();
     }
@@ -356,7 +383,7 @@ public class TextEditorPane extends EditorPane implements Searchable {
 
     @Override
     public void replaceAllText(String text) {
-        compound = new CompoundEdit();
+        shared.compound = new CompoundEdit();
         area.setText(text);
         finishCompound();
     }
@@ -366,7 +393,7 @@ public class TextEditorPane extends EditorPane implements Searchable {
         // 後ろにあるものから直す（前から直すと、文字数が変わって、後ろの位置がずれてしまうため）
         List<Replacement> sorted = new ArrayList<>(replacements);
         sorted.sort(Comparator.comparingInt(Replacement::start).reversed());
-        compound = new CompoundEdit();
+        shared.compound = new CompoundEdit();
         for (Replacement r : sorted) {
             area.replaceRange(r.text(), r.start(), r.end());
         }
@@ -374,8 +401,8 @@ public class TextEditorPane extends EditorPane implements Searchable {
     }
 
     private void finishCompound() {
-        compound.end();
-        undoManager.addEdit(compound);
-        compound = null;
+        shared.compound.end();
+        shared.undoManager.addEdit(shared.compound);
+        shared.compound = null;
     }
 }

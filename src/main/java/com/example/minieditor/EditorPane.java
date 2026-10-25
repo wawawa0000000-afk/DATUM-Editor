@@ -4,7 +4,9 @@ import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Font;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import javax.swing.JPanel;
@@ -12,6 +14,9 @@ import javax.swing.JPanel;
 /**
  * タブ1枚ぶんの「文書」。横書き・縦書き・カードボードの3種類が、このクラスを継承する。
  * 保存先（path）と、未保存かどうか（dirty）は、どの種類でも共通なのでここで持つ。
+ *
+ * 分割して同じ文書を左右に出すときは、newView() で「同じ文書を映す、もう1つのタブ」を作る。
+ * 中身・「元に戻す」の履歴・保存先・未保存の印は共有し、カーソルやスクロールの位置は別々に持つ。
  */
 public abstract class EditorPane extends JPanel {
 
@@ -71,6 +76,8 @@ public abstract class EditorPane extends JPanel {
     private boolean dirty;
     private boolean rawFile;
     private Listener listener;
+    // 同じ文書を映しているタブの一覧（自分も入る）。ふつうは自分だけ
+    private List<EditorPane> views = new ArrayList<>(List.of(this));
 
     protected EditorPane() {
         super(new BorderLayout());
@@ -90,9 +97,11 @@ public abstract class EditorPane extends JPanel {
     }
 
     public void setPath(Path path) {
-        this.path = path;
-        if (listener != null) {
-            listener.titleChanged(this);
+        for (EditorPane view : views) {
+            view.path = path;
+            if (view.listener != null) {
+                view.listener.titleChanged(view);
+            }
         }
     }
 
@@ -101,10 +110,12 @@ public abstract class EditorPane extends JPanel {
     }
 
     public void setDirty(boolean dirty) {
-        if (this.dirty != dirty) {
-            this.dirty = dirty;
-            if (listener != null) {
-                listener.titleChanged(this);
+        for (EditorPane view : views) {
+            if (view.dirty != dirty) {
+                view.dirty = dirty;
+                if (view.listener != null) {
+                    view.listener.titleChanged(view);
+                }
             }
         }
     }
@@ -115,7 +126,44 @@ public abstract class EditorPane extends JPanel {
     }
 
     public void setRawFile(boolean rawFile) {
-        this.rawFile = rawFile;
+        for (EditorPane view : views) {
+            view.rawFile = rawFile;
+        }
+    }
+
+    // ---------- 同じ文書を、2つのタブで映す ----------
+
+    /** 同じ文書を映す、もう1つのタブを作る（分割で使う）。 */
+    public abstract EditorPane newView();
+
+    /** 子クラスの newView() から呼ぶ。view を、この文書を映すタブの仲間に入れる。 */
+    protected <T extends EditorPane> T linkView(T view) {
+        EditorPane added = view;
+        views.add(added);
+        added.views = views;
+        added.path = path;
+        added.dirty = dirty;
+        added.rawFile = rawFile;
+        return view;
+    }
+
+    /** タブを閉じたときに呼ぶ。ほかのタブとの共有をやめる（文書の中身は、残ったタブが持ち続ける）。 */
+    public void unlinkView() {
+        views.remove(this);
+        views = new ArrayList<>(List.of(this));
+        listener = null;                // 閉じたタブからは、もう知らせない（共有していた文章の変化が届いても）
+    }
+
+    /** 同じ文書を映している、ほかのタブ。 */
+    public List<EditorPane> otherViews() {
+        List<EditorPane> others = new ArrayList<>(views);
+        others.remove(this);
+        return others;
+    }
+
+    /** 同じ文書を映しているタブのうち、代表の1つ（文書ごとに1回だけ扱いたいときに使う）。 */
+    public EditorPane firstView() {
+        return views.get(0);
     }
 
     public String getTitle() {
@@ -124,12 +172,8 @@ public abstract class EditorPane extends JPanel {
 
     /** 中身が変わったときに、子クラスから呼ぶ。 */
     protected void fireContentChanged() {
-        boolean wasDirty = dirty;
-        dirty = true;
+        setDirty(true);
         if (listener != null) {
-            if (!wasDirty) {
-                listener.titleChanged(this);
-            }
             listener.contentChanged(this);
             listener.statusChanged(this);
         }

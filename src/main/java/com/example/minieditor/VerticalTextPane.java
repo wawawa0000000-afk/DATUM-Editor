@@ -83,8 +83,31 @@ public class VerticalTextPane extends EditorPane implements Searchable {
         }
     }
 
-    private final DefaultStyledDocument doc = new DefaultStyledDocument();
-    private final UndoManager undoManager = new UndoManager();
+    /** 同じ文書を2つのタブで映すときに、共有するもの（文章・ルビと「元に戻す」の履歴）。 */
+    private static final class Shared {
+        final DefaultStyledDocument doc = new DefaultStyledDocument();
+        final UndoManager undoManager = new UndoManager();
+        boolean loading;
+        CompoundEdit compound;
+        VerticalTextPane active;        // 最後に打っていたタブ（カーソルを、書き換えた所へ動かすのはこのタブだけ）
+
+        Shared() {
+            doc.addUndoableEditListener(e -> {
+                if (loading) {
+                    return;
+                }
+                if (compound != null) {
+                    compound.addEdit(e.getEdit());
+                } else {
+                    undoManager.addEdit(e.getEdit());
+                }
+            });
+        }
+    }
+
+    private final Shared shared;
+    private final DefaultStyledDocument doc;
+    private final UndoManager undoManager;
     private final View view = new View();
     private final JScrollPane scrollPane = new JScrollPane(view,
             JScrollPane.VERTICAL_SCROLLBAR_NEVER, JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
@@ -92,8 +115,6 @@ public class VerticalTextPane extends EditorPane implements Searchable {
     private String text = "";           // 文書の中身の写し（描くたびに取り出すと遅いので持っておく）
     private int caret = 0;              // カーソルの位置（何文字目の前か）
     private int anchor = 0;             // 範囲選択の起点（選択していないときは caret と同じ）
-    private boolean loading;
-    private CompoundEdit compound;
     private List<Highlight> highlights = List.of();
 
     /** 原稿用紙1枚の、1行の文字数と行数（400字詰め）。 */
@@ -131,32 +152,40 @@ public class VerticalTextPane extends EditorPane implements Searchable {
     });
 
     public VerticalTextPane(Font font) {
+        this(font, new Shared());
+    }
+
+    private VerticalTextPane(Font font, Shared shared) {
+        this.shared = shared;
+        doc = shared.doc;
+        undoManager = shared.undoManager;
+        if (shared.active == null) {
+            shared.active = this;
+        }
         view.setFont(font);
 
         doc.addDocumentListener(new DocumentListener() {
             public void insertUpdate(DocumentEvent e) {
-                documentChanged(e.getOffset() + e.getLength());
+                if (shared.active == VerticalTextPane.this) {
+                    documentChanged(e.getOffset() + e.getLength());
+                } else {
+                    // ほかのタブで書き換えられたときは、カーソルを動かさず、文字が増えたぶんだけずらす
+                    documentChanged(shifted(caret, e.getOffset(), e.getLength()));
+                }
             }
 
             public void removeUpdate(DocumentEvent e) {
-                documentChanged(e.getOffset());
+                if (shared.active == VerticalTextPane.this) {
+                    documentChanged(e.getOffset());
+                } else {
+                    documentChanged(shifted(caret, e.getOffset(), -e.getLength()));
+                }
             }
 
             public void changedUpdate(DocumentEvent e) {
                 attributesChanged();    // ルビ（属性）が付いた・外れた
             }
         });
-        doc.addUndoableEditListener(e -> {
-            if (loading) {
-                return;
-            }
-            if (compound != null) {
-                compound.addEdit(e.getEdit());
-            } else {
-                undoManager.addEdit(e.getEdit());
-            }
-        });
-
         scrollPane.setBorder(null);
         scrollPane.getViewport().setBackground(Theme.BG);
         // 縦書きは左へ読み進めるので、ホイール（タッチパッドの上下）を下に回したら左へ動かす
@@ -183,6 +212,25 @@ public class VerticalTextPane extends EditorPane implements Searchable {
         return pane;
     }
 
+    @Override
+    public EditorPane newView() {
+        VerticalTextPane other = new VerticalTextPane(view.getFont(), shared);
+        other.manuscript = manuscript;
+        boolean wasLoading = shared.loading;
+        shared.loading = true;          // 中身は変わっていないので、未保存の印は付けない
+        other.documentChanged(Math.min(caret, text.length()));     // 今の中身を、新しいタブの写しにも入れる
+        shared.loading = wasLoading;
+        return linkView(other);
+    }
+
+    /** offset の所で文字が delta 個増えた（負なら減った）ときの、position の新しい位置。 */
+    private static int shifted(int position, int offset, int delta) {
+        if (position < offset) {
+            return position;
+        }
+        return Math.max(offset, position + delta);
+    }
+
     // ---------- 文書の操作 ----------
 
     private void documentChanged(int newCaret) {
@@ -198,7 +246,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
         caretVisible = true;
         view.revalidate();
         view.repaint();
-        if (!loading) {
+        if (!shared.loading) {
             fireContentChanged();
         }
         SwingUtilities.invokeLater(this::scrollToCaret);
@@ -210,7 +258,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
         layoutDirty = true;
         view.revalidate();
         view.repaint();
-        if (!loading) {
+        if (!shared.loading) {
             fireContentChanged();
         }
     }
@@ -252,7 +300,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
     public void loadText(String notation) {
         NarouRuby.Parsed parsed = NarouRuby.read(notation.replace("\r", ""));
         closeRubyField(false);
-        loading = true;
+        shared.loading = true;
         try {
             doc.remove(0, doc.getLength());
             doc.insertString(0, parsed.text(), SimpleAttributeSet.EMPTY);
@@ -263,7 +311,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
         } catch (BadLocationException ex) {
             // 0 文字目から全体を入れ替えているので、通常は起きない
         }
-        loading = false;
+        shared.loading = false;
         dropComposition();
         caret = anchor = 0;
         caretMoved();
@@ -273,7 +321,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
 
     /** 複数の変更を、「元に戻す」1回ぶんにまとめて実行する。 */
     private void edit(DocumentChange change) {
-        if (compound != null) {
+        if (shared.compound != null) {
             try {
                 change.run();           // すでにまとめている最中なら、その中に入れる
             } catch (BadLocationException ex) {
@@ -281,15 +329,15 @@ public class VerticalTextPane extends EditorPane implements Searchable {
             }
             return;
         }
-        compound = new CompoundEdit();
+        shared.compound = new CompoundEdit();
         try {
             change.run();
         } catch (BadLocationException ex) {
             // 範囲は呼び出し側で文書の中に収めているので、通常は起きない
         }
-        compound.end();
-        undoManager.addEdit(compound);
-        compound = null;
+        shared.compound.end();
+        undoManager.addEdit(shared.compound);
+        shared.compound = null;
     }
 
     private interface DocumentChange {
@@ -1216,6 +1264,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
 
             addFocusListener(new FocusListener() {
                 public void focusGained(FocusEvent e) {
+                    shared.active = VerticalTextPane.this;
                     caretVisible = true;
                     blinkTimer.start();
                     repaint();
