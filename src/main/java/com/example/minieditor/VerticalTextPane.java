@@ -161,8 +161,9 @@ public class VerticalTextPane extends EditorPane implements Searchable {
             if (isActiveView()) {
                 documentChanged(e.getOffset() + e.getLength());
             } else {
-                // ほかのタブで書き換えられたときは、カーソルを動かさず、文字が増えたぶんだけずらす
-                documentChanged(shifted(caret, e.getOffset(), e.getLength()));
+                // ほかのタブで書き換えられたときは、カーソルと選択を文字が増えたぶんだけずらし、スクロールもしない
+                // （右で別の場所を読みながら、左で書けるように）
+                otherViewChanged(e.getOffset(), e.getLength());
             }
         }
 
@@ -170,7 +171,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
             if (isActiveView()) {
                 documentChanged(e.getOffset());
             } else {
-                documentChanged(shifted(caret, e.getOffset(), -e.getLength()));
+                otherViewChanged(e.getOffset(), -e.getLength());
             }
         }
 
@@ -266,6 +267,26 @@ public class VerticalTextPane extends EditorPane implements Searchable {
             fireContentChanged();
         }
         SwingUtilities.invokeLater(this::scrollToCaret);
+    }
+
+    /** 同じ文書を映すほかのタブで書き換えられたとき。カーソル・選択・スクロールの位置は、そのまま保つ。 */
+    private void otherViewChanged(int offset, int delta) {
+        int newCaret = shifted(caret, offset, delta);
+        int newAnchor = shifted(anchor, offset, delta);
+        try {
+            text = doc.getText(0, doc.getLength());
+        } catch (BadLocationException ex) {
+            text = "";
+        }
+        rebuildRuns();
+        caret = Math.max(0, Math.min(newCaret, text.length()));
+        anchor = Math.max(0, Math.min(newAnchor, text.length()));
+        layoutDirty = true;
+        view.revalidate();
+        view.repaint();
+        if (!shared.loading) {
+            fireContentChanged();
+        }
     }
 
     /** ルビだけが変わったとき（文字は変わっていない）。 */
