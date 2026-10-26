@@ -16,8 +16,8 @@
 - 最新のコミット: AI の守り（並列エージェントの作業。主役がレビューしてコミット）と、分割したときの文書 id の共有（主役）。
   - 分割の直し（主役）: 閉じたタブを共有の文書から切り離す（`EditorPane.detachShared`）。縦書きで片側で打っても、もう片側の選択とスクロールを戻さない。同じ文書を映すタブは、同じ文書 id を持つ（`linkView` で引き継ぐ。代表のタブを閉じても id は変わらない）。
   - AI の守り（並列エージェント）: 下の「並列エージェントの報告（AI の守り）」を参照。
-- コミットしていない変更: なし。
-- テスト: `RubyTest`・`SaveTest`・`McpTest`（新規、9項目）。Linux で全部通った（主役が確認）。CI（`.github/workflows/ci.yml`）に `McpTest` の段を足した。
+- コミットしていない変更: `.github/workflows/ci.yml`（McpTest の段。上の理由で push できない）。
+- テスト: `RubyTest`・`SaveTest`・`McpTest`（新規、9項目）。Linux で全部通った（主役が確認）。CI（`.github/workflows/ci.yml`）に `McpTest` の段を足したいが、**Linux 側からは `.github/workflows` の変更を push できない**（GitHub が「failure」で断る。この PC の鍵に、ワークフローを書き換える権限がないためと思われる）。変更は Linux の作業フォルダに残してある（未コミット）。Windows 側から push するか、利用者が GitHub の画面で足す。足す段: `- name: McpTest` / `shell: bash` / `run: java -cp "target/classes;target/test-classes" com.example.minieditor.McpTest`（SaveTest の段の後ろ）。
 - 配布 ZIP: まだ作り直していない（`61f2c87` の時点のもの）。Windows の確認が済んだら、主役が `sh packaging/build-all.sh` で4種類とも同じ名前で作り直す。
 - Linux 側に `gh` が入っていないので、主役からは CI の結果が見えない（利用者が入れてログインすれば見られる）。
 
