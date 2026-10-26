@@ -42,7 +42,7 @@ public final class VerticalLayout {
     }
 
     public final int[] col;             // col[i]：i 文字目が、右から何列目か
-    public final int[] row;             // row[i]：i 文字目が、上から何文字目か
+    public final int[] row;             // row[i]：i 文字目が、上から何文字目か（列をちょうど埋めた段落の改行だけは、1列の文字数と同じ＝一番下のマスのすぐ下）
     private final boolean[] pairHead;   // 縦中横の1文字目
     private final boolean[] pairTail;   // 縦中横の2文字目（1文字目と一緒に描くので、単独では描かない）
     private final int[] tucked;         // 禁則処理で前の行の一番下のマスに入れた句読点：そのマスの何個目か（1 か 2）。ふつうは 0
@@ -109,6 +109,18 @@ public final class VerticalLayout {
                 tuckedCount = 0;
                 lastPlaced = -1;        // 空けたマスには、句読点を入れない
             }
+            if (ch == '\n' && wrapped && r == 0) {
+                // 段落が列の一番下までちょうど埋まって（句読点を一番下のマスに入れた場合も）、もう折り返しで
+                // 次の列へ来ているときは、さらに列を進めない（進めると、空の列ができてしまう）。
+                // 改行そのものは、前の列の一番下のマスの「すぐ下」に置く（カーソルは、段落の終わりに出る。
+                // 次の段落の1文字目と、同じマスを取り合わないように）
+                col[i] = c - 1;
+                row[i] = rows;
+                wrapped = false;
+                tuckedCount = 0;
+                lastPlaced = -1;
+                continue;
+            }
             col[i] = c;
             row[i] = r;
             if (ch == '\n') {
@@ -131,6 +143,20 @@ public final class VerticalLayout {
         col[n] = c;                     // 文末のカーソル位置
         row[n] = r;
         totalColumns = c + 1;
+    }
+
+    /**
+     * 文字が入っている列の数（少なくとも 1）。totalColumns と違い、文末のカーソルのためだけの空の列は数えない。
+     * PDF の枚数に使う（文末が列のちょうど終わりのときに、白紙のページが1枚増えないように）。
+     */
+    public int usedColumns() {
+        int last = 0;
+        for (int i = 0; i < text.length(); i++) {
+            if (isDrawn(i)) {
+                last = Math.max(last, col[i]);
+            }
+        }
+        return last + 1;
     }
 
     /** i 文字目と次の文字が、縦中横にする組（半角数字2桁、または !? の2文字）かどうか。 */

@@ -46,6 +46,9 @@ public final class WritingStats {
 
     /** 文書が書き換えられたときに呼ぶ。 */
     public void changed(EditorPane pane) {
+        if (pane != pane.firstView()) {
+            return;                     // 分割で同じ文書を映しているときは、代表のタブの知らせだけで数える（全文を2回数えない）
+        }
         int now = count(pane);
         // 同じ文書を2つのタブで映していると、1回の書き換えで両方から知らせが来るので、文書ごとに数える
         Integer before = last.put(pane.firstView(), now);
@@ -110,11 +113,19 @@ public final class WritingStats {
 
     /** 400字詰め原稿用紙に換算した枚数（1行20字・20行。段落ごとに行を改める）。 */
     public static int manuscriptSheets(String text) {
+        // 段落ごとに文字数を数える（split で段落の文字列を作らずに、1回たどるだけにする）
         int lines = 0;
-        for (String paragraph : text.split("\n", -1)) {
-            int length = paragraph.codePointCount(0, paragraph.length());
-            lines += Math.max(1, (length + 19) / 20);
+        int length = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '\n') {
+                lines += Math.max(1, (length + 19) / 20);
+                length = 0;
+            } else if (!Character.isLowSurrogate(c)) {
+                length++;
+            }
         }
+        lines += Math.max(1, (length + 19) / 20);
         return Math.max(1, (lines + 19) / 20);
     }
 

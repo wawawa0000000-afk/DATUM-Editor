@@ -113,6 +113,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
             JScrollPane.VERTICAL_SCROLLBAR_NEVER, JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
 
     private String text = "";           // 文書の中身の写し（描くたびに取り出すと遅いので持っておく）
+    private int[] lineStarts;           // 各行の始まりの位置（ステータスバーの「行」を、毎回先頭から数えないため）。null なら作り直す
     private int caret = 0;              // カーソルの位置（何文字目の前か）
     private int anchor = 0;             // 範囲選択の起点（選択していないときは caret と同じ）
     private List<Highlight> highlights = List.of();
@@ -137,6 +138,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
     private int[] colOf = {0};
     private int[] rowOf = {0};
     private int totalCols = 1;
+    private int usedCols = 1;           // 文字が入っている列の数（文末のカーソルのためだけの列を除く。PDF の枚数と同じ数え方）
     private VerticalLayout layout = new VerticalLayout("", 1, List.of());
     private int layoutHeight = -1;
     private boolean layoutDirty = true;
@@ -253,6 +255,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
     private void documentChanged(int newCaret) {
         try {
             text = doc.getText(0, doc.getLength());
+            lineStarts = null;          // 行の始まりの表は、次に要るときに作り直す
         } catch (BadLocationException ex) {
             text = "";
         }
@@ -275,6 +278,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
         int newAnchor = shifted(anchor, offset, delta);
         try {
             text = doc.getText(0, doc.getLength());
+            lineStarts = null;          // 行の始まりの表は、次に要るときに作り直す
         } catch (BadLocationException ex) {
             text = "";
         }
@@ -748,6 +752,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
         colOf = layout.col;
         rowOf = layout.row;
         totalCols = layout.totalColumns;
+        usedCols = layout.usedColumns();    // 並べ直したときだけ数える（ステータスバーの枚数を PDF とそろえるため）
     }
 
     /** column 列目（またはそれより後ろの列）にある最初の文字。文字は列の順に並んでいるので、半分ずつ探す。 */
@@ -910,23 +915,34 @@ public class VerticalTextPane extends EditorPane implements Searchable {
     @Override
     public String statusText() {
         int lineStart = text.lastIndexOf('\n', caret - 1) + 1;
-        int line = 1;
-        for (int i = 0; i < lineStart; i++) {
-            if (text.charAt(i) == '\n') {
-                line++;
-            }
-        }
+        int line = lineNumber(lineStart);
         String status = "行 " + line + ", " + (caret - lineStart + 1) + " 文字目";
         if (manuscript && colOf.length > 0) {
             // 原稿用紙の何枚目にいるか（配置の計算が済んでいる範囲で求める）
             int column = colOf[Math.min(toShown(caret), colOf.length - 1)];
-            int sheets = Math.max(1, (totalCols + SHEET_COLUMNS - 1) / SHEET_COLUMNS);
+            int sheets = Math.max(column / SHEET_COLUMNS + 1, (usedCols + SHEET_COLUMNS - 1) / SHEET_COLUMNS);
             status = "原稿用紙 " + (column / SHEET_COLUMNS + 1) + " / " + sheets + " 枚    " + status;
         }
         if (selectionEnd() > selectionStart()) {
             status += "（" + (selectionEnd() - selectionStart()) + " 文字を選択）";
         }
         return status + "    " + text.length() + " 文字";
+    }
+
+    /** position が何行目か（1 から）。行の始まりの表を作っておき、半分ずつ探す。 */
+    private int lineNumber(int position) {
+        if (lineStarts == null) {
+            List<Integer> starts = new ArrayList<>();
+            starts.add(0);
+            for (int i = 0; i < text.length(); i++) {
+                if (text.charAt(i) == '\n') {
+                    starts.add(i + 1);
+                }
+            }
+            lineStarts = starts.stream().mapToInt(Integer::intValue).toArray();
+        }
+        int found = java.util.Arrays.binarySearch(lineStarts, position);
+        return (found >= 0 ? found : -found - 2) + 1;
     }
 
     @Override

@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * 外部ライブラリを使わない、小さな JSON の読み書き。
@@ -83,7 +84,9 @@ public final class Json {
             sb.append(b.booleanValue());
         } else if (value instanceof Number n) {
             double d = n.doubleValue();
-            if (d == Math.rint(d) && Math.abs(d) < 1e15) {
+            if (Double.isNaN(d) || Double.isInfinite(d)) {
+                sb.append("null");              // JSON には NaN や Infinity の書き方がない（書くと、次に読めなくなる）
+            } else if (d == Math.rint(d) && Math.abs(d) < 1e15) {
                 sb.append((long) d);            // 3.0 ではなく 3 と書く
             } else {
                 sb.append(d);
@@ -166,10 +169,17 @@ public final class Json {
         return value;
     }
 
+    /** JSON の数の書き方（01・1.・+1・.5 などは認めない）。 */
+    private static final Pattern NUMBER = Pattern.compile("-?(0|[1-9][0-9]*)(\\.[0-9]+)?([eE][+-]?[0-9]+)?");
+
+    /** 入れ子の深さの上限。壊れたファイルや悪意のあるデータで、読み込みが StackOverflowError で落ちないように。 */
+    private static final int MAX_DEPTH = 512;
+
     /** 文字を先頭から1文字ずつ読んでいく。pos が「今どこまで読んだか」。 */
     private static final class Parser {
         private final String s;
         private int pos = 0;
+        private int depth = 0;
 
         Parser(String s) {
             // 先頭に BOM（見えない目印の文字）が付いているファイルもあるので、取り除く
@@ -191,11 +201,13 @@ public final class Json {
                 throw error("値がありません");
             }
             char c = s.charAt(pos);
-            if (c == '{') {
-                return readObject();
-            }
-            if (c == '[') {
-                return readArray();
+            if (c == '{' || c == '[') {
+                if (++depth > MAX_DEPTH) {
+                    throw error("入れ子が深すぎます");
+                }
+                Object value = c == '{' ? readObject() : readArray();
+                depth--;
+                return value;
             }
             if (c == '"') {
                 return readString();
@@ -303,11 +315,16 @@ public final class Json {
                         if (pos + 4 > s.length()) {
                             throw error("\\u の後ろは4桁必要です");
                         }
-                        try {
-                            sb.append((char) Integer.parseInt(s.substring(pos, pos + 4), 16));
-                        } catch (NumberFormatException ex) {
-                            throw error("\\u の後ろが16進数ではありません");
+                        int code = 0;
+                        for (int i = 0; i < 4; i++) {
+                            char h = s.charAt(pos + i);
+                            int digit = h < 0x80 ? Character.digit(h, 16) : -1;
+                            if (digit < 0) {            // parseInt と違い、+ や全角の数字は通さない
+                                throw error("\\u の後ろが16進数ではありません");
+                            }
+                            code = code * 16 + digit;
                         }
+                        sb.append((char) code);
                         pos += 4;
                     }
                     default -> throw error("使えないエスケープです: \\" + e);
@@ -323,11 +340,11 @@ public final class Json {
             if (start == pos) {
                 throw error("読めない文字があります");
             }
-            try {
-                return Double.valueOf(s.substring(start, pos));
-            } catch (NumberFormatException ex) {
+            String number = s.substring(start, pos);
+            if (!NUMBER.matcher(number).matches()) {
                 throw error("数値として読めません");
             }
+            return Double.valueOf(number);
         }
 
         char peek() throws JsonException {

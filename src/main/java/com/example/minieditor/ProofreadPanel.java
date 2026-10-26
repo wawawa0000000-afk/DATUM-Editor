@@ -258,8 +258,9 @@ public final class ProofreadPanel extends JPanel {
         if (issue == null || issue.fix() == null || doc == null) {
             return;
         }
-        String text = doc.getText();
-        if (issue.end() > text.length()) {
+        if (refreshIfChanged(doc)) {
+            // 一覧の位置は、調べたときの文章のもの。打ったあとのままだと、別の字を置き換えてしまう
+            summary.setText("文章が変わったので、調べ直しました。場所を確かめて、もう一度「直す」を押してください");
             return;
         }
         doc.replaceRange(issue.fix(), issue.start(), issue.end());
@@ -276,9 +277,26 @@ public final class ProofreadPanel extends JPanel {
         if (issue == null || doc == null) {
             return;
         }
+        if (refreshIfChanged(doc)) {
+            summary.setText("文章が変わったので、調べ直しました。場所を確かめて、もう一度「無視」を押してください");
+            return;
+        }
         ignored.add(ignoreKey(doc.getText(), issue));
         checkedText = null;
         refresh();
+    }
+
+    /**
+     * 一覧を作ったあとで、文章が変わっていたら（打ってから調べ直すまでの 0.7 秒の間など）、すぐに調べ直して true。
+     * 変わっていなければ、一覧の位置はそのまま使えるので false。
+     */
+    private boolean refreshIfChanged(Searchable doc) {
+        if (doc.getText().equals(checkedText)) {
+            return false;
+        }
+        recheck.stop();
+        refresh();
+        return true;
     }
 
     private static String ignoreKey(String text, Proofreader.Issue issue) {

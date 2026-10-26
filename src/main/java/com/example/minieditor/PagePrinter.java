@@ -136,7 +136,7 @@ public final class PagePrinter {
         // 配置は画面と同じ計算を使う
         String body = text;
         VerticalLayout layout = new VerticalLayout(body, rowsPerColumn, rubies);
-        int pages = (layout.totalColumns + columnsPerPage - 1) / columnsPerPage;
+        int pages = (layout.usedColumns() + columnsPerPage - 1) / columnsPerPage;     // 文末の空の列だけのページは作らない
 
         int next = 0;                                       // 次に描く文字
         for (int page = 0; page < pages; page++) {
@@ -185,7 +185,7 @@ public final class PagePrinter {
         Font font = new Font(fontFamily, Font.PLAIN, size);
 
         VerticalLayout layout = new VerticalLayout(text, rows, rubies);
-        int pages = Math.max(1, (layout.totalColumns + columns - 1) / columns);
+        int pages = Math.max(1, (layout.usedColumns() + columns - 1) / columns);     // 文末の空の列だけのページは作らない
 
         int next = 0;
         for (int page = 0; page < pages; page++) {

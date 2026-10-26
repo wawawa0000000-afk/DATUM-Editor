@@ -132,6 +132,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     private FolderSidebar sidebar;
     private boolean sidebarVisible;
     private ProofreadPanel proofPanel;
+    private final Map<EditorPane, Integer> sheetCache = new java.util.WeakHashMap<>();  // 原稿用紙換算の枚数（中身が変わるまで覚えておく。カーソルが動くたびに全文を数えないため）
     private final Map<EditorPane, Object[]> zoomMemo = new java.util.WeakHashMap<>();   // 倍率を変えた文書：{そのとき付けた文字, 等倍の大きさ}
     private final Map<Theme.Scheme, javax.swing.JRadioButtonMenuItem> schemeItems = new java.util.EnumMap<>(Theme.Scheme.class);
     private AiChatPanel chatPanel;
@@ -1581,7 +1582,8 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             format = "テキスト";
         }
         String sheets = pane instanceof TextEditorPane text && Edition.has(Edition.VERTICAL)
-                ? "    原稿用紙換算 " + WritingStats.manuscriptSheets(text.getText()) + " 枚" : "";
+                ? "    原稿用紙換算 " + sheetCache.computeIfAbsent(text.firstView(), p -> WritingStats.manuscriptSheets(text.getText())) + " 枚"
+                : "";
         statusRight.setText(pane.statusText() + sheets + "    UTF-8    " + format
                 + (mcp.isRunning() ? "    AI 連携中" : ""));
     }
@@ -1597,6 +1599,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
 
     @Override
     public void contentChanged(EditorPane pane) {
+        sheetCache.remove(pane.firstView());
         findBar.contentChanged(pane);
         stats.changed(pane);
         if (proofPanel != null && pane == currentPane()) {
