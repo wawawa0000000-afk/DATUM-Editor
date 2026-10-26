@@ -8,7 +8,6 @@ import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.function.Supplier;
 
 import javax.swing.AbstractAction;
@@ -216,14 +215,22 @@ public class FindBar extends JPanel {
         if (keyword.isEmpty()) {
             return positions;           // 空欄は「一致なし」にする（ここを抜かすと、無限に見つかり続ける）
         }
-        if (!caseSensitive) {
-            text = text.toLowerCase(Locale.ROOT);
-            keyword = keyword.toLowerCase(Locale.ROOT);
+        if (caseSensitive) {
+            int index = text.indexOf(keyword);
+            while (index >= 0) {
+                positions.add(index);
+                index = text.indexOf(keyword, index + keyword.length());
+            }
+            return positions;
         }
-        int index = text.indexOf(keyword);
-        while (index >= 0) {
-            positions.add(index);
-            index = text.indexOf(keyword, index + keyword.length());
+        // toLowerCase で文章ごと変えると、İ などで長さが変わり、見つけた位置が本文とずれる。
+        // 1文字ずつ大文字・小文字を区別せずに比べれば、位置も長さも本文のまま
+        int length = keyword.length();
+        for (int i = 0; i + length <= text.length(); i++) {
+            if (text.regionMatches(true, i, keyword, 0, length)) {
+                positions.add(i);
+                i += length - 1;
+            }
         }
         return positions;
     }

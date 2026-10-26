@@ -18,7 +18,7 @@
   - AI の守り（並列エージェント）: 下の「並列エージェントの報告（AI の守り）」を参照。
 - コミットしていない変更: `.github/workflows/ci.yml`（McpTest の段。上の理由で push できない）。
 - テスト: `RubyTest`・`SaveTest`・`McpTest`（9項目）・`ConnectionTest`（23項目）。Linux で全部通った（主役が確認）。
-- つなぎ口の守り（並列エージェント、コミット済み）: 橋渡し役は、合言葉を送る前に、乱数への証明（HMAC-SHA256）で相手が本物のエディタかを確かめる。`SingleInstance` は、受け取る行の長さ・ファイルの数・時間に上限を付けた。CI（`.github/workflows/ci.yml`）に `McpTest` の段を足したいが、**Linux 側からは `.github/workflows` の変更を push できない**（GitHub が「failure」で断る。この PC の鍵に、ワークフローを書き換える権限がないためと思われる）。変更は Linux の作業フォルダに残してある（未コミット）。Windows 側から push するか、利用者が GitHub の画面で足す。足す段（McpTest・ConnectionTest・JsonTest・LayoutTest の4つ。Linux の作業フォルダの ci.yml にはもう入れてある）: `- name: McpTest` / `shell: bash` / `run: java -cp "target/classes;target/test-classes" com.example.minieditor.McpTest`（SaveTest の段の後ろ）。
+- つなぎ口の守り（並列エージェント、コミット済み）: 橋渡し役は、合言葉を送る前に、乱数への証明（HMAC-SHA256）で相手が本物のエディタかを確かめる。`SingleInstance` は、受け取る行の長さ・ファイルの数・時間に上限を付けた。CI（`.github/workflows/ci.yml`）に `McpTest` の段を足したいが、**Linux 側からは `.github/workflows` の変更を push できない**（GitHub が「failure」で断る。この PC の鍵に、ワークフローを書き換える権限がないためと思われる）。変更は Linux の作業フォルダに残してある（未コミット）。Windows 側から push するか、利用者が GitHub の画面で足す。足す段（McpTest・ConnectionTest・JsonTest・LayoutTest・EncodingTest の5つ。Linux の作業フォルダの ci.yml にはもう入れてある）: `- name: McpTest` / `shell: bash` / `run: java -cp "target/classes;target/test-classes" com.example.minieditor.McpTest`（SaveTest の段の後ろ）。
 - 配布 ZIP: まだ作り直していない（`61f2c87` の時点のもの）。Windows の確認が済んだら、主役が `sh packaging/build-all.sh` で4種類とも同じ名前で作り直す。
 - Linux 側に `gh` が入っていないので、主役からは CI の結果が見えない（利用者が入れてログインすれば見られる）。
 
@@ -57,6 +57,9 @@
 - 以後の「ビルドとテスト」は、CI が自動で行う。
 
 ## Windows で未確認
+
+- 文字コード: Shift_JIS のファイルを開くと、わかる言葉で断られるか。メモ帳で作った CRLF・BOM 付きのファイルを開いて保存しても、CRLF・BOM のままか。
+- 縦書き: 異体字（例: 葛󠄀）や結合文字が1マスに収まり、カーソルがその途中で止まらないか。
 
 - 縦書き: 段落がちょうど列の下まで埋まったとき、空の列ができないか。その段落の終わり（改行）にカーソルを置くと、一番下のマスのすぐ下に出るか（画面では、まだ誰も見ていない）。
 
@@ -97,7 +100,8 @@
    - 主役（追加）: ~~重さの 1・2~~ 直してコミットした（縦書きで、変換中の文字がなければ、矢印キーで全文を並べ直さない／描くのは見えている列とその前後1列だけ）。描いた画面は、直す前と1ピクセルも違わないことを確かめた（3か所）。
    - 主役（追加）: ~~重さの 3・4・5~~ 直してコミットした（原稿用紙換算の枚数は中身が変わるまで覚えておく／分割中の執筆量は代表のタブだけで数える／縦書きの「行」は行の始まりの表から探す）。
    - 主役（追加）: ~~21・22~~ 直してコミットした（11文字目で分かれたルビは、前のほうだけをルビにする。間の文字を消せばまた1つにつながる／前回のプログラムが同じ番号でも、その控えを自分のものとして消さない。どちらもテストを足した）。
-   - 並列エージェント（作業中）: 重さの 6、15、19、20。
+   - 並列エージェント: ~~重さの 6、15、19、20~~ 直してコミットした（`EncodingTest` を追加）。19 のカーソルと BackSpace/Delete は、主役が「ひとまとまりの文字」単位にした。
+   - **一覧の22項目は、これで全部片付いた。**
 4. 利用者の承認が出たら、PATH の古い項目を外す処理（決まったこと 2）。`command-path.ps1` の `Resolve-Path` は、フォルダがないとエラーで止まるので、`-Remove` のときは文字列のまま比べるように直す必要がある。
 5. 主役: Windows の確認が済んだら、配布 ZIP を4種類とも同じ名前で作り直す。
 
@@ -279,3 +283,29 @@
   - `\u` の後ろは、半角の 16 進数4桁だけを読む（`+` や全角の数字は読まない）。
   - エディタ自身が書く数（`1.0E20` など）は、今までどおり読める。
 - **お願い**：`ci.yml` に `LayoutTest` と `JsonTest` を足してほしい（ci.yml はこちらでは push できないため、触っていない）。
+
+## 並列エージェントの報告（6・15・19・20：校正の行番号、検索の位置ずれ、ひとまとまりの文字、文字コードと改行。コミット済み。主役がレビューした）
+
+コミットはしていない。変えたファイル：`ProofreadPanel.java`、`FindBar.java`、`VerticalLayout.java`、`FileService.java`、`LayoutTest.java`（テストを足した）、新しく `src/test/.../EncodingTest.java`。`mvn -q -B package` と、7つのテスト（EncodingTest・JsonTest・LayoutTest・RubyTest・SaveTest・McpTest・ConnectionTest）はすべて通った。
+
+- **6（校正の一覧が重い）**：「何行目」を、行ごとに文書の先頭から数えていた。各行の始まりの位置を、文章が変わったときに1回だけ作り、二分探索で引くようにした。前のやり方と、ランダムな 2000 の文章のすべての位置で同じ答えになるのを確かめた。
+- **15（検索の位置ずれ）**：大文字と小文字を区別しない検索で、文章を `toLowerCase` してから探すのをやめた。今は本文のまま `regionMatches(true, …)` で1文字ずつ比べる。İ のように小文字にすると長さが変わる文字があっても、見つけた位置と長さが本文とずれない。全角の Ａｂｃ や絵文字も、今までどおり見つかる。
+- **19（ひとまとまりの文字）**：次の文字は、前の文字と同じマスに入れ、一緒に描くようにした（`VerticalLayout.joinsPrevious`）。
+  - 異体字セレクタ（U+FE00〜FE0F、U+E0100〜E01EF）
+  - 結合文字（結合用の濁点 U+3099 やアクセントなど）
+  - ゼロ幅接合子（ZWJ）とその次の文字
+  - 改行のすぐ後ろでは、くっつける相手がないので、今までどおり1マスにする。結合文字の付いた数字は、縦中横にしない。
+  - **主役にお願い（VerticalTextPane）**：カーソルがその途中で止まらないようにするには、`VerticalTextPane` の次の3か所を変える必要がある。今はサロゲートペアだけを見ている。
+    - `moveCaret` の「サロゲートペアの真ん中には止まらない」
+    - `charLengthBefore`
+    - `charLengthAt`
+  - 代わりに `VerticalLayout.clusterStart(text, p)` と `clusterEnd(text, p)`（static）を使えば、そろう。たとえば `moveCaret` は、`p` が `clusterStart(text, p) != p` なら、進む向きに合わせて `clusterEnd` か `clusterStart` へ寄せる。
+  - Backspace と Delete も、ひとまとまりで消すなら同じ。
+- **20（文字コードと改行）**：`FileService.read` と `save` で扱うようにした。`VerticalTextPane` は変えなくてよい（`loadText` の `\r` を消す処理は、そのままで害はない）。
+  - **Shift_JIS**：「Input length = 1」をやめた。Shift_JIS として読めるファイルなら、「Shift_JIS で書かれているようです。メモ帳などで開いて、文字コードを『UTF-8』にして保存し直すと、開けるようになります」と出す。Shift_JIS でもなければ、「UTF-8 の文章として読めませんでした」と出す。EditorFrame の「開けませんでした: 」の後ろに、そのまま出る。
+  - **改行**：読むときに `\r\n` を `\n` にそろえる。CRLF のファイル（CRLF が多いファイル）は覚えておいて、保存するときに CRLF に戻す。縦書きで保存しても CRLF のままになり、横書きでも、エディタの中に見えない `\r` が残らなくなった。
+  - **BOM**：本文の1文字目には残さない。保存するときに付け直す。
+  - **気をつけること**：
+    - 書き方は、ファイルの場所ごとに覚えている（エディタを閉じるまで）。「名前を付けて保存」で新しい名前にすると、今までどおり LF・BOM なしになる。元の書き方を引き継ぐなら、`EditorFrame` から FileService に知らせる口を足す必要がある。
+    - AI の `read_file`（`McpTools`）は、これまでどおり `Files.readString` で読んでいる。こちらは変えていない。
+- **お願い**：`ci.yml` に `EncodingTest` を足してほしい。

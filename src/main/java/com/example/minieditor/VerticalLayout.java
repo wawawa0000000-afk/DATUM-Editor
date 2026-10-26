@@ -16,6 +16,7 @@ import java.util.List;
  *                前の行の一番下のマスに、その文字と一緒に入れる（2つまで。マスの外にははみ出さない）。
  *                行の一番下に開きかっこが来そうなときは、次の行の頭へ送る
  *   縦中横     … 半角の数字2桁や「!?」は、横に並べたまま1文字ぶんのマスに入れる
+ *   ひとまとまりの文字 … 異体字セレクタ（字形を選ぶ見えない印）や結合文字（か + ゛ など）は、前の文字と同じマスに入れる
  */
 public final class VerticalLayout {
 
@@ -87,9 +88,7 @@ public final class VerticalLayout {
         int lastPlaced = -1;            // 最後にマスへ置いた文字（句読点を一緒に入れる相手）
         for (int i = 0; i < n; i++) {
             char ch = text.charAt(i);
-            boolean lowSurrogate = i > 0 && Character.isLowSurrogate(ch)
-                    && Character.isHighSurrogate(text.charAt(i - 1));
-            if (lowSurrogate || pairTail[i]) {
+            if (joinsPrevious(text, i) || pairTail[i]) {
                 col[i] = col[i - 1];    // 前の文字と同じマスに入る
                 row[i] = row[i - 1];
                 continue;
@@ -168,6 +167,9 @@ public final class VerticalLayout {
         if (!digits && !marks) {
             return false;
         }
+        if (i + 2 < text.length() && joinsPrevious(text, i + 2)) {
+            return false;               // 2文字目に結合文字などが付いているときは、ふつうに1文字ずつ置く
+        }
         // 3文字以上続いているとき（例：2024）は、縦中横にしない
         char before = i > 0 ? text.charAt(i - 1) : ' ';
         char after = i + 2 < text.length() ? text.charAt(i + 2) : ' ';
@@ -186,11 +188,56 @@ public final class VerticalLayout {
         return isDigit(c) || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '.' || c == ',';
     }
 
+    /**
+     * i 文字目が、前の文字と同じマスに入るか（1文字として、間にカーソルを置かない）。
+     * サロゲートペアの2つ目、異体字セレクタ、結合文字（濁点の ゙ やアクセントなど）、ゼロ幅接合子とその次の文字。
+     * 改行のすぐ後ろでは、くっつける相手がないので false。
+     */
+    public static boolean joinsPrevious(String text, int i) {
+        if (i <= 0 || i >= text.length() || text.charAt(i - 1) == '\n') {
+            return false;
+        }
+        char ch = text.charAt(i);
+        if (Character.isLowSurrogate(ch)) {
+            return Character.isHighSurrogate(text.charAt(i - 1));
+        }
+        if (text.charAt(i - 1) == '\u200D') {
+            return true;                // 絵文字をつなぐ印の次の文字
+        }
+        int codePoint = text.codePointAt(i);
+        if (codePoint == 0x200D || (codePoint >= 0xFE00 && codePoint <= 0xFE0F)
+                || (codePoint >= 0xE0100 && codePoint <= 0xE01EF)) {
+            return true;
+        }
+        int type = Character.getType(codePoint);
+        return type == Character.NON_SPACING_MARK || type == Character.ENCLOSING_MARK
+                || type == Character.COMBINING_SPACING_MARK;
+    }
+
+    /** position を含む「ひとまとまりの文字」の始まり。カーソルを、その途中に止めないために使う。 */
+    public static int clusterStart(String text, int position) {
+        int p = Math.max(0, Math.min(position, text.length()));
+        while (joinsPrevious(text, p)) {
+            p--;
+        }
+        return p;
+    }
+
+    /** position から始まる「ひとまとまりの文字」の終わり（次の文字の始まり）。 */
+    public static int clusterEnd(String text, int position) {
+        if (position >= text.length()) {
+            return text.length();
+        }
+        int p = position + 1;
+        while (joinsPrevious(text, p)) {
+            p++;
+        }
+        return p;
+    }
+
     /** i 文字目が、画面に何かを描く文字かどうか（改行と、前の文字とまとめて描く文字は false）。 */
     public boolean isDrawn(int i) {
-        char ch = text.charAt(i);
-        return ch != '\n' && !pairTail[i]
-                && !(i > 0 && Character.isLowSurrogate(ch) && Character.isHighSurrogate(text.charAt(i - 1)));
+        return text.charAt(i) != '\n' && !pairTail[i] && !joinsPrevious(text, i);
     }
 
     /** i 文字目を、マスの中心 (centerX, centerY) に描く。 */
@@ -245,14 +292,13 @@ public final class VerticalLayout {
         }
         boolean aloneBefore = i == 0 || !isAsciiWordChar(text.charAt(i - 1));
         boolean aloneAfter = i + 1 >= text.length() || !isAsciiWordChar(text.charAt(i + 1));
-        if ((isDigit(ch) || isMark(ch)) && aloneBefore && aloneAfter) {
+        if ((isDigit(ch) || isMark(ch)) && aloneBefore && aloneAfter && !joinsPrevious(text, i + 1)) {
             // 1文字だけの数字や「!」「?」は、回さずに立てて描く
             float x = (float) (centerX - fm.charWidth(ch) / 2.0);
             g2.drawString(String.valueOf(ch), x, (float) (centerY + (fm.getAscent() - fm.getDescent()) / 2.0));
             return;
         }
-        String s = Character.isHighSurrogate(ch) && i + 1 < text.length()
-                ? text.substring(i, i + 2) : String.valueOf(ch);
+        String s = text.substring(i, clusterEnd(text, i));     // 異体字セレクタや結合文字も一緒に描く
         drawVerticalCharacter(g2, fm, s, centerX, centerY, size);
     }
 

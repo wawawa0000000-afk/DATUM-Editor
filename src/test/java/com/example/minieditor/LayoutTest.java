@@ -27,6 +27,7 @@ public class LayoutTest {
     public static void main(String[] args) {
         fullColumn();
         unchanged();
+        clusters();
         System.out.println(failures == 0 ? "すべて通りました" : failures + " 件、失敗しました");
         System.exit(failures == 0 ? 0 : 1);
     }
@@ -60,6 +61,26 @@ public class LayoutTest {
         VerticalLayout f = layout(sheet + "\n", 20);
         check(f.usedColumns() == 20, "ファイルの最後が改行でも、PDF に白紙のページを足さない");
         check(layout("", 20).usedColumns() == 1, "空の文書でも、PDF は1枚");
+    }
+
+    /** 異体字セレクタや結合文字は、前の文字と同じマスに入る（1マスを取らず、カーソルも途中に止めない）。 */
+    private static void clusters() {
+        String ivs = "葛\uDB40\uDD00城";              // 葛 + 異体字セレクタ（U+E0100、サロゲートペア）
+        VerticalLayout a = layout(ivs, 20);
+        check(a.col[1] == 0 && a.row[1] == 0 && a.row[2] == 0 && a.row[3] == 1, "異体字セレクタは、前の字と同じマス");
+        check(a.isDrawn(0) && !a.isDrawn(1) && !a.isDrawn(2), "異体字セレクタは、前の字と一緒に描く");
+        String marks = "か\u3099き\uFE0Fe\u0301";       // か + 結合用の濁点、き + 異体字セレクタ、e + アクセント
+        VerticalLayout b = layout(marks, 20);
+        check(b.row[1] == 0 && b.row[2] == 1 && b.row[3] == 1 && b.row[4] == 2 && b.row[5] == 2 && b.row[6] == 3,
+                "結合文字も、前の字と同じマス");
+        check(VerticalLayout.clusterStart(ivs, 2) == 0 && VerticalLayout.clusterEnd(ivs, 0) == 3
+                && VerticalLayout.clusterEnd(marks, 0) == 2, "ひとまとまりの始まりと終わり");
+        VerticalLayout c = layout("\n\u3099あ", 20);
+        check(c.col[1] == 1 && c.row[1] == 0 && c.row[2] == 1, "改行のすぐ後ろの結合文字は、くっつける相手がないので1マス");
+        VerticalLayout d = layout("あいう\u3099え", 3);
+        check(d.col[3] == 0 && d.row[3] == 2 && d.col[4] == 1 && d.row[4] == 0, "列の一番下の字に付いた結合文字は、次の列へ行かない");
+        VerticalLayout e = layout("12\u20E3", 20);
+        check(e.isDrawn(0) && e.isDrawn(1) && e.row[1] == 1 && e.row[2] == 1, "結合文字の付いた数字は、縦中横にしない");
     }
 
     /**

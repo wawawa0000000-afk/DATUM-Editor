@@ -6,6 +6,7 @@ import java.awt.FlowLayout;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
@@ -50,6 +51,8 @@ public final class ProofreadPanel extends JPanel {
     private final Set<String> ignored = new HashSet<>();     // 「無視」した所（言葉と項目の組。エディタを閉じるまで覚える）
     private final Timer recheck = new Timer(700, e -> refresh());
     private String checkedText;                             // 最後に調べた文章（変わっていなければ、調べ直さない）
+    private String linesOf;                                 // lineStarts を数えた文章
+    private int[] lineStarts = {0};                         // 各行の始まりの位置（一覧の「何行目」を、毎回 先頭から数えないため）
 
     public ProofreadPanel(Supplier<Searchable> target, Runnable focusEditor, AppSettings settings, Runnable onClose) {
         super(new BorderLayout());
@@ -327,8 +330,7 @@ public final class ProofreadPanel extends JPanel {
             if (found.length() > 30) {
                 found = found.substring(0, 30) + "…";
             }
-            String line = issue.start() <= text.length()
-                    ? (text.substring(0, issue.start()).chars().filter(c -> c == '\n').count() + 1) + " 行目" : "";
+            String line = issue.start() <= text.length() ? lineNumber(text, issue.start()) + " 行目" : "";
             String accent = hex(Theme.ACCENT);
             String dim = hex(Theme.FG_DIM);
             String fix = issue.fix() == null ? "" : "　→　<b>" + escape(issue.fix().isEmpty() ? "（削除）" : issue.fix()) + "</b>";
@@ -341,6 +343,21 @@ public final class ProofreadPanel extends JPanel {
             setForeground(selected ? Theme.FG_STRONG : Theme.FG);
             return this;
         }
+    }
+
+    /** offset が何行目か（1 から）。行の始まりの一覧は、文章が変わったときだけ作り直す。 */
+    private int lineNumber(String text, int offset) {
+        if (text != linesOf) {                  // 同じ文章なら同じ String（checkedText）なので、== で足りる
+            List<Integer> starts = new ArrayList<>();
+            starts.add(0);
+            for (int i = text.indexOf('\n'); i >= 0; i = text.indexOf('\n', i + 1)) {
+                starts.add(i + 1);
+            }
+            lineStarts = starts.stream().mapToInt(Integer::intValue).toArray();
+            linesOf = text;
+        }
+        int found = Arrays.binarySearch(lineStarts, offset);
+        return found >= 0 ? found + 1 : -found - 1;
     }
 
     private static String hex(java.awt.Color c) {

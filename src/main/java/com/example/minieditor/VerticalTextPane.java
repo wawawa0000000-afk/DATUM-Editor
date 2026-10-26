@@ -611,10 +611,10 @@ public class VerticalTextPane extends EditorPane implements Searchable {
         dropComposition();
         freeCell = null;
         int p = Math.max(0, Math.min(position, text.length()));
-        // サロゲートペア（2つで1文字になる文字）の真ん中には止まらない
-        if (p > 0 && p < text.length() && Character.isLowSurrogate(text.charAt(p))
-                && Character.isHighSurrogate(text.charAt(p - 1))) {
-            p += (p > caret) ? 1 : -1;
+        // ひとまとまりの文字（サロゲートペア・異体字セレクタ付きの字・結合文字など）の途中には止まらない
+        int start = VerticalLayout.clusterStart(text, p);
+        if (start != p) {
+            p = (p > caret) ? VerticalLayout.clusterEnd(text, start) : start;
         }
         caret = p;
         if (!extendSelection) {
@@ -1593,14 +1593,14 @@ public class VerticalTextPane extends EditorPane implements Searchable {
             moveToCell(target, row);
         }
 
+        /** position の直前の「ひとまとまりの文字」の長さ（BackSpace で、異体字セレクタ付きの字などを丸ごと消すため）。 */
         private int charLengthBefore(int position) {
-            return position >= 2 && Character.isLowSurrogate(text.charAt(position - 1))
-                    && Character.isHighSurrogate(text.charAt(position - 2)) ? 2 : 1;
+            return Math.max(1, position - VerticalLayout.clusterStart(text, position - 1));
         }
 
+        /** position から始まる「ひとまとまりの文字」の長さ（Delete で使う）。 */
         private int charLengthAt(int position) {
-            return position + 1 < text.length() && Character.isHighSurrogate(text.charAt(position))
-                    && Character.isLowSurrogate(text.charAt(position + 1)) ? 2 : 1;
+            return Math.max(1, VerticalLayout.clusterEnd(text, position) - position);
         }
 
         @Override
