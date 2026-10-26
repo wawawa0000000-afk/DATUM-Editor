@@ -14,6 +14,9 @@
         <maven.compiler.release>17</maven.compiler.release>
         <!-- ソースコードの文字コードは UTF-8（日本語コメントを正しく読むため） -->
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <!-- src/test のテストは JUnit を使わず main で動かすので、mvn package のときには走らせない
+             （動かし方は src/test/java/com/example/minieditor/SaveTest.java の先頭に書いてある） -->
+        <skipTests>true</skipTests>
     </properties>
 
     <build>

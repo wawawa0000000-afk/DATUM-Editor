@@ -2098,14 +2098,25 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             return true;
         } catch (IOException ex) {
             if (!manual) {
-                flash("自動保存できませんでした: " + ex.getMessage());
+                flash("自動保存できませんでした: " + saveFailure(ex));
                 return false;
             }
             // 失敗は握りつぶさず、ダイアログで知らせる
-            JOptionPane.showMessageDialog(this, "保存できませんでした: " + ex.getMessage(),
+            JOptionPane.showMessageDialog(this, "保存できませんでした: " + saveFailure(ex),
                     "エラー", JOptionPane.ERROR_MESSAGE);
             return false;
         }
+    }
+
+    /** 保存に失敗した理由を、利用者にわかる言葉にする（そのままだと、ファイルの場所しか出ないことがある）。 */
+    private static String saveFailure(IOException ex) {
+        if (ex instanceof java.nio.file.AccessDeniedException denied) {
+            return "書き込みが許されていません（読み取り専用のファイルか、ほかのアプリが使っています）\n" + denied.getFile();
+        }
+        if (ex instanceof java.nio.charset.CharacterCodingException) {
+            return "UTF-8 で書けない文字が入っています";
+        }
+        return ex.getMessage();
     }
 
     /**
@@ -2265,9 +2276,10 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         if (files.isEmpty()) {
             return;
         }
+        List<Path> missing = new ArrayList<>();
         for (Path path : files) {
             if (!Files.isRegularFile(path)) {
-                flash("ファイルが見つかりません: " + path);
+                missing.add(path.toAbsolutePath().normalize());
                 continue;
             }
             try {
@@ -2282,6 +2294,43 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         }
         toFront();
         requestFocus();
+        withPane(pane -> SwingUtilities.invokeLater(pane::focusEditor));
+        if (!missing.isEmpty()) {
+            offerToCreate(missing);
+        }
+    }
+
+    /**
+     * 指定されたファイルがなかったとき、どこを探したのかを見せて、新しく作るかを聞く。
+     * 下の欄の知らせだとすぐ消えて気づけないので、ダイアログにする。
+     * 「はい」なら、その場所を保存先にした新しい文書を開く（保存したときに、ファイルができる）。
+     */
+    private void offerToCreate(List<Path> missing) {
+        List<Path> creatable = new ArrayList<>();
+        StringBuilder list = new StringBuilder();
+        for (Path path : missing) {
+            boolean canCreate = !Files.exists(path) && path.getParent() != null && Files.isDirectory(path.getParent());
+            if (canCreate) {
+                creatable.add(path);
+            }
+            list.append("・").append(path).append(canCreate ? "" : "（フォルダがないので作れません）").append("\n");
+        }
+        String message = "次のファイルが見つかりませんでした。\n\n" + list;
+        if (creatable.isEmpty()) {
+            JOptionPane.showMessageDialog(this, message + "\n名前と、今いるフォルダが合っているか確かめてください。",
+                    "ファイルが見つかりません", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        int answer = JOptionPane.showConfirmDialog(this,
+                message + "\n新しく作りますか？（保存したときに、この場所にファイルができます）",
+                "ファイルが見つかりません", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
+        if (answer != JOptionPane.YES_OPTION) {
+            return;
+        }
+        for (Path path : creatable) {
+            createDocument(EditorPane.Mode.TEXT).setPath(path);
+        }
+        currentPaneChanged();
         withPane(pane -> SwingUtilities.invokeLater(pane::focusEditor));
     }
 
