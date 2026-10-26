@@ -23,6 +23,10 @@ Java を入れる必要はありません（このフォルダの lib/runtime �
 すでに開いているときは、そのウィンドウのタブで開きます。
 Add-To-Menu.sh で登録したあとは、ファイルの「別のアプリで開く」からも選べます。
 
+■ 「datum」と打つだけで起動する
+「./Add-Command.sh」を1回実行すると、ターミナルで「datum」や「datum 原稿.txt」と打って起動できます（~/.local/bin/datum を作ります）。
+・このフォルダを別の場所に移したときは、もう一度実行してください。やめるときは ~/.local/bin/datum を削除します。
+
 ■ 消すとき
 このフォルダと、次の2つのファイルを削除します。
   ~/.local/share/applications/datum-editor.desktop

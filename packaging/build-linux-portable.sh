@@ -14,8 +14,8 @@ jpackage --type app-image \
   --add-modules java.desktop,jdk.httpserver,java.net.http \
   --icon src/main/resources/icon.png \
   --dest "$WORK"
-cp LICENSE README.md packaging/linux/Add-To-Menu.sh packaging/linux/START-HERE.txt "$WORK/DATUM-Editor/"
-chmod +x "$WORK/DATUM-Editor/Add-To-Menu.sh"
+cp LICENSE README.md packaging/linux/Add-To-Menu.sh packaging/linux/Add-Command.sh packaging/linux/START-HERE.txt "$WORK/DATUM-Editor/"
+chmod +x "$WORK/DATUM-Editor/Add-To-Menu.sh" "$WORK/DATUM-Editor/Add-Command.sh"
 OUT="$(pwd)/dist/$PRODUCT-$VERSION-linux-x64.tar.gz"
 # tar.gz にするのは、「実行できる」という印（パーミッション）を保ったまま配るため
 tar -C "$WORK" -czf "$OUT" DATUM-Editor

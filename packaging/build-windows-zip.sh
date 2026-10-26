@@ -26,7 +26,8 @@ unzip -q "$JRE_ZIP" -d "$WORK/jre"
 mv "$WORK"/jre/*/ "$APP/runtime"
 edition_jar "$APP"
 cp LICENSE README.md packaging/icon.ico "$APP/"
-cp packaging/windows/DATUM-Editor.bat packaging/windows/Create-Desktop-Shortcut.bat packaging/windows/START-HERE.txt "$APP/"
+cp packaging/windows/DATUM-Editor.bat packaging/windows/Create-Desktop-Shortcut.bat packaging/windows/START-HERE.txt \
+   packaging/windows/datum.cmd packaging/windows/Add-Command.bat packaging/windows/Remove-Command.bat packaging/windows/command-path.ps1 "$APP/"
 OUT="$(pwd)/dist/$PRODUCT-$VERSION-windows.zip"
 rm -f "$OUT"
 (cd "$WORK" && zip -q -r "$OUT" DATUM-Editor)
