@@ -68,5 +68,8 @@ public class RubyTest {
         NarouRuby.Parsed back = NarouRuby.read(pane.toPlainText());
         check(back.text().equals("一壱十二三四五六七八九"), "11 文字目を打っても、保存して開き直すと本文は変わらない");
         check(!pane.toPlainText().contains("｜一壱"), "11 文字目は親文字に入れない");
+        check(back.rubies().size() == 1, "11 文字目で分かれたルビは、2か所に同じふりがなを付けない");
+        pane.replaceRange("", 1, 2);
+        check(pane.toPlainText().equals("｜一十二三四五六七八九《かず》"), "間に入った文字を消すと、ルビはまた1つにつながる");
     }
 }

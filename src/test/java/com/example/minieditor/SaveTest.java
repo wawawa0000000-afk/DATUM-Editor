@@ -124,6 +124,19 @@ public class SaveTest {
         Files.createDirectories(folder);
         Files.writeString(folder.resolve("1.json"), doc);
         check(new Recovery(root).leftovers().isEmpty(), "起動時刻が書いていない、動いている番号の控えには触らない");
+
+        // 前回のプログラムが、たまたま今回と同じ番号だった：その控えは自分のものとして扱わず、終了しても消さない
+        Path other = root.resolve("same-pid");
+        long mine = ProcessHandle.current().pid();
+        Path leftover = other.resolve(Long.toString(mine));
+        Files.createDirectories(leftover);
+        Files.writeString(leftover.resolve("started.txt"), "1999-01-01T00:00:00Z");
+        Files.writeString(leftover.resolve("1.json"), doc);
+        check(!Recovery.freshFolder(other, mine).equals(leftover), "同じ番号のフォルダがあれば、自分の控えは別のフォルダに入れる");
+        Recovery same = new Recovery(other);
+        check(same.leftovers().size() == 1, "同じ番号だった前回の控えも、復元の候補に出る");
+        same.clear();
+        check(Files.exists(leftover.resolve("1.json")), "ふつうに終了しても、同じ番号だった前回の控えは消さない");
     }
 
     private static long count(Path dir) throws IOException {

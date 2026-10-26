@@ -311,12 +311,19 @@ public class VerticalTextPane extends EditorPane implements Searchable {
         RubyMark current = null;
         int start = 0;
         int position = 0;
+        // 一度ルビにした印。親文字の途中にルビの外の文字が入って（11文字目など）、同じ印が2か所に分かれたときは、
+        // 前のほうだけをルビにする（両方に同じふりがなが付かないように。間の文字を消せば、また1つにつながる）
+        java.util.Set<RubyMark> used = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
         while (position < length) {
             Element element = doc.getCharacterElement(position);
             Object mark = element.getAttributes().getAttribute(RUBY);
+            if (mark != null && mark != current && used.contains(mark)) {
+                mark = null;
+            }
             if (mark != current) {      // 印が変わった所が、ルビの切れ目
                 if (current != null) {
                     found.add(new VerticalLayout.RubyRun(start, position, current.ruby));
+                    used.add(current);
                 }
                 current = (RubyMark) mark;
                 start = position;

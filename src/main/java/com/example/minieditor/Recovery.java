@@ -46,7 +46,20 @@ public final class Recovery {
 
     Recovery(Path root) {
         this.root = root;
-        this.mine = root.resolve(Long.toString(ProcessHandle.current().pid()));
+        this.mine = freshFolder(root, ProcessHandle.current().pid());
+    }
+
+    /**
+     * このプログラムの控えを入れるフォルダ（番号＝プログラムの番号）。
+     * 起動したばかりなのに、同じ番号のフォルダがもうあれば、前に同じ番号だった別のプログラムの残したものなので、
+     * 使わずに「番号-2」などにする（使うと、ふつうに終了したときに、その控えをまとめて消してしまう）。
+     */
+    static Path freshFolder(Path root, long pid) {
+        Path folder = root.resolve(Long.toString(pid));
+        for (int n = 2; Files.exists(folder); n++) {
+            folder = root.resolve(pid + "-" + n);
+        }
+        return folder;
     }
 
     /** 未保存の文書を書き出し、保存済みになった文書や閉じた文書のぶんは消す。画面のスレッドから呼ぶ。 */
@@ -162,10 +175,11 @@ public final class Recovery {
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(root)) {
             for (Path folder : stream) {
                 String name = folder.getFileName().toString();
-                if (!Files.isDirectory(folder) || !name.matches("\\d+") || folder.equals(mine)) {
+                if (!Files.isDirectory(folder) || !name.matches("\\d+(-\\d+)?") || folder.equals(mine)) {
                     continue;
                 }
-                boolean alive = ProcessHandle.of(Long.parseLong(name))
+                long pid = Long.parseLong(name.contains("-") ? name.substring(0, name.indexOf('-')) : name);
+                boolean alive = ProcessHandle.of(pid)
                         .filter(ProcessHandle::isAlive)
                         .map(process -> sameProcess(folder, process))
                         .orElse(false);
