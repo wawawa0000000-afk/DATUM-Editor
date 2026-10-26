@@ -71,7 +71,8 @@ public abstract class EditorPane extends JPanel {
     private static int nextDocumentId = 1;
 
     /** 開いている文書を見分けるための番号。AI 連携で「どの文書か」を指定するのに使う。 */
-    private final int documentId = nextDocumentId++;
+    // 分割で同じ文書を映すタブは、同じ番号にする（どちらのタブを閉じても、AI や控えから見た番号が変わらないように）
+    private int documentId = nextDocumentId++;
     private Path path;
     private boolean dirty;
     private boolean rawFile;
@@ -144,6 +145,7 @@ public abstract class EditorPane extends JPanel {
         added.path = path;
         added.dirty = dirty;
         added.rawFile = rawFile;
+        added.documentId = documentId;
         return view;
     }
 

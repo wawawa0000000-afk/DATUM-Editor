@@ -91,6 +91,11 @@ public final class McpBridge {
             if (status != 200) {
                 return McpServer.textResult("エディタから、予想していない返事が来ました（HTTP " + status + "）。", true);
             }
+            if (connection.getHeaderField(McpService.MARK_HEADER) == null) {
+                // エディタが止まっている間に、別のプログラムが同じポートで待ち受けていることがある。その返事は AI に渡さない
+                return McpServer.textResult("そのポートで返事をしたのは DATUM-Editor ではありませんでした。"
+                        + "DATUM-Editor を起動して、「AI 連携 → MCP サーバーを動かす」を入れ直してください。", true);
+            }
             String text;
             try (InputStream response = connection.getInputStream()) {
                 text = new String(response.readAllBytes(), StandardCharsets.UTF_8);

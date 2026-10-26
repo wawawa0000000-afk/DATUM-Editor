@@ -17,6 +17,7 @@ import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import com.sun.net.httpserver.HttpExchange;
@@ -35,8 +36,8 @@ import com.sun.net.httpserver.HttpServer;
  */
 public final class McpService {
 
-    /** 返事に付ける印。ポートがふさがっているとき、相手が別の DATUM-Editor かどうかを見分けるのに使う。 */
-    private static final String MARK_HEADER = "X-Datum-Editor";
+    /** 返事に付ける印。ポートがふさがっているとき、相手が別の DATUM-Editor かどうかを見分けるのに使う（橋渡し役も確かめる）。 */
+    static final String MARK_HEADER = "X-Datum-Editor";
     private static final int MAX_BODY = 8 * 1024 * 1024;
 
     private final EditorFrame frame;
@@ -44,6 +45,7 @@ public final class McpService {
     // 画面のスレッドで書き換え、通信のスレッドから読むので、volatile にしている
     private volatile HttpServer http;
     private volatile McpServer server;
+    private ExecutorService workers;            // 通信を受け付けるスレッドの組（止めるときに片付ける）
 
     public McpService(EditorFrame frame) {
         this.frame = frame;
@@ -99,11 +101,12 @@ public final class McpService {
             throw new IOException("空いているポートが見つかりませんでした（" + settings.port + " 番から 10 個を試しました）");
         }
         created.createContext("/mcp", this::handle);
-        created.setExecutor(Executors.newFixedThreadPool(4, runnable -> {
+        workers = Executors.newFixedThreadPool(4, runnable -> {
             Thread thread = new Thread(runnable, "mcp-http");
             thread.setDaemon(true);         // エディタを閉じるとき、このスレッドが終了のじゃまをしないようにする
             return thread;
-        }));
+        });
+        created.setExecutor(workers);
         created.start();
         http = created;
         settings.enabled = true;
@@ -114,6 +117,10 @@ public final class McpService {
         if (http != null) {
             http.stop(0);
             http = null;
+        }
+        if (workers != null) {
+            workers.shutdownNow();          // 止めるたびにスレッドが残って、たまっていかないように
+            workers = null;
         }
         settings.enabled = false;
         try {

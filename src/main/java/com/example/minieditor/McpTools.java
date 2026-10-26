@@ -20,6 +20,7 @@ import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 import java.util.stream.Stream;
 
+import javax.swing.JOptionPane;
 import javax.swing.SwingUtilities;
 
 /**
@@ -29,8 +30,12 @@ import javax.swing.SwingUtilities;
  *   ・ファイルを扱うのは、利用者が選んだ「AI に任せるフォルダ」の中だけ（inWorkspace で必ず確かめる）。
  *   ・画面の部品は、決められたスレッド（EDT）からしか触れない。通信は別のスレッドで届くので、
  *     画面に触る所は ui(...) で包んで、EDT に実行を頼む。
- *   ・確認のダイアログは出さない（AI が返事を待っている間、エディタが止まってしまうため）。
+ *   ・確認のダイアログは、ふだんは出さない（AI が返事を待っている間、エディタが止まってしまうため）。
  *     かわりに、危ない操作は「何もせずにエラーを返す」ようにして、AI に理由を伝える。
+ *     ただし、取り戻せない操作（未保存の変更を捨てる・別のファイルを上書きする）だけは、
+ *     AI が「利用者に確かめた」と言ってきても、本当に利用者に聞く（原稿の中の偽の指示に従ってしまうことがあるため）。
+ *   ・名前が「.」で始まるファイルやフォルダ（.git など）は、読むことも書くこともできない。
+ *   ・文書の id は、同じ文書を分割で両側に出していても1つ（代表のタブの id）にそろえて伝える。
  */
 final class McpTools implements McpServer.Backend {
 
@@ -39,6 +44,10 @@ final class McpTools implements McpServer.Backend {
     private static final int MAX_LIST = 300;                        // 一覧に出す数の上限
     private static final String TRASH = ".datum-trash";             // 「ごみ箱」にするフォルダの名前
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+    private static final long SEARCH_MILLIS = 3000;                 // 探すのにかける時間の上限（正規表現が重すぎるとき）
+
+    // 道具は1つずつ実行する。MCP サーバー用と AI 会話欄用で McpTools は別々に作られるので、鍵は全体で1つにする
+    private static final Object LOCK = new Object();
 
     /** 頼まれたことができないときに投げる。メッセージは、そのまま AI に伝わる。 */
     static final class ToolException extends Exception {
@@ -61,9 +70,15 @@ final class McpTools implements McpServer.Backend {
         this.settings = settings;
     }
 
-    /** 道具を1つ実行する。同時に2つは実行しない（synchronized）。 */
+    /** 道具を1つ実行する。同時に2つは実行しない（MCP サーバーと AI 会話欄の両方から来ても）。 */
     @Override
-    public synchronized Map<String, Object> callTool(String name, Map<String, Object> a) {
+    public Map<String, Object> callTool(String name, Map<String, Object> a) {
+        synchronized (LOCK) {
+            return run(name, a);
+        }
+    }
+
+    private Map<String, Object> run(String name, Map<String, Object> a) {
         try {
             String text = switch (name) {
                 case "list_documents" -> listDocuments();
@@ -97,7 +112,7 @@ final class McpTools implements McpServer.Backend {
     private String listDocuments() throws ToolException, IOException {
         return ui(() -> {
             List<EditorPane> documents = frame.documents();
-            EditorPane active = frame.activeDocument();
+            EditorPane active = frame.activeDocument() == null ? null : frame.activeDocument().firstView();
             StringBuilder sb = new StringBuilder("開いている文書: " + documents.size()
                     + " 個（★ は、今いちばん手前に表示されている文書）\n");
             for (EditorPane pane : documents) {
@@ -285,6 +300,10 @@ final class McpTools implements McpServer.Backend {
                 throw new ToolException("「" + pane.getTitle() + "」には未保存の変更があります。先に save_document で保存するか、"
                         + "変更を捨ててよいと利用者に確かめたうえで discard_changes: true を付けてください。閉じていません。");
             }
+            if (pane.isDirty()) {
+                confirm("AI が「" + pane.getTitle() + "」を、保存していない変更を捨てて閉じようとしています。\n"
+                        + "閉じると、その変更は取り戻せません。閉じてよいですか？", "閉じていません。");
+            }
             String title = pane.getTitle();
             frame.closeDocumentSilently(pane);
             return "「" + title + "」を閉じました。";
@@ -313,27 +332,38 @@ final class McpTools implements McpServer.Backend {
 
         StringBuilder out = new StringBuilder();
         int[] count = {0};
+        long deadline = System.nanoTime() + SEARCH_MILLIS * 1_000_000;
         String where;
-        switch (scope) {
-            case "document" -> {
-                where = "指定した文書";
-                ui(() -> {
-                    EditorPane pane = pane(a);
-                    searchText("文書 " + describe(pane), textOf(pane), pattern, max, count, out);
-                    return null;
-                });
-            }
-            case "open" -> {
-                where = "開いている文書すべて";
-                ui(() -> {
-                    for (EditorPane pane : frame.documents()) {
-                        searchText("文書 " + describe(pane), textOf(pane), pattern, max, count, out);
+        try {
+            switch (scope) {
+                case "document" -> {
+                    where = "指定した文書";
+                    // 画面のスレッドでは本文の写しを取るだけにして、探すのはこのスレッドで行う（重い正規表現で画面が固まらないように）
+                    String[] found = ui(() -> {
+                        EditorPane pane = pane(a);
+                        return new String[]{"文書 " + describe(pane), textOf(pane)};
+                    });
+                    searchText(found[0], found[1], pattern, max, count, out, deadline);
+                }
+                case "open" -> {
+                    where = "開いている文書すべて";
+                    List<String[]> documents = ui(() -> {
+                        List<String[]> list = new ArrayList<>();
+                        for (EditorPane pane : frame.documents()) {
+                            list.add(new String[]{"文書 " + describe(pane), textOf(pane)});
+                        }
+                        return list;
+                    });
+                    for (String[] document : documents) {
+                        searchText(document[0], document[1], pattern, max, count, out, deadline);
                     }
-                    return null;
-                });
+                }
+                case "files" -> where = searchFiles(pattern, max, count, out, deadline);
+                default -> throw new ToolException("scope は document・open・files のどれかにしてください。");
             }
-            case "files" -> where = searchFiles(pattern, max, count, out);
-            default -> throw new ToolException("scope は document・open・files のどれかにしてください。");
+        } catch (TooSlow ex) {
+            throw new ToolException("探すのに時間がかかりすぎたので、途中でやめました（" + SEARCH_MILLIS / 1000 + " 秒まで）。"
+                    + "正規表現を簡単にするか、scope を狭めてください。");
         }
 
         String header = "「" + query + "」を " + where + " から探しました: ";
@@ -344,9 +374,10 @@ final class McpTools implements McpServer.Backend {
                 + "\n（【 】は見つかった所の印で、本文には入っていません）\n" + out;
     }
 
-    /** 1つの文章の中を探して、見つかった行を out に足す。 */
-    private static void searchText(String title, String text, Pattern pattern, int max, int[] count, StringBuilder out) {
-        Matcher matcher = pattern.matcher(text);
+    /** 1つの文章の中を探して、見つかった行を out に足す。deadline を過ぎたら TooSlow を投げてやめる。 */
+    private static void searchText(String title, String text, Pattern pattern, int max, int[] count, StringBuilder out,
+            long deadline) {
+        Matcher matcher = pattern.matcher(new Timed(text, deadline));
         boolean first = true;
         while (matcher.find()) {
             if (matcher.end() == matcher.start()) {
@@ -374,8 +405,53 @@ final class McpTools implements McpServer.Backend {
         }
     }
 
+    /** 探すのにかけてよい時間を過ぎた。 */
+    private static final class TooSlow extends RuntimeException {
+        TooSlow() {
+            super(null, null, false, false);
+        }
+    }
+
+    /**
+     * 締め切りのある文字列。正規表現の照合は、文字を1つ読むたびに charAt を呼ぶので、
+     * そこで時刻を確かめて、締め切りを過ぎていたら止める（Java の正規表現には、時間切れの仕組みがないため）。
+     */
+    private static final class Timed implements CharSequence {
+        private final CharSequence text;
+        private final long deadline;
+        private int reads;
+
+        Timed(CharSequence text, long deadline) {
+            this.text = text;
+            this.deadline = deadline;
+        }
+
+        @Override
+        public char charAt(int index) {
+            if ((++reads & 0xFFF) == 0 && System.nanoTime() > deadline) {   // 毎回は確かめない（時刻を読むのも手間なので）
+                throw new TooSlow();
+            }
+            return text.charAt(index);
+        }
+
+        @Override
+        public int length() {
+            return text.length();
+        }
+
+        @Override
+        public CharSequence subSequence(int start, int end) {
+            return new Timed(text.subSequence(start, end), deadline);
+        }
+
+        @Override
+        public String toString() {
+            return text.toString();
+        }
+    }
+
     /** AI に任せるフォルダの中のファイルを探す。戻り値は、探した範囲の説明。 */
-    private String searchFiles(Pattern pattern, int max, int[] count, StringBuilder out) throws ToolException, IOException {
+    private String searchFiles(Pattern pattern, int max, int[] count, StringBuilder out, long deadline) throws ToolException, IOException {
         Path root = root();
         List<Path> files = new ArrayList<>();
         try (Stream<Path> stream = Files.walk(root, 8)) {
@@ -393,7 +469,7 @@ final class McpTools implements McpServer.Backend {
                 if (Files.size(file) > MAX_FILE_BYTES) {
                     continue;
                 }
-                searchText("ファイル " + display(file), searchableContent(file), pattern, max, count, out);
+                searchText("ファイル " + display(file), searchableContent(file), pattern, max, count, out, deadline);
                 searched++;
             } catch (IOException ex) {
                 // 読めないファイル（文字コードが違う、など）は飛ばして、ほかを探し続ける
@@ -450,7 +526,7 @@ final class McpTools implements McpServer.Backend {
         return ui(() -> {
             try {
                 EditorPane pane = frame.openDocument(path, "vertical".equals(layout));
-                return "開きました: " + describe(pane) + "\n本文は read_document（id: " + pane.getDocumentId() + "）で読めます。";
+                return "開きました: " + describe(pane) + "\n本文は read_document（id: " + idOf(pane) + "）で読めます。";
             } catch (CharacterCodingException ex) {
                 throw new ToolException(display(path) + " は、UTF-8 の文章として読めませんでした（別の文字コードか、文章ではないファイルです）。");
             }
@@ -460,17 +536,34 @@ final class McpTools implements McpServer.Backend {
     private String saveDocument(Map<String, Object> a) throws ToolException, IOException {
         String rawPath = string(a, "path");
         // フォルダの中かどうかの確認は、画面のスレッドの外で先に済ませる（ディスクを見るので）
-        Path requested = rawPath == null ? null : inWorkspace(rawPath, false);
+        Path requested;
+        if (rawPath != null) {
+            requested = inWorkspace(rawPath, false);
+        } else {
+            // path を省いたときは、文書の今の保存先に書く。利用者がメニューから開いた、フォルダの外のファイルかもしれないので、確かめる
+            Path own = ui(() -> pane(a).getPath());
+            if (own == null) {
+                requested = null;
+            } else {
+                try {
+                    requested = inWorkspace(own.toString(), false);
+                } catch (ToolException ex) {
+                    throw new ToolException(own + " は「AI に任せるフォルダ」の外（または隠しフォルダの中）にあるので、"
+                            + "AI からは保存できません。書き換えた内容は画面に残っているので、利用者に保存してもらってください。");
+                }
+            }
+        }
         return ui(() -> {
             EditorPane pane = pane(a);
             Path target = requested;
             if (target == null) {
-                target = pane.getPath();
-                if (target == null) {
-                    throw new ToolException("「" + pane.getTitle() + "」には、まだ保存先がありません。path に保存先（例: 第一章.txt）を指定してください。");
-                }
-            } else {
+                throw new ToolException("「" + pane.getTitle() + "」には、まだ保存先がありません。path に保存先（例: 第一章.txt）を指定してください。");
+            }
+            if (rawPath != null) {
                 target = withExtension(target, pane);
+                if (!isTextFile(target)) {
+                    throw new ToolException("AI から保存できるのは .txt・.json・.md だけです: " + display(target) + "　保存していません。");
+                }
             }
             boolean cardBoard = pane.getMode() == EditorPane.Mode.BOARD;
             if (cardBoard && !EditorFrame.isJsonPath(target)) {
@@ -480,7 +573,7 @@ final class McpTools implements McpServer.Backend {
             if (changing) {
                 EditorPane other = frame.findOpenDocument(target);
                 if (other != null && other != pane) {
-                    throw new ToolException(display(target) + " は、別のタブ（id " + other.getDocumentId()
+                    throw new ToolException(display(target) + " は、別のタブ（id " + idOf(other)
                             + "）で開いています。同じファイルを2つの文書から保存することはできません。別の名前にしてください。");
                 }
                 if (Files.isDirectory(target)) {
@@ -490,12 +583,20 @@ final class McpTools implements McpServer.Backend {
                     throw new ToolException(display(target) + " は既にあります。上書きしてよいと利用者に確かめたうえで "
                             + "overwrite: true を付けるか、別の名前にしてください。保存していません。");
                 }
+                if (Files.exists(target)) {
+                    confirm("AI が「" + pane.getTitle() + "」の内容で、" + display(target) + " を上書きしようとしています。\n"
+                            + "上書きしてよいですか？", "保存していません。");
+                }
                 Files.createDirectories(target.getParent());
             }
 
-            if (!changing && fileService.changedOutside(target) && !flag(a, "overwrite")) {
-                throw new ToolException(display(target) + " は、開いたあとで、ほかのアプリによって変更されています。"
-                        + "上書きしてよいと利用者に確かめたうえで overwrite: true を付けてください。保存していません。");
+            if (!changing && fileService.changedOutside(target)) {
+                if (!flag(a, "overwrite")) {
+                    throw new ToolException(display(target) + " は、開いたあとで、ほかのアプリによって変更されています。"
+                            + "上書きしてよいと利用者に確かめたうえで overwrite: true を付けてください。保存していません。");
+                }
+                confirm(display(target) + " は、開いたあとで、ほかのアプリによって変更されています。\n"
+                        + "AI がそれを上書きしようとしています。上書きしてよいですか？（今の中身は、版の履歴に残します）", "保存していません。");
             }
             frame.keepDiskVersion(target);      // 上書きする前の中身を、版の履歴に残す
 
@@ -542,7 +643,9 @@ final class McpTools implements McpServer.Backend {
 
         List<Path> entries = new ArrayList<>();
         try (Stream<Path> stream = Files.walk(folder, flag(a, "recursive") ? 4 : 1)) {
-            stream.filter(p -> !p.equals(folder)).filter(p -> !isHidden(root, p)).sorted().forEach(entries::add);
+            // リンク（シンボリックリンク）は、フォルダの外を指していることがあるので、一覧に出さない
+            stream.filter(p -> !p.equals(folder)).filter(p -> !Files.isSymbolicLink(p))
+                    .filter(p -> !isHidden(root, p)).sorted().forEach(entries::add);
         }
         StringBuilder sb = new StringBuilder("フォルダ: " + (folder.equals(root) ? "（AI に任せるフォルダ）" + root : display(folder))
                 + "　" + entries.size() + " 個\n");
@@ -560,7 +663,7 @@ final class McpTools implements McpServer.Backend {
             sb.append("  ").append(display(entry)).append("　").append(size(Files.size(entry))).append("　").append(modified);
             EditorPane pane = open.get(entry);
             if (pane != null) {
-                sb.append("　（エディタで開いています: id ").append(pane.getDocumentId())
+                sb.append("　（エディタで開いています: id ").append(idOf(pane))
                         .append(pane.isDirty() ? "・未保存の変更あり" : "").append("）");
             }
             sb.append('\n');
@@ -585,7 +688,7 @@ final class McpTools implements McpServer.Backend {
         StringBuilder sb = new StringBuilder("ファイル: " + display(path) + "（" + size(Files.size(path)) + "）\n");
         EditorPane pane = openDocumentsByRealPath().get(path);
         if (pane != null) {
-            sb.append("※ エディタで開いています（id ").append(pane.getDocumentId()).append("）。")
+            sb.append("※ エディタで開いています（id ").append(idOf(pane)).append("）。")
                     .append(pane.isDirty() ? "未保存の変更があるので、最新の内容は read_document で読んでください。" : "")
                     .append("書き換えるときは edit_document を使います。\n");
         }
@@ -656,7 +759,7 @@ final class McpTools implements McpServer.Backend {
         }
         for (Map.Entry<Path, EditorPane> entry : openDocumentsByRealPath().entrySet()) {
             if (entry.getKey().startsWith(path)) {
-                throw new ToolException(display(entry.getKey()) + " は、エディタで開いています（id " + entry.getValue().getDocumentId()
+                throw new ToolException(display(entry.getKey()) + " は、エディタで開いています（id " + idOf(entry.getValue())
                         + "）。先に close_document で閉じてください。ごみ箱へは入れていません。");
             }
         }
@@ -719,6 +822,11 @@ final class McpTools implements McpServer.Backend {
         if (!real.startsWith(root)) {
             throw new ToolException("「AI に任せるフォルダ」の外は扱えません: " + raw + "\nフォルダ: " + root
                     + "\nこのフォルダからの相対パス（例: 第一章.txt）で指定してください。");
+        }
+        if (isHidden(root, real)) {
+            // .git や .bashrc などを書き換えられると、コマンドを仕込まれることがあるので、読み書きともに断る
+            throw new ToolException("名前が「.」で始まるファイルやフォルダ（隠しファイル。ごみ箱の " + TRASH + " も）は、"
+                    + "AI からは扱えません: " + raw);
         }
         if (mustExist && !Files.exists(real)) {
             throw new ToolException("見つかりません: " + raw + "（list_files で、あるファイルを確かめられます）");
@@ -823,19 +931,27 @@ final class McpTools implements McpServer.Backend {
 
     // ---------- こまかい道具 ----------
 
-    /** id で指定された文書（省略されていれば、今いちばん手前の文書）。画面のスレッドで呼ぶこと。 */
+    /**
+     * id で指定された文書（省略されていれば、今いちばん手前の文書）。画面のスレッドで呼ぶこと。
+     *
+     * 同じ文書を分割で両側に出しているときは、タブごとに id が違うので、どちらのタブの id でも受け付ける。
+     * 返すのは、利用者が今見ているタブがその文書ならそのタブ（選択範囲やカーソルが、見ているとおりになるように）、
+     * そうでなければ代表のタブ。AI に伝える id は、いつも代表のタブの id にそろえる（idOf）。
+     */
     private EditorPane pane(Map<String, Object> a) throws ToolException {
         Integer id = integer(a, "id");
+        EditorPane active = frame.activeDocument();
         if (id == null) {
-            EditorPane active = frame.activeDocument();
             if (active == null) {
                 throw new ToolException("開いている文書がありません。");
             }
             return active;
         }
         for (EditorPane pane : frame.documents()) {
-            if (pane.getDocumentId() == id) {
-                return pane;
+            boolean match = pane.getDocumentId() == id
+                    || pane.otherViews().stream().anyMatch(view -> view.getDocumentId() == id);
+            if (match) {
+                return active != null && active.firstView() == pane ? active : pane;
             }
         }
         throw new ToolException("id " + id + " の文書は開いていません（閉じられたか、番号が違います）。list_documents で確かめてください。");
@@ -843,9 +959,27 @@ final class McpTools implements McpServer.Backend {
 
     private String describe(EditorPane pane) {
         String amount = pane instanceof Searchable s ? String.format("%,d 文字", s.getText().length()) : pane.statusText().strip();
-        return "id " + pane.getDocumentId() + "「" + pane.getTitle() + "」" + pane.getMode().label + "・" + amount
+        return "id " + idOf(pane) + "「" + pane.getTitle() + "」" + pane.getMode().label + "・" + amount
                 + (pane.isDirty() ? "・未保存の変更あり" : "")
                 + (pane.getPath() == null ? "　（まだ保存されていません）" : "　" + display(pane.getPath()));
+    }
+
+    /** AI に伝える文書の id（分割で両側に出していても、代表のタブの id にそろえる）。 */
+    private static int idOf(EditorPane pane) {
+        return pane.firstView().getDocumentId();
+    }
+
+    /**
+     * 取り戻せない操作の前に、利用者に聞く。断られたら、AI にそう伝えて、何もしない。画面のスレッドで呼ぶこと。
+     *
+     * @param notDone 断られたときに AI へ伝える、「何をしなかったか」
+     */
+    private void confirm(String question, String notDone) throws ToolException {
+        int answer = JOptionPane.showConfirmDialog(frame, question, "AI からの確認",
+                JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+        if (answer != JOptionPane.YES_OPTION) {
+            throw new ToolException("利用者が断りました。" + notDone);
+        }
     }
 
     private static String textOf(EditorPane pane) {

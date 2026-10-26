@@ -211,7 +211,9 @@ public final class AiChatPanel extends JPanel {
 
     private void newConversation() {
         if (busy) {
-            stop();
+            // 作業中に始め直すと、裏で動いている前の会話の返事や続きが、新しい会話に混ざってしまう
+            append(Kind.INFO, "AI の作業中は、新しい会話を始められません。終わるのを待つか、「停止」を押してください。\n");
+            return;
         }
         if (backend != null) {
             backend.reset();
