@@ -41,6 +41,7 @@ public class ConnectionTest {
         bridge();
         lines();
         instance();
+        sender();
         System.out.println(failures == 0 ? "すべて通りました" : failures + " 件、失敗しました");
         System.exit(failures == 0 ? 0 : 1);
     }
@@ -100,15 +101,69 @@ public class ConnectionTest {
     /** 受け取り口に、いろいろなものを送ってみる。 */
     private static void instance() throws Exception {
         String token = "c".repeat(32);
-        check(send(token, token + "\n/tmp/a.txt\n\n").equals(List.of(Path.of("/tmp/a.txt"))), "合言葉が合えば、ファイルを受け取る");
+        String hello = "CHALLENGE " + CHALLENGE + "\n";     // 送る側が最初に送る行（受け取る側は、これに証明を返す）
+        check(send(token, hello + token + "\n/tmp/a.txt\n\n").equals(List.of(Path.of("/tmp/a.txt"))), "合言葉が合えば、ファイルを受け取る");
+        check(send(token, token + "\n/tmp/a.txt\n\n") == null, "乱数で始まらない相手（合言葉をいきなり送る）からは、受け取らない");
         check(send(token, "x".repeat(100_000) + "\n") == null, "とても長い1行目は、途中で読むのをやめる");
-        check(send(token, "d".repeat(32) + "\n/tmp/a.txt\n\n") == null, "合言葉が違えば、受け取らない");
-        StringBuilder many = new StringBuilder(token + "\n");
+        check(send(token, hello + "d".repeat(32) + "\n/tmp/a.txt\n\n") == null, "合言葉が違えば、受け取らない");
+        StringBuilder many = new StringBuilder(hello + token + "\n");
         for (int i = 0; i < 101; i++) {
             many.append("/tmp/").append(i).append(".txt\n");
         }
         check(send(token, many + "\n") == null, "多すぎるファイルは、受け取らない");
-        check(send(token, token + "\n/tmp/" + "y".repeat(5000) + "\n\n") == null, "長すぎる場所は、受け取らない");
+        check(send(token, hello + token + "\n/tmp/" + "y".repeat(5000) + "\n\n") == null, "長すぎる場所は、受け取らない");
+    }
+
+    /** 送る側（sendTo）を、本物の受け取り口と、偽物の待ち受けにつないでみる。 */
+    private static void sender() throws Exception {
+        String token = "e".repeat(32);
+        List<List<Path>> opened = new ArrayList<>();
+        try (ServerSocket server = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+            Thread receiver = new Thread(() -> {
+                try (Socket socket = server.accept()) {
+                    SingleInstance.receive(socket, token, opened::add);
+                } catch (IOException ex) {
+                    // 下の check で失敗がわかる
+                }
+            });
+            receiver.start();
+            boolean sent = SingleInstance.sendTo(server.getLocalPort(), token, List.of(Path.of("/tmp/b.txt")));
+            receiver.join(5000);
+            javax.swing.SwingUtilities.invokeAndWait(() -> { });
+            check(sent && opened.equals(List.of(List.of(Path.of("/tmp/b.txt")))), "本物どうしなら、ファイルを渡せる");
+        }
+        for (String answer : new String[]{null, "PROOF " + "0".repeat(64)}) {
+            StringBuilder got = new StringBuilder();
+            try (ServerSocket fake = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+                Thread impostor = new Thread(() -> {
+                    try (Socket socket = fake.accept()) {
+                        socket.setSoTimeout(2000);
+                        java.io.Reader in = new java.io.InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8);
+                        got.append(SingleInstance.readLine(in, 200, System.nanoTime() + 2_000_000_000L));
+                        if (answer != null) {
+                            socket.getOutputStream().write((answer + "\n").getBytes(StandardCharsets.UTF_8));
+                        }
+                        int c;
+                        while ((c = in.read()) >= 0) {
+                            got.append((char) c);    // そのあとに送られてきたものも、全部覚えておく
+                        }
+                    } catch (IOException ex) {
+                        // 送る側が切ったときなど
+                    }
+                });
+                impostor.start();
+                boolean sent;
+                try {
+                    sent = SingleInstance.sendTo(fake.getLocalPort(), token, List.of(Path.of("/tmp/秘密.txt")));
+                } catch (IOException ex) {
+                    sent = false;           // 返事がなくて時間切れになった
+                }
+                impostor.join(5000);
+                String label = answer == null ? "証明を返さない" : "でたらめな証明を返す";
+                check(!sent, label + "相手には、渡したことにしない");
+                check(got.indexOf(token) < 0 && got.indexOf("秘密") < 0, label + "相手には、合言葉もファイルの場所も送らない");
+            }
+        }
     }
 
     /** 受け取り口に data を送り、受け取られたファイルの一覧を返す（受け取られなければ null）。 */

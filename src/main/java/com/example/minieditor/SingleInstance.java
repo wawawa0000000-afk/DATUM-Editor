@@ -1,6 +1,5 @@
 package com.example.minieditor;
 
-import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
@@ -31,12 +30,20 @@ import javax.swing.SwingUtilities;
  * ポート番号と合言葉を設定フォルダの instance.json に書いておく。
  * あとから起動したほうは、それを読んで、合言葉とファイルの場所を1行ずつ送り、「OK」が返ってきたら終わる。
  * 届かなければ（エディタが動いていない・前回の書き置きが古い）、ふつうに起動する。
+ *
+ * エディタが閉じたあとで、別のプログラムが同じポートで待ち受けていることがあるので、合言葉を送る前に、
+ * 相手が本物かを確かめる（AI 連携の橋渡し役と同じやり方）：
+ *   送る側  →「CHALLENGE 乱数」
+ *   受ける側 →「PROOF 証明」（合言葉と乱数から作る。McpService.proof）
+ *   証明が合ったときだけ、送る側は合言葉とファイルの場所を送る。
  */
 final class SingleInstance {
 
     // 受け取る量の上限。同じパソコンのほかの利用者もこの口につなげるので、送られ続けても、
     // メモリがあふれたり、待ち受けを占められたりしないようにする
-    private static final int MAX_TOKEN = 64;            // 合言葉の行（本物は 32 文字）
+    private static final int MAX_TOKEN = 80;            // 最初の2行（「CHALLENGE 乱数」は 74 文字、合言葉は 32 文字）
+    private static final String CHALLENGE = "CHALLENGE ";
+    private static final String PROOF = "PROOF ";
     private static final int MAX_PATH = 4096;           // ファイルの場所1行
     private static final int MAX_FILES = 100;           // 一度に開くファイルの数
     private static final long RECEIVE_MILLIS = 5000;    // 1つの受け取りにかけてよい時間
@@ -62,21 +69,43 @@ final class SingleInstance {
             if (port <= 0 || token == null) {
                 return false;
             }
-            try (Socket socket = new Socket()) {
-                socket.connect(new InetSocketAddress(InetAddress.getLoopbackAddress(), port), 1000);
-                socket.setSoTimeout(3000);
-                Writer out = new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8);
-                out.write(token + "\n");
-                for (Path path : files) {
-                    out.write(path + "\n");
-                }
-                out.write("\n");                // 空の行が、送り終わりの印
-                out.flush();
-                BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
-                return "OK".equals(in.readLine());
-            }
+            return sendTo(port, token, files);
         } catch (IOException | Json.JsonException ex) {
             return false;                       // 届かなければ、自分で開く
+        }
+    }
+
+    /** port で待ち受けている本物のエディタに、files を開いてもらう。相手を確かめられなければ、合言葉を送らずに false。 */
+    static boolean sendTo(int port, String token, List<Path> files) throws IOException {
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress(InetAddress.getLoopbackAddress(), port), 1000);
+            socket.setSoTimeout(3000);
+            long deadline = System.nanoTime() + RECEIVE_MILLIS * 1_000_000;
+            Writer out = new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8);
+            Reader in = new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8);
+
+            // 1) 乱数を送って、合言葉を知っている相手かを確かめる（まだ合言葉は送らない）
+            byte[] random = new byte[32];
+            new SecureRandom().nextBytes(random);
+            String challenge = HexFormat.of().formatHex(random);
+            out.write(CHALLENGE + challenge + "\n");
+            out.flush();
+            String reply = readLine(in, MAX_TOKEN, deadline);
+            String expected = McpService.proof(token, challenge);
+            if (reply == null || !reply.startsWith(PROOF) || expected == null
+                    || !MessageDigest.isEqual(reply.substring(PROOF.length()).getBytes(StandardCharsets.UTF_8),
+                            expected.getBytes(StandardCharsets.UTF_8))) {
+                return false;                   // 本物のエディタではない（または古い）。自分で開く
+            }
+
+            // 2) 本物とわかったので、合言葉とファイルの場所を送る
+            out.write(token + "\n");
+            for (Path path : files) {
+                out.write(path + "\n");
+            }
+            out.write("\n");                    // 空の行が、送り終わりの印
+            out.flush();
+            return "OK".equals(readLine(in, MAX_TOKEN, deadline));
         }
     }
 
@@ -109,6 +138,18 @@ final class SingleInstance {
         socket.setSoTimeout(3000);
         long deadline = System.nanoTime() + RECEIVE_MILLIS * 1_000_000;
         Reader in = new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8);
+        Writer out = new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8);
+        // 1) 送る側が、こちらが本物かを確かめに来る。合言葉と乱数から作った証明を返す（合言葉そのものは出さない）
+        String hello = readLine(in, MAX_TOKEN, deadline);
+        String proof = hello == null || !hello.startsWith(CHALLENGE) ? null
+                : McpService.proof(token, hello.substring(CHALLENGE.length()));
+        if (proof == null) {
+            return;                             // 決まった形で始まらない相手には、何もしない
+        }
+        out.write(PROOF + proof + "\n");
+        out.flush();
+
+        // 2) 合言葉とファイルの場所を受け取る
         String first = readLine(in, MAX_TOKEN, deadline);
         if (first == null || !MessageDigest.isEqual(first.getBytes(StandardCharsets.UTF_8), token.getBytes(StandardCharsets.UTF_8))) {
             return;                             // 合言葉が違う相手には、何もしない
@@ -128,7 +169,6 @@ final class SingleInstance {
         if (line == null) {
             return;                             // 長すぎる行・時間切れ・途中で切れた：送り終わりの印（空の行）が来ていない
         }
-        Writer out = new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8);
         out.write("OK\n");
         out.flush();
         SwingUtilities.invokeLater(() -> open.accept(files));
