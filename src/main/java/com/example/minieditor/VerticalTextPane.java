@@ -155,6 +155,30 @@ public class VerticalTextPane extends EditorPane implements Searchable {
         this(font, new Shared());
     }
 
+    // 文書の見張り（同じ文書を映していたタブを閉じたときに外せるよう、名前を付けて持つ）
+    private final DocumentListener documentListener = new DocumentListener() {
+        public void insertUpdate(DocumentEvent e) {
+            if (isActiveView()) {
+                documentChanged(e.getOffset() + e.getLength());
+            } else {
+                // ほかのタブで書き換えられたときは、カーソルを動かさず、文字が増えたぶんだけずらす
+                documentChanged(shifted(caret, e.getOffset(), e.getLength()));
+            }
+        }
+
+        public void removeUpdate(DocumentEvent e) {
+            if (isActiveView()) {
+                documentChanged(e.getOffset());
+            } else {
+                documentChanged(shifted(caret, e.getOffset(), -e.getLength()));
+            }
+        }
+
+        public void changedUpdate(DocumentEvent e) {
+            attributesChanged();    // ルビ（属性）が付いた・外れた
+        }
+    };
+
     private VerticalTextPane(Font font, Shared shared) {
         this.shared = shared;
         doc = shared.doc;
@@ -164,28 +188,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
         }
         view.setFont(font);
 
-        doc.addDocumentListener(new DocumentListener() {
-            public void insertUpdate(DocumentEvent e) {
-                if (shared.active == VerticalTextPane.this) {
-                    documentChanged(e.getOffset() + e.getLength());
-                } else {
-                    // ほかのタブで書き換えられたときは、カーソルを動かさず、文字が増えたぶんだけずらす
-                    documentChanged(shifted(caret, e.getOffset(), e.getLength()));
-                }
-            }
-
-            public void removeUpdate(DocumentEvent e) {
-                if (shared.active == VerticalTextPane.this) {
-                    documentChanged(e.getOffset());
-                } else {
-                    documentChanged(shifted(caret, e.getOffset(), -e.getLength()));
-                }
-            }
-
-            public void changedUpdate(DocumentEvent e) {
-                attributesChanged();    // ルビ（属性）が付いた・外れた
-            }
-        });
+        doc.addDocumentListener(documentListener);
         scrollPane.setBorder(null);
         scrollPane.getViewport().setBackground(Theme.BG);
         // 縦書きは左へ読み進めるので、ホイール（タッチパッドの上下）を下に回したら左へ動かす
@@ -221,6 +224,19 @@ public class VerticalTextPane extends EditorPane implements Searchable {
         other.documentChanged(Math.min(caret, text.length()));     // 今の中身を、新しいタブの写しにも入れる
         shared.loading = wasLoading;
         return linkView(other);
+    }
+
+    /** 書き換えた所へカーソルを動かすタブか（最後に打っていたタブ。そのタブが閉じられたあとは、残ったタブ）。 */
+    private boolean isActiveView() {
+        return shared.active == this || shared.active == null;
+    }
+
+    @Override
+    protected void detachShared() {
+        doc.removeDocumentListener(documentListener);
+        if (shared.active == this) {
+            shared.active = null;
+        }
     }
 
     /** offset の所で文字が delta 個増えた（負なら減った）ときの、position の新しい位置。 */

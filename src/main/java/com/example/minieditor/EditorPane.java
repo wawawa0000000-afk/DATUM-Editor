@@ -149,9 +149,20 @@ public abstract class EditorPane extends JPanel {
 
     /** タブを閉じたときに呼ぶ。ほかのタブとの共有をやめる（文書の中身は、残ったタブが持ち続ける）。 */
     public void unlinkView() {
+        boolean shared = views.size() > 1;
         views.remove(this);
         views = new ArrayList<>(List.of(this));
-        listener = null;                // 閉じたタブからは、もう知らせない（共有していた文章の変化が届いても）
+        listener = null;                // 閉じたタブからは、もう知らせない
+        if (shared) {
+            detachShared();
+        }
+    }
+
+    /**
+     * 同じ文書を映していたタブを閉じたときに呼ばれる。共有している中身に付けた見張り（リスナー）を外す。
+     * 外さないと、閉じたタブが残ったタブの中身につながったままになり、捨てられずに残り続ける。
+     */
+    protected void detachShared() {
     }
 
     /** 同じ文書を映している、ほかのタブ。 */

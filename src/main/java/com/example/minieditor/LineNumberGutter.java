@@ -26,24 +26,26 @@ public class LineNumberGutter extends JComponent {
 
     private final JTextArea area;
 
+    private final DocumentListener documentListener = new DocumentListener() {
+        public void insertUpdate(DocumentEvent e) {
+            refresh();
+        }
+
+        public void removeUpdate(DocumentEvent e) {
+            refresh();
+        }
+
+        public void changedUpdate(DocumentEvent e) {
+            refresh();
+        }
+    };
+
     public LineNumberGutter(JTextArea area) {
         this.area = area;
         setOpaque(true);
 
         // 行数・カーソル・大きさ・フォントが変わったら、描き直す
-        area.getDocument().addDocumentListener(new DocumentListener() {
-            public void insertUpdate(DocumentEvent e) {
-                refresh();
-            }
-
-            public void removeUpdate(DocumentEvent e) {
-                refresh();
-            }
-
-            public void changedUpdate(DocumentEvent e) {
-                refresh();
-            }
-        });
+        area.getDocument().addDocumentListener(documentListener);
         area.addCaretListener(e -> repaint());
         area.addComponentListener(new ComponentAdapter() {
             @Override
@@ -52,6 +54,11 @@ public class LineNumberGutter extends JComponent {
             }
         });
         area.addPropertyChangeListener("font", e -> refresh());
+    }
+
+    /** 文書の見張りを外す（同じ文書を映していたタブを閉じたとき）。 */
+    public void detach() {
+        area.getDocument().removeDocumentListener(documentListener);
     }
 
     private void refresh() {

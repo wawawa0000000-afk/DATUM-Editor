@@ -55,6 +55,18 @@ public class TextEditorPane extends EditorPane implements Searchable {
     private final StripedTextArea area = new StripedTextArea();
     private final Shared shared;
     private final List<Object> highlightTags = new ArrayList<>();
+    private final DocumentListener documentListener = new DocumentListener() {
+        public void insertUpdate(DocumentEvent e) {
+            changed();
+        }
+
+        public void removeUpdate(DocumentEvent e) {
+            changed();
+        }
+
+        public void changedUpdate(DocumentEvent e) {
+        }
+    };
     private final JScrollPane scrollPane;
     private final LineNumberGutter gutter;
     private boolean focusMode;          // 集中モード（文字の列を中央に寄せ、カーソルの行を画面の真ん中に保つ）
@@ -73,18 +85,7 @@ public class TextEditorPane extends EditorPane implements Searchable {
             shared = new Shared(area.getDocument());
         }
 
-        area.getDocument().addDocumentListener(new DocumentListener() {
-            public void insertUpdate(DocumentEvent e) {
-                changed();
-            }
-
-            public void removeUpdate(DocumentEvent e) {
-                changed();
-            }
-
-            public void changedUpdate(DocumentEvent e) {
-            }
-        });
+        area.getDocument().addDocumentListener(documentListener);
         area.addCaretListener(e -> {
             area.repaint();             // カーソルのある行の強調を描き直す
             fireStatusChanged();
@@ -130,6 +131,13 @@ public class TextEditorPane extends EditorPane implements Searchable {
         view.setWrap(isWrap());
         view.area.setCaretPosition(Math.min(area.getCaretPosition(), area.getDocument().getLength()));
         return linkView(view);
+    }
+
+    @Override
+    protected void detachShared() {
+        area.getDocument().removeDocumentListener(documentListener);
+        gutter.detach();
+        area.setDocument(new javax.swing.text.PlainDocument());    // JTextArea 自身が付けた見張りも、共有の文書から外れる
     }
 
     private void changed() {
