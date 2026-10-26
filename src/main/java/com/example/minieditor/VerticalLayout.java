@@ -198,6 +198,9 @@ public final class VerticalLayout {
             return false;
         }
         char ch = text.charAt(i);
+        if (ch == '\n') {
+            return false;               // 改行は、前の文字（絵文字をつなぐ印など）にくっつけない
+        }
         if (Character.isLowSurrogate(ch)) {
             return Character.isHighSurrogate(text.charAt(i - 1));
         }

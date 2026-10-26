@@ -65,6 +65,8 @@ public class LayoutTest {
 
     /** 異体字セレクタや結合文字は、前の文字と同じマスに入る（1マスを取らず、カーソルも途中に止めない）。 */
     private static void clusters() {
+        VerticalLayout z = layout("あ\u200D\nい", 20);
+        check(z.col[3] == 1 && z.row[3] == 0, "ZWJ のすぐ後ろの改行は、くっつけずに改行する");
         String ivs = "葛\uDB40\uDD00城";              // 葛 + 異体字セレクタ（U+E0100、サロゲートペア）
         VerticalLayout a = layout(ivs, 20);
         check(a.col[1] == 0 && a.row[1] == 0 && a.row[2] == 0 && a.row[3] == 1, "異体字セレクタは、前の字と同じマス");
