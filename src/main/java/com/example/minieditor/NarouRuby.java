@@ -122,10 +122,24 @@ public final class NarouRuby {
                 continue;
             }
             sb.append(text, position, run.baseStart());
-            sb.append(format(text.substring(run.baseStart(), run.baseEnd()), run.ruby()));
+            String base = text.substring(run.baseStart(), run.baseEnd());
+            // 読み戻せない記法を書くと、開き直したときに記号が本文に残ったり、文字が入れ替わったりするので、
+            // そのときはルビを付けずに、親文字だけを書く
+            sb.append(fits(base, run.ruby()) ? format(base, run.ruby()) : base);
             position = run.baseEnd();
         }
         return sb.append(text, position, to).toString();
+    }
+
+    /**
+     * その親文字とルビを記法にして、そのまま読み戻せるか（長すぎない、｜《》かっこ・改行を含まない）。
+     * 文字数は、読み取るときと同じく char の数で数える（𠮷 のような字は 2 と数える）。
+     */
+    public static boolean fits(String base, String ruby) {
+        List<Span> spans = parse(format(base, ruby));
+        return spans.size() == 1 && spans.get(0).start() == 0
+                && spans.get(0).baseEnd() - spans.get(0).baseStart() == base.length()
+                && spans.get(0).rubyEnd() - spans.get(0).rubyStart() == ruby.length();
     }
 
     /** ルビの記法を組み立てる。 */

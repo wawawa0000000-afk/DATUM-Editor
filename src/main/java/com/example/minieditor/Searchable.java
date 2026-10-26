@@ -27,9 +27,6 @@ public interface Searchable {
     /** 選んでいる範囲の終わり。選んでいないときは、カーソルの位置。 */
     int getSelectionEnd();
 
-    /** 全文を入れ替える（「元に戻す」1回で戻せるようにする）。 */
-    void replaceAllText(String text);
-
     /** 置き換え1つぶん：start〜end を text に置き換える（位置は、置き換える前の文章での位置）。 */
     record Replacement(int start, int end, String text) {
     }

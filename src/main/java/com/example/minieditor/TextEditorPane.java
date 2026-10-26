@@ -382,13 +382,6 @@ public class TextEditorPane extends EditorPane implements Searchable {
     }
 
     @Override
-    public void replaceAllText(String text) {
-        shared.compound = new CompoundEdit();
-        area.setText(text);
-        finishCompound();
-    }
-
-    @Override
     public void replaceRanges(List<Replacement> replacements) {
         // 後ろにあるものから直す（前から直すと、文字数が変わって、後ろの位置がずれてしまうため）
         List<Replacement> sorted = new ArrayList<>(replacements);

@@ -391,23 +391,22 @@ public class FindBar extends JPanel {
             return;
         }
 
-        // 置き換えながら、新しい文章の中での「置き換えた場所」を覚えておく
+        // 見つけた場所だけを置き換える（全文を入れ替えると、縦書きのルビや傍点が外れてしまうため）。
+        // あわせて、置き換えたあとの文章の中での「置き換えた場所」を覚えておく
         String replacement = replaceField.getText();
-        StringBuilder result = new StringBuilder();
+        List<Searchable.Replacement> replacements = new ArrayList<>();
         replaced.clear();
-        int cursor = 0;
+        int shift = 0;                  // それまでの置き換えで、位置がどれだけずれたか
         for (int pos : positions) {
-            result.append(text, cursor, pos);
+            replacements.add(new Searchable.Replacement(pos, pos + keyword.length(), replacement));
             if (!replacement.isEmpty()) {
-                replaced.add(new int[]{result.length(), result.length() + replacement.length()});
+                replaced.add(new int[]{pos + shift, pos + shift + replacement.length()});
             }
-            result.append(replacement);
-            cursor = pos + keyword.length();
+            shift += replacement.length() - keyword.length();
         }
-        result.append(text.substring(cursor));
 
         internalEdit = true;
-        s.replaceAllText(result.toString());
+        s.replaceRanges(replacements);
         internalEdit = false;
         lastStart = 0;
         lastEnd = 0;

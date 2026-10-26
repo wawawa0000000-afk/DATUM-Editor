@@ -374,6 +374,10 @@ public class VerticalTextPane extends EditorPane implements Searchable {
         Object before = doc.getCharacterElement(position - 1).getAttributes().getAttribute(RUBY);
         Object after = doc.getCharacterElement(position).getAttributes().getAttribute(RUBY);
         if (before != null && before == after) {
+            VerticalLayout.RubyRun run = runAt(position, false);
+            if (run != null && !NarouRuby.fits(text.substring(run.baseStart(), run.baseEnd()) + inserted, run.ruby())) {
+                return SimpleAttributeSet.EMPTY;    // 伸ばすと保存できない長さや文字になるときは、ルビの外の文字にする
+            }
             SimpleAttributeSet attributes = new SimpleAttributeSet();
             attributes.addAttribute(RUBY, before);
             return attributes;
@@ -988,11 +992,6 @@ public class VerticalTextPane extends EditorPane implements Searchable {
     }
 
     @Override
-    public void replaceAllText(String newText) {
-        replace(0, text.length(), newText);
-    }
-
-    @Override
     public void replaceRanges(List<Replacement> replacements) {
         // 後ろにあるものから直す（前から直すと、文字数が変わって、後ろの位置がずれてしまうため）
         List<Replacement> sorted = new ArrayList<>(replacements);
@@ -1062,8 +1061,12 @@ public class VerticalTextPane extends EditorPane implements Searchable {
             fireMessage("ルビは、1行の中の文字に振れます");
             return;
         }
-        if (base.codePointCount(0, base.length()) > NarouRuby.MAX_LENGTH) {
+        if (base.length() > NarouRuby.MAX_LENGTH) {
             fireMessage("ルビを振れるのは " + NarouRuby.MAX_LENGTH + " 文字までです（小説家になろうの決まり）");
+            return;
+        }
+        if (!NarouRuby.fits(base, "あ")) {
+            fireMessage("｜ 《 》 （ ( を含む文字には、ルビを振れません");
             return;
         }
         openRubyField(start, end, current);
@@ -1133,12 +1136,12 @@ public class VerticalTextPane extends EditorPane implements Searchable {
             return;
         }
         String ruby = field.getText().strip();
-        if (ruby.codePointCount(0, ruby.length()) > NarouRuby.MAX_LENGTH) {
+        if (ruby.length() > NarouRuby.MAX_LENGTH) {
             fireMessage("ふりがなは " + NarouRuby.MAX_LENGTH + " 文字までです（小説家になろうの決まり）。付けませんでした");
             return;
         }
-        if (ruby.contains("《") || ruby.contains("》") || ruby.contains("｜") || ruby.contains("|")) {
-            fireMessage("ふりがなに ｜ 《 》 は使えません。付けませんでした");
+        if (!ruby.isEmpty() && !NarouRuby.fits("字", ruby)) {
+            fireMessage("ふりがなに ｜ 《 》 （ ( は使えません。付けませんでした");
             return;
         }
         VerticalLayout.RubyRun existing = runAt(rubyEditStart, false);

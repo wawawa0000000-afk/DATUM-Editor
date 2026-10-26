@@ -2649,10 +2649,6 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         return null;
     }
 
-    private static int length(String s) {
-        return s.codePointCount(0, s.length());
-    }
-
     /** 選んだ文字にルビを振る。何も選ばずにルビの上で実行したときは、そのルビを書き直す。 */
     private void editRuby() {
         if (currentPane() instanceof VerticalTextPane vertical) {
@@ -2682,8 +2678,12 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             flash("ルビは、1行の中の文字に振れます");
             return;
         }
-        if (length(base) > NarouRuby.MAX_LENGTH) {
+        if (base.length() > NarouRuby.MAX_LENGTH) {
             flash("ルビを振れるのは " + NarouRuby.MAX_LENGTH + " 文字までです（小説家になろうの決まり）");
+            return;
+        }
+        if (!NarouRuby.fits(base, "あ")) {
+            flash("｜ 《 》 （ ( を含む文字には、ルビを振れません");
             return;
         }
         Object answer = JOptionPane.showInputDialog(this, "「" + base + "」のふりがな（空にすると、ルビを外します）",
@@ -2693,8 +2693,8 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             return;                     // キャンセル
         }
         String ruby = answer.toString().strip();
-        if (length(ruby) > NarouRuby.MAX_LENGTH || ruby.contains("》") || ruby.contains("《")) {
-            flash("ふりがなは " + NarouRuby.MAX_LENGTH + " 文字までで、《 》 は使えません");
+        if (!ruby.isEmpty() && !NarouRuby.fits(base, ruby)) {
+            flash("ふりがなは " + NarouRuby.MAX_LENGTH + " 文字までで、｜ 《 》 （ ( は使えません");
             return;
         }
         target.replaceRange(ruby.isEmpty() ? base : NarouRuby.format(base, ruby), start, end);
