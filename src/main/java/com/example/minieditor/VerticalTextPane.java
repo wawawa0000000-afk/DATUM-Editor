@@ -585,9 +585,14 @@ public class VerticalTextPane extends EditorPane implements Searchable {
         }
     }
 
-    /** カーソルが動くと、ルビが開いたり閉じたりして配置が変わるので、並べ直しを予約する。 */
+    /**
+     * カーソルが動いたとき。並べ直しが要るのは、変換中の文字があるときだけ（カーソルの位置にはさんで並べるため）。
+     * 変換中の文字がなければ、配置はカーソルに関係ないので、長い原稿でも矢印キーのたびに全文を並べ直さない。
+     */
     private void caretMoved() {
-        layoutDirty = true;
+        if (!composed.isEmpty()) {
+            layoutDirty = true;
+        }
         view.revalidate();
     }
 
@@ -743,6 +748,21 @@ public class VerticalTextPane extends EditorPane implements Searchable {
         colOf = layout.col;
         rowOf = layout.row;
         totalCols = layout.totalColumns;
+    }
+
+    /** column 列目（またはそれより後ろの列）にある最初の文字。文字は列の順に並んでいるので、半分ずつ探す。 */
+    private int firstIndexInColumn(int column, int length) {
+        int low = 0;
+        int high = Math.min(length, colOf.length);
+        while (low < high) {
+            int middle = (low + high) >>> 1;
+            if (colOf[middle] < column) {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        return low;
     }
 
     /** 画面に出す文章。変換中の文字があれば、カーソルの位置にはさむ。 */
@@ -1612,8 +1632,21 @@ public class VerticalTextPane extends EditorPane implements Searchable {
             Font font = getFont().deriveFont((float) size);
             g2.setFont(font);
             FontMetrics fm = g2.getFontMetrics();
+            // 見えている列だけを描く（カーソルの点滅のたびに、長い原稿の全文をたどらないように）。
+            // 列は右から数え、文字は列の順に並んでいるので、見えている最初の列の文字から始めて、最後の列を過ぎたらやめる
+            int firstVisible = totalCols;
+            int lastVisible = -1;
+            for (int col = 0; col < totalCols; col++) {
+                int x = columnLeft(col);
+                if (x <= clip.x + clip.width && x + columnWidth >= clip.x) {
+                    firstVisible = Math.min(firstVisible, col);
+                    lastVisible = Math.max(lastVisible, col);
+                }
+            }
+            int fromColumn = Math.max(0, firstVisible - 1);     // 前後1列は余分に（はみ出す句読点・ルビのため）
+            int toColumn = lastVisible + 1;
             int length = shownText().length();
-            for (int i = 0; i < length; i++) {
+            for (int i = firstIndexInColumn(fromColumn, length); i < length && colOf[i] <= toColumn; i++) {
                 if (!layout.isDrawn(i)) {
                     continue;
                 }
@@ -1644,7 +1677,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
                 public double centerY(int row) {
                     return margin() + (row + 0.5) * cellHeight();
                 }
-            }, cellHeight(), size, rubyOffset, 0, totalCols);
+            }, cellHeight(), size, rubyOffset, fromColumn, toColumn);
 
             // カーソル（文字の上に引く横線）
             if (isFocusOwner() && caretVisible) {
