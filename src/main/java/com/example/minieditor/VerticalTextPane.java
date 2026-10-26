@@ -371,10 +371,12 @@ public class VerticalTextPane extends EditorPane implements Searchable {
             change.run();
         } catch (BadLocationException ex) {
             // 範囲は呼び出し側で文書の中に収めているので、通常は起きない
+        } finally {
+            // 途中で思わぬ失敗があっても、まとめるのをやめる（「元に戻す」が効かなくならないように）
+            shared.compound.end();
+            undoManager.addEdit(shared.compound);
+            shared.compound = null;
         }
-        shared.compound.end();
-        undoManager.addEdit(shared.compound);
-        shared.compound = null;
     }
 
     private interface DocumentChange {

@@ -1981,6 +1981,13 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             name = name + "." + extension;
         }
         Path path = Path.of(name).toAbsolutePath();
+        EditorPane open = findOpenDocument(path);
+        if (open != null && open.firstView() != pane.firstView()) {
+            // 別のタブで開いているファイルに保存すると、あとでそのタブを保存したときに、こちらの中身が消えてしまう
+            JOptionPane.showMessageDialog(this, "「" + path.getFileName() + "」は、別のタブで開いています。\n"
+                    + "そのタブを閉じてから保存するか、別の名前を付けてください。", "保存できません", JOptionPane.WARNING_MESSAGE);
+            return false;
+        }
         if (!path.equals(pane.getPath()) && !confirmOverwrite(path)) {
             return false;
         }

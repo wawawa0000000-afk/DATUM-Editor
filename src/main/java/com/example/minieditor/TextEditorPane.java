@@ -243,7 +243,7 @@ public class TextEditorPane extends EditorPane implements Searchable {
         Map<String, Object> json = baseJson();
         json.put("fontName", area.getFont().getFamily());
         json.put("fontSize", Theme.unzoomed(area.getFont().getSize()));   // 等倍のときの大きさで保存する
-        json.put("wrap", area.getLineWrap());
+        json.put("wrap", focusMode ? wrapBeforeFocus : area.getLineWrap());     // 集中モードの折り返しは、一時的なものなので保存しない
         json.put("text", area.getText());
         return json;
     }
@@ -375,8 +375,11 @@ public class TextEditorPane extends EditorPane implements Searchable {
     @Override
     public void replaceRange(String replacement, int start, int end) {
         shared.compound = new CompoundEdit();
-        area.replaceRange(replacement, start, end);
-        finishCompound();
+        try {
+            area.replaceRange(replacement, start, end);
+        } finally {
+            finishCompound();           // 途中で失敗しても、まとめるのをやめる（「元に戻す」が効かなくならないように）
+        }
     }
 
     @Override
@@ -395,10 +398,13 @@ public class TextEditorPane extends EditorPane implements Searchable {
         List<Replacement> sorted = new ArrayList<>(replacements);
         sorted.sort(Comparator.comparingInt(Replacement::start).reversed());
         shared.compound = new CompoundEdit();
-        for (Replacement r : sorted) {
-            area.replaceRange(r.text(), r.start(), r.end());
+        try {
+            for (Replacement r : sorted) {
+                area.replaceRange(r.text(), r.start(), r.end());
+            }
+        } finally {
+            finishCompound();
         }
-        finishCompound();
     }
 
     private void finishCompound() {
