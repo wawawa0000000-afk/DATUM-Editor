@@ -2419,8 +2419,9 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         if (!appSettings.getBool(AppSettings.AUTO_COMMAND, false)) {
             return;
         }
+        String previous = appSettings.getString(AppSettings.COMMAND_DIR, null);  // 前に登録したフォルダ（もう無ければ、PATH から外す）
         Thread thread = new Thread(() -> {
-            if (CommandRegistration.register(dir)) {
+            if (CommandRegistration.register(dir, previous)) {
                 SwingUtilities.invokeLater(() -> {
                     appSettings.put(AppSettings.COMMAND_DIR, dir.toString());
                     appSettings.save();

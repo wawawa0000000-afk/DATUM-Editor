@@ -58,6 +58,8 @@
 
 ## Windows で未確認
 
+- PATH の古い項目を外す（`command-path.ps1 -Remove`）: テスト用のフォルダを足す → そのフォルダを消す → `-Remove` で、エラーなく項目が消えるか → 最後に PATH が元どおりか。配布版のフォルダを移して起動し直すと、前の場所の項目が消えて、新しい場所が足されるか。
+
 - 文字コード: Shift_JIS のファイルを開くと、わかる言葉で断られるか。メモ帳で作った CRLF・BOM 付きのファイルを開いて保存しても、CRLF・BOM のままか。
 - 縦書き: 異体字（例: 葛󠄀）や結合文字が1マスに収まり、カーソルがその途中で止まらないか。
 
@@ -104,7 +106,7 @@
    - 主役（追加）: ~~21・22~~ 直してコミットした（11文字目で分かれたルビは、前のほうだけをルビにする。間の文字を消せばまた1つにつながる／前回のプログラムが同じ番号でも、その控えを自分のものとして消さない。どちらもテストを足した）。
    - 並列エージェント: ~~重さの 6、15、19、20~~ 直してコミットした（`EncodingTest` を追加）。19 のカーソルと BackSpace/Delete は、主役が「ひとまとまりの文字」単位にした。
    - **一覧の22項目は、これで全部片付いた。**
-4. **承認が出た（決まったこと 2）。並列エージェントが実装する**: PATH の古い項目を外す処理。`command-path.ps1` の `Resolve-Path` は、フォルダがないとエラーで止まるので、`-Remove` のときは文字列のまま比べるように直す必要がある。
+4. ~~承認が出た（決まったこと 2）~~ **実装してコミットした**（並列エージェントが `CommandRegistration`・`command-path.ps1`・`CommandTest`、主役が `EditorFrame` から前のフォルダを渡す）。Windows での確認が要る（下の「Windows で未確認」）。PATH の古い項目を外す処理。`command-path.ps1` の `Resolve-Path` は、フォルダがないとエラーで止まるので、`-Remove` のときは文字列のまま比べるように直す必要がある。
 5. 主役: Windows の確認が済んだら、配布 ZIP を4種類とも同じ名前で作り直す。
 
 ## 注意
@@ -311,3 +313,33 @@
     - 書き方は、ファイルの場所ごとに覚えている（エディタを閉じるまで）。「名前を付けて保存」で新しい名前にすると、今までどおり LF・BOM なしになる。元の書き方を引き継ぐなら、`EditorFrame` から FileService に知らせる口を足す必要がある。
     - AI の `read_file`（`McpTools`）は、これまでどおり `Files.readString` で読んでいる。こちらは変えていない。
 - **お願い**：`ci.yml` に `EncodingTest` を足してほしい。
+
+## 並列エージェントの報告（PATH の古い項目を外す：決まったこと 2・次にやること 4。コミット済み。主役がレビューした）
+
+コミットはしていない。PATH には一度も触っていない（Linux なので ps1 は動かしていない。テストも判定だけを見る）。変えたファイル：`CommandRegistration.java`、`packaging/windows/command-path.ps1`、新しく `src/test/.../CommandTest.java`。`mvn -q -B package` と、8つのテストはすべて通った。
+
+- **`CommandRegistration.register(dir, previous)`** を足した。`previous` は設定の `commandDir`（前に登録したフォルダ）。
+  - `isStale(dir, previous)` が true のときだけ、**今のフォルダの** `command-path.ps1` を `-Dir <previous> -Remove` で動かし、そのあとで今までどおり `dir` を足す。
+  - 古い項目を外せなくても、登録は続ける。
+  - `isStale` は次の4つがすべてそろったときだけ true。それ以外（未登録・空・読めない値・確かめられない）では、PATH に触らない。
+    - `previous` が絶対パス
+    - 今のフォルダと違う（大文字小文字・`.`・末尾の `\` の違いは同じとみなす）
+    - そのドライブ自体はつながっている
+    - フォルダが「無い」と確かめられた（`Files.notExists`）
+  - **決まったことより1つ慎重にした点**：USB メモリや Google ドライブ（G:）などが、今つながっていないだけのときは外さない。そういうときは、ドライブごと見えないので区別できる。
+  - EditorFrame がまだ前の呼び方なので、ビルドが通るように `register(dir)`（＝ `register(dir, null)`。何も外さない）を残した。下の1行を変えたら、消してよい。
+- **主役にお願い（EditorFrame.registerCommandIfNeeded の1行）**：
+  `if (CommandRegistration.register(dir)) {`
+  を
+  `if (CommandRegistration.register(dir, appSettings.getString(AppSettings.COMMAND_DIR, null))) {`
+  にする。`appSettings` は画面のスレッド以外から読むことになるが、読むだけ（`getString`）。気になるなら、スレッドを作る前に `String previous = …` で取っておいて渡す。
+- **`command-path.ps1`**：
+  - `-Remove` のときは `Resolve-Path` を使わず、`[System.IO.Path]::GetFullPath($Dir).TrimEnd('\')` で文字列のまま比べる。フォルダが無くても止まらない。`Remove-Command.bat` の `"%~dp0."` も、`GetFullPath` が `.` を取り除くので、今までどおり合う。
+  - 比べる `-ne` は、大文字と小文字を区別しない（コメントに書いた）。
+  - 足すとき（`-Remove` なし）は、今までどおり `Resolve-Path`。
+  - 改行は元どおり CRLF のまま。
+- **Windows で確かめてほしいこと（画面は要らない。PowerShell で）**：
+  1. 確認用のフォルダを作って `command-path.ps1 -Dir <そのフォルダ>` で足す。
+  2. そのフォルダを消してから `-Dir <そのフォルダ> -Remove` を動かし、エラーにならずに PATH から消えることを確かめる。
+  3. 最後に、PATH が元どおりかを確かめる。
+  - 配布版のフォルダを移して起動し、古い項目が消えて新しい項目だけが残ることも見てほしい。
