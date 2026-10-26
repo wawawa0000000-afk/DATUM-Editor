@@ -42,6 +42,7 @@ public class ConnectionTest {
         lines();
         instance();
         sender();
+        urls();
         System.out.println(failures == 0 ? "すべて通りました" : failures + " 件、失敗しました");
         System.exit(failures == 0 ? 0 : 1);
     }
@@ -164,6 +165,17 @@ public class ConnectionTest {
                 check(got.indexOf(token) < 0 && got.indexOf("秘密") < 0, label + "相手には、合言葉もファイルの場所も送らない");
             }
         }
+    }
+
+    /** 暗号化されない接続先の見分け方（AI の設定画面と、送るときの注意に使う）。 */
+    private static void urls() {
+        check(AiBackends.unencrypted("http://192.168.0.10:8000/v1"), "http でよその PC なら、注意する");
+        check(AiBackends.unencrypted("HTTP://example.com/v1"), "大文字の HTTP でも、注意する");
+        check(!AiBackends.unencrypted("https://api.openai.com/v1"), "https なら、注意しない");
+        check(!AiBackends.unencrypted("http://localhost:11434/v1"), "http://localhost（Ollama など）なら、注意しない");
+        check(!AiBackends.unencrypted("http://127.0.0.1:8080/v1"), "http://127.0.0.1 なら、注意しない");
+        check(!AiBackends.unencrypted("http://[::1]:8080/v1"), "http://[::1] なら、注意しない");
+        check(!AiBackends.unencrypted("こわれた URL"), "URL として読めないものは、注意しない（送るときにエラーになる）");
     }
 
     /** 受け取り口に data を送り、受け取られたファイルの一覧を返す（受け取られなければ null）。 */

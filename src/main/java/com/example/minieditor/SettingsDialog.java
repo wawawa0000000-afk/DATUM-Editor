@@ -95,8 +95,36 @@ final class SettingsDialog extends JDialog {
                         + "使うときは「AI 連携（MCP）」も自動で動かします。モデルは空なら Claude Code の設定のまま。";
             } + "</div></html>");
         };
-        backend.addActionListener(e -> updateAi.run());
+        // 接続先が http（自分の PC の外）なら、暗号化されないことを、入力しているそばで知らせる
+        JLabel urlWarning = hint("");
+        urlWarning.setForeground(Theme.ERROR);
+        Runnable updateUrlWarning = () -> {
+            boolean show = backend.getSelectedIndex() == 2 && AiBackends.unencrypted(url.getText());
+            urlWarning.setText(show ? "<html><div style='width:520px'>" + AiBackends.UNENCRYPTED_WARNING + "</div></html>" : "");
+            urlWarning.setVisible(show);
+        };
+        url.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            @Override
+            public void insertUpdate(javax.swing.event.DocumentEvent e) {
+                updateUrlWarning.run();
+            }
+
+            @Override
+            public void removeUpdate(javax.swing.event.DocumentEvent e) {
+                updateUrlWarning.run();
+            }
+
+            @Override
+            public void changedUpdate(javax.swing.event.DocumentEvent e) {
+                updateUrlWarning.run();
+            }
+        });
+        backend.addActionListener(e -> {
+            updateAi.run();
+            updateUrlWarning.run();
+        });
         updateAi.run();
+        updateUrlWarning.run();
 
         JPanel form = new JPanel(new GridBagLayout());
         form.setBorder(BorderFactory.createEmptyBorder(12, 16, 12, 16));
@@ -123,6 +151,7 @@ final class SettingsDialog extends JDialog {
             y = field(form, y, "モデル", model);
             y = field(form, y, "API キー", key);
             y = field(form, y, "接続先 URL", url);
+            y = field(form, y, "", urlWarning);
             y = field(form, y, "Claude Code のコマンド", command);
             y = field(form, y, "", aiHint);
             field(form, y, "", hint("<html>API キーは、この PC の設定フォルダ（本人だけが読める設定）に保存します。暗号化はしていません。</html>"));

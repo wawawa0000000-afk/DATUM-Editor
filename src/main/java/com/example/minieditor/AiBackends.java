@@ -233,6 +233,25 @@ final class AiBackends {
 
     // ---------- OpenAI 互換 API ----------
 
+    /** 暗号化されない接続先のときに出す注意。 */
+    static final String UNENCRYPTED_WARNING = "この接続先 URL は http なので、API キーと送る文章（原稿の中身も）が暗号化されずに送られます。"
+            + "同じネットワークの人に読まれることがあります。インターネットの向こうの AI なら https にしてください。";
+
+    /**
+     * 暗号化されない接続先か（http で、しかも自分の PC の中ではない）。
+     * http://localhost（Ollama など）は、PC の外へ出ないので、注意しなくてよい。
+     */
+    static boolean unencrypted(String url) {
+        try {
+            URI uri = URI.create(url.strip());
+            String host = uri.getHost() == null ? "" : uri.getHost().toLowerCase();
+            boolean local = host.equals("localhost") || host.startsWith("127.") || host.equals("[::1]") || host.equals("::1");
+            return "http".equalsIgnoreCase(uri.getScheme()) && !local;
+        } catch (IllegalArgumentException ex) {
+            return false;               // URL として読めないものは、送るときにエラーになる
+        }
+    }
+
     static final class OpenAiCompatible implements Backend {
         private final String baseUrl;
         private final String apiKey;
@@ -241,6 +260,7 @@ final class AiBackends {
         private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(20)).build();
         private final List<Object> messages = new ArrayList<>();
         private volatile boolean stopped;
+        private boolean warned;                     // 暗号化されない接続先の注意を、もう出したか（1回だけ出す）
 
         OpenAiCompatible(String baseUrl, String apiKey, String model, McpServer.Backend tools) {
             this.baseUrl = baseUrl.replaceAll("/+$", "");
@@ -276,6 +296,10 @@ final class AiBackends {
         @SuppressWarnings("unchecked")
         public void send(String userText, Listener listener) throws Exception {
             stopped = false;
+            if (!warned && unencrypted(baseUrl)) {
+                listener.info("※ " + UNENCRYPTED_WARNING);
+                warned = true;
+            }
             if (messages.isEmpty()) {
                 messages.add(McpServer.map("role", "system", "content", SYSTEM + "\n" + McpServer.INSTRUCTIONS));
             }
