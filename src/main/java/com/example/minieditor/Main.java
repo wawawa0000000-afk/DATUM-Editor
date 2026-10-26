@@ -39,6 +39,7 @@ public class Main {
             SingleInstance.listen(frame::openFiles);    // あとから「このファイルを開いて」と起動されたら、このウィンドウで開く
             frame.startMcpIfEnabled();  // 前回、AI 連携を使っていたら、続きから使えるようにする
             SwingUtilities.invokeLater(frame::offerRecovery);   // 前回、保存されずに終わった文書があれば、復元するかを聞く
+            SwingUtilities.invokeLater(frame::registerCommandIfNeeded); // Windows の配布版なら、「datum」コマンドを使えるようにするか聞く
         });
     }
 }

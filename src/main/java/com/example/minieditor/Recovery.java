@@ -25,6 +25,7 @@ import java.util.stream.Stream;
  *
  * エディタを2つ同時に動かしたときに取り違えないよう、動いているプログラムの番号（PID）ごとにフォルダを分け、
  * もう動いていないプログラムのフォルダだけを「復元できるもの」として扱う。
+ * PC を再起動すると、同じ番号を別のプログラムが使うことがあるので、起動した時刻もフォルダに書いておき、両方で見分ける。
  */
 public final class Recovery {
 
@@ -33,6 +34,7 @@ public final class Recovery {
     }
 
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("M月d日 HH:mm");
+    private static final String STARTED = "started.txt";
 
     private final Path root;
     private final Path mine;
@@ -66,8 +68,14 @@ public final class Recovery {
                 continue;                   // 前回から変わっていない
             }
             try {
-                Files.createDirectories(mine);
-                Files.writeString(mine.resolve(pane.getDocumentId() + ".json"), Json.write(json), StandardCharsets.UTF_8);
+                if (!Files.isDirectory(mine)) {
+                    Files.createDirectories(mine);
+                    String started = startedAt(ProcessHandle.current());
+                    if (started != null) {
+                        FileService.writeSafely(mine.resolve(STARTED), started, false);
+                    }
+                }
+                FileService.writeSafely(mine.resolve(pane.getDocumentId() + ".json"), Json.write(json), false);
                 written.put(pane.getDocumentId(), body);
             } catch (IOException ex) {
                 // 書けなかったら、次の機会にもう一度試す
@@ -126,6 +134,26 @@ public final class Recovery {
         }
     }
 
+    /** 復元し終えた控えだけを消す。復元できなかった控えは、取り戻せるように残しておく。 */
+    public void discard(List<Entry> restored) {
+        for (Entry entry : restored) {
+            try {
+                Files.deleteIfExists(entry.file());
+            } catch (IOException ex) {
+                // 次の起動のときに、もう一度聞かれるだけ
+            }
+        }
+        for (Path folder : deadFolders()) {
+            try (Stream<Path> files = Files.list(folder)) {
+                if (files.noneMatch(p -> p.getFileName().toString().endsWith(".json"))) {
+                    deleteFolder(folder);   // 控えが残っていないフォルダは片付ける
+                }
+            } catch (IOException ex) {
+                // 次の起動のときに片付ける
+            }
+        }
+    }
+
     private List<Path> deadFolders() {
         List<Path> folders = new ArrayList<>();
         if (!Files.isDirectory(root)) {
@@ -137,7 +165,10 @@ public final class Recovery {
                 if (!Files.isDirectory(folder) || !name.matches("\\d+") || folder.equals(mine)) {
                     continue;
                 }
-                boolean alive = ProcessHandle.of(Long.parseLong(name)).map(ProcessHandle::isAlive).orElse(false);
+                boolean alive = ProcessHandle.of(Long.parseLong(name))
+                        .filter(ProcessHandle::isAlive)
+                        .map(process -> sameProcess(folder, process))
+                        .orElse(false);
                 if (!alive) {
                     folders.add(folder);
                 }
@@ -146,6 +177,24 @@ public final class Recovery {
             // 調べられなければ、何も復元しない
         }
         return folders;
+    }
+
+    /** そのフォルダを作ったプログラムが、今その番号で動いているプログラムと同じか（起動した時刻で比べる）。 */
+    private static boolean sameProcess(Path folder, ProcessHandle process) {
+        String started = startedAt(process);
+        try {
+            Path file = folder.resolve(STARTED);
+            if (started == null || !Files.isRegularFile(file)) {
+                return true;            // 比べられなければ、番号だけで判断する（動いているエディタの控えを取らないように）
+            }
+            return Files.readString(file, StandardCharsets.UTF_8).strip().equals(started);
+        } catch (IOException ex) {
+            return true;
+        }
+    }
+
+    private static String startedAt(ProcessHandle process) {
+        return process.info().startInstant().map(Object::toString).orElse(null);
     }
 
     private static void deleteFolder(Path folder) {

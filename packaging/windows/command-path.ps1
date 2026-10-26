@@ -1,6 +1,7 @@
 # Adds (or removes) the DATUM-Editor folder to the user's PATH. Used by Add-Command.bat / Remove-Command.bat.
 # Only the current user's PATH is changed (no administrator rights needed).
 param([string]$Dir, [switch]$Remove)
+$ErrorActionPreference = 'Stop'    # fail with a non-zero exit code (the editor checks it)
 $dir = (Resolve-Path -LiteralPath $Dir).Path.TrimEnd('\')
 $key = Get-Item -Path 'HKCU:\Environment'
 # Read the raw value so that entries like %USERPROFILE%\... stay as they are

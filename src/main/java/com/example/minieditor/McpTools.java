@@ -493,6 +493,12 @@ final class McpTools implements McpServer.Backend {
                 Files.createDirectories(target.getParent());
             }
 
+            if (!changing && fileService.changedOutside(target) && !flag(a, "overwrite")) {
+                throw new ToolException(display(target) + " は、開いたあとで、ほかのアプリによって変更されています。"
+                        + "上書きしてよいと利用者に確かめたうえで overwrite: true を付けてください。保存していません。");
+            }
+            frame.keepDiskVersion(target);      // 上書きする前の中身を、版の履歴に残す
+
             boolean wasRaw = pane.isRawFile();
             if (changing) {
                 pane.setRawFile(false);     // 新しい名前で保存するときは、このアプリの形式で書く

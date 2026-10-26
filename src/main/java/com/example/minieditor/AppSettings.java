@@ -6,8 +6,6 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -41,6 +39,8 @@ public final class AppSettings {
     public static final String AI_KEY = "aiApiKey";
     public static final String AI_URL = "aiBaseUrl";                // OpenAI 互換の接続先
     public static final String CLAUDE_COMMAND = "claudeCommand";    // Claude Code のコマンド（既定は claude）
+    public static final String AUTO_COMMAND = "autoCommand";        // 「datum」コマンドを登録するか（まだ聞いていなければ、項目がない）
+    public static final String COMMAND_DIR = "commandDir";          // 「datum」コマンドとして PATH に足したフォルダ
 
     private final Map<String, Object> data;
 
@@ -70,19 +70,7 @@ public final class AppSettings {
     public synchronized void save() {
         try {
             Files.createDirectories(McpSettings.directory());
-            // 書いている途中で止まっても前の設定が壊れないように、別の名前で書いてから入れ替える
-            Path temp = file().resolveSibling("settings.json.tmp");
-            Files.writeString(temp, Json.write(data), StandardCharsets.UTF_8);
-            try {
-                Files.setPosixFilePermissions(temp, PosixFilePermissions.fromString("rw-------"));
-            } catch (UnsupportedOperationException ex) {
-                // Windows には、この形の権限がない（利用者のフォルダの中なので、ほかの人からは見えない）
-            }
-            try {
-                Files.move(temp, file(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-            } catch (java.nio.file.AtomicMoveNotSupportedException ex) {
-                Files.move(temp, file(), StandardCopyOption.REPLACE_EXISTING);
-            }
+            FileService.writeSafely(file(), Json.write(data), true);
         } catch (IOException ex) {
             // 次に起動したときに、前の設定で始まるだけ
         }
@@ -96,6 +84,11 @@ public final class AppSettings {
 
     public synchronized int getInt(String key, int fallback) {
         return data.get(key) instanceof Number n ? n.intValue() : fallback;
+    }
+
+    /** その項目が入っているか（一度も決めていない設定と、決めた設定を見分けるときに使う）。 */
+    public synchronized boolean has(String key) {
+        return data.containsKey(key);
     }
 
     public synchronized boolean getBool(String key, boolean fallback) {

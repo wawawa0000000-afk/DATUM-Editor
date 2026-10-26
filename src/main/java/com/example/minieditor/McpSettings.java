@@ -4,7 +4,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -74,22 +73,12 @@ public final class McpSettings {
     public void save() throws IOException {
         Path directory = directory();
         Files.createDirectories(directory);
-        Path file = file();
-        // 合言葉が入っているので、ほかの利用者から読めないようにする（Windows では、この指定は使えないので飛ばす）
-        try {
-            if (!Files.exists(file)) {
-                Files.createFile(file, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
-            } else {
-                Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-------"));
-            }
-        } catch (UnsupportedOperationException ex) {
-            // Windows など。利用者ごとのフォルダ（AppData）の中なので、もともと本人しか読めない
-        }
         Map<String, Object> json = new LinkedHashMap<>();
         json.put("enabled", enabled);
         json.put("port", port);
         json.put("token", token);
         json.put("workspace", workspace == null ? null : workspace.toString());
-        Files.writeString(file, Json.write(json), StandardCharsets.UTF_8);
+        // 合言葉が入っているので、ほかの利用者から読めないようにする
+        FileService.writeSafely(file(), Json.write(json), true);
     }
 }

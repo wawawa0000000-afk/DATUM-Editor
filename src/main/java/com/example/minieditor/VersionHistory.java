@@ -48,13 +48,13 @@ public final class VersionHistory {
         try {
             Path folder = folderOf(file);
             Files.createDirectories(folder);
-            Files.writeString(folder.resolve("path.txt"), file.toAbsolutePath().normalize().toString(), StandardCharsets.UTF_8);
+            FileService.writeSafely(folder.resolve("path.txt"), file.toAbsolutePath().normalize().toString(), false);
             List<Version> versions = list(file);
             if (!versions.isEmpty() && Files.readString(versions.get(0).file(), StandardCharsets.UTF_8).equals(content)) {
                 return;
             }
             String name = LocalDateTime.now().format(NAME) + extensionOf(file);
-            Files.writeString(folder.resolve(name), content, StandardCharsets.UTF_8);
+            FileService.writeSafely(folder.resolve(name), content, false);
             versions = list(file);
             for (int i = Math.max(1, limit); i < versions.size(); i++) {
                 Files.deleteIfExists(versions.get(i).file());

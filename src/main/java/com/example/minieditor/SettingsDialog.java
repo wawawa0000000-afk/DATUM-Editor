@@ -58,6 +58,8 @@ final class SettingsDialog extends JDialog {
         JCheckBox autoSave = new JCheckBox("30 秒ごとに自動で上書き保存する（保存先のある文書）",
                 settings.getBool(AppSettings.AUTO_SAVE, false));
         JSpinner historyLimit = new JSpinner(new SpinnerNumberModel(settings.getInt(AppSettings.HISTORY_LIMIT, 50), 5, 500, 5));
+        JCheckBox autoCommand = new JCheckBox("ターミナルから datum で起動できるようにする（Windows の配布版）",
+                settings.getBool(AppSettings.AUTO_COMMAND, false));
 
         // ---- 執筆 ----
         JSpinner goal = new JSpinner(new SpinnerNumberModel(settings.getInt(AppSettings.DAILY_GOAL, 0), 0, 100000, 500));
@@ -106,6 +108,10 @@ final class SettingsDialog extends JDialog {
         y = field(form, y, "", autoSave);
         y = field(form, y, "", hint("<html>自動保存を切っていても、未保存の文書は 30 秒ごとに裏で控えを取ります（異常終了したときに、次の起動で復元できます）。</html>"));
         y = field(form, y, "版の履歴", row(historyLimit, new JLabel("個までファイルごとに残す")));
+        if (CommandRegistration.packageDir() != null) {     // Windows の配布版のときだけ出す
+            y = field(form, y, "", autoCommand);
+            y = field(form, y, "", hint("<html>外すと登録しません。すでに登録した分は、Remove-Command.bat で消せます。</html>"));
+        }
         // 種類（Edition）に入っていない機能の設定は出さない（保存するときは、今の値をそのまま書き戻す）
         if (Edition.has(Edition.VERTICAL)) {
             y = section(form, y, "執筆");
@@ -132,6 +138,12 @@ final class SettingsDialog extends JDialog {
             }
             settings.put(AppSettings.AUTO_SAVE, autoSave.isSelected());
             settings.put(AppSettings.HISTORY_LIMIT, (Integer) historyLimit.getValue());
+            if (CommandRegistration.packageDir() != null) {
+                if (autoCommand.isSelected() && !settings.getBool(AppSettings.AUTO_COMMAND, false)) {
+                    settings.put(AppSettings.COMMAND_DIR, null);    // 入れ直したときは、同じフォルダでも登録し直す
+                }
+                settings.put(AppSettings.AUTO_COMMAND, autoCommand.isSelected());
+            }
             settings.put(AppSettings.DAILY_GOAL, (Integer) goal.getValue());
             settings.put(AppSettings.AI_BACKEND, BACKENDS[backend.getSelectedIndex()]);
             settings.put(AppSettings.AI_MODEL, blankToNull(model.getText()));

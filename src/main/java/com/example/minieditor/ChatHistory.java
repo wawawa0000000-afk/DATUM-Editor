@@ -72,7 +72,8 @@ final class ChatHistory {
     /** 保存して、多すぎる分を古い順に消す。 */
     static void save(String id, Map<String, Object> record) throws IOException {
         Files.createDirectories(folder());
-        Files.writeString(folder().resolve(id + ".json"), Json.write(record), StandardCharsets.UTF_8);
+        // 原稿の中身も入るので、ほかの利用者から読めないようにする
+        FileService.writeSafely(folder().resolve(id + ".json"), Json.write(record), true);
         List<Summary> all = list();
         for (int i = KEEP; i < all.size(); i++) {
             Files.deleteIfExists(folder().resolve(all.get(i).id() + ".json"));

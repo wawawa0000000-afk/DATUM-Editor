@@ -20,12 +20,14 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -121,6 +123,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     private final GoalMeter goalMeter = new GoalMeter(stats, appSettings, this::updateStatus);  // 目標の進み具合（マス目）
     private final VersionHistory history = new VersionHistory();       // 保存した版の履歴
     private final Map<Path, Instant> lastHistory = new HashMap<>();     // 自動保存で履歴を残した時刻（残しすぎないように）
+    private final Set<Path> changedOutsideWarned = new HashSet<>();     // ほかのアプリで変わったので自動保存を止めた、と伝えたファイル
     private final Recovery recovery = new Recovery();                   // 異常終了に備えた、未保存の文書の控え
     private final Timer autosaveTimer = new Timer(30_000, e -> autosaveTick());
 
@@ -929,6 +932,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
                 applyScheme(Theme.Scheme.fromId(appSettings.getString(AppSettings.THEME, "gray")));
             }
             flash("設定を保存しました");
+            registerCommandIfNeeded();  // 「datum」コマンドを使う設定に変えたときは、すぐに登録する
         }
     }
 
@@ -1041,11 +1045,20 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
                 "前回、保存されずに終わった文書が " + entries.size() + " 件あります。復元しますか？\n\n" + list,
                 "文書の復元", JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE, null, options, options[0]);
         if (answer == 0) {
+            List<Recovery.Entry> restored = new ArrayList<>();
             for (Recovery.Entry entry : entries) {
-                restoreEntry(entry);
+                if (restoreEntry(entry)) {
+                    restored.add(entry);
+                }
             }
-            recovery.discardLeftovers();
-            flash(entries.size() + " 件の文書を復元しました（まだ保存されていません）");
+            recovery.save(documentPanes());     // 復元した文書の控えを、すぐに取り直してから
+            recovery.discard(restored);         // 前回の控えを消す（復元できなかったものは残す）
+            if (restored.size() == entries.size()) {
+                flash(restored.size() + " 件の文書を復元しました（まだ保存されていません）");
+            } else {
+                flash(restored.size() + " 件の文書を復元しました。復元できなかった " + (entries.size() - restored.size())
+                        + " 件の控えは、消さずに残してあります");
+            }
         } else if (answer == 1) {
             int sure = JOptionPane.showConfirmDialog(this, "控えを捨てると、もう復元できません。捨てますか？",
                     "確認", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
@@ -1056,13 +1069,13 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         // 「あとで決める」は、控えを残したまま。次に起動したときに、もう一度聞く
     }
 
-    private void restoreEntry(Recovery.Entry entry) {
+    /** 控えを1つ、タブに戻す。戻せたら true。 */
+    private boolean restoreEntry(Recovery.Entry entry) {
         EditorPane pane;
         try {
             pane = paneFromJson(entry.document());
         } catch (IOException | RuntimeException ex) {
-            flash("復元できなかった文書があります: " + entry.title());
-            return;
+            return false;
         }
         Path path = entry.path() == null ? null : Path.of(entry.path());
         pane.setRawFile(entry.raw());
@@ -1085,6 +1098,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             removeIfPristine(previous);
         }
         currentPaneChanged();
+        return true;
     }
 
     // ---------- 前回の状態（タブ・分割・ウィンドウ） ----------
@@ -2050,10 +2064,28 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
      */
     private boolean write(EditorPane pane, Path path, boolean manual) {
         String content = fileContent(pane, path);
+        Path key = path.toAbsolutePath().normalize();
+        if (fileService.changedOutside(path)) {
+            // 同期のアプリやほかのエディタが書き換えたものを、黙って消さない
+            if (!manual) {
+                if (changedOutsideWarned.add(key)) {
+                    flash("「" + path.getFileName() + "」はほかのアプリで変更されたので、自動保存を止めました（保存すると、上書きするか聞きます）");
+                }
+                return false;
+            }
+            int answer = JOptionPane.showConfirmDialog(this,
+                    "「" + path.getFileName() + "」は、開いたあとで、ほかのアプリによって変更されています。\n"
+                            + "上書きしますか？（今のファイルの中身は、版の履歴に残します）",
+                    "上書きの確認", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+            if (answer != JOptionPane.YES_OPTION) {
+                return false;
+            }
+        }
+        keepDiskVersion(path);
         try {
             fileService.save(content, path);
+            changedOutsideWarned.remove(key);
             pane.setDirty(false);
-            Path key = path.toAbsolutePath().normalize();
             Instant previous = lastHistory.get(key);
             if (manual || previous == null || Duration.between(previous, Instant.now()).toMinutes() >= 10) {
                 history.record(path, content, appSettings.getInt(AppSettings.HISTORY_LIMIT, 50));
@@ -2073,6 +2105,21 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             JOptionPane.showMessageDialog(this, "保存できませんでした: " + ex.getMessage(),
                     "エラー", JOptionPane.ERROR_MESSAGE);
             return false;
+        }
+    }
+
+    /**
+     * 上書きする前のファイルの中身を、版の履歴に残す。
+     * このアプリで初めて書くファイルや、ほかのアプリが書き換えたファイルは、まだ履歴に入っていないため。
+     */
+    void keepDiskVersion(Path path) {
+        if (!Files.isRegularFile(path) || !(fileService.unknown(path) || fileService.changedOutside(path))) {
+            return;
+        }
+        try {
+            history.record(path, Files.readString(path, StandardCharsets.UTF_8), appSettings.getInt(AppSettings.HISTORY_LIMIT, 50) + 1);
+        } catch (IOException ex) {
+            // UTF-8 で読めないファイルなどは残せない（保存そのものは続ける）
         }
     }
 
@@ -2265,6 +2312,41 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     // ---------- AI 連携（MCP）の画面 ----------
 
     /** 前回、AI 連携を動かしたまま終了していたら、起動したときに自動で始める。 */
+    /**
+     * Windows の配布版で、ターミナルに「datum」と打って起動できるようにする。
+     * 最初の1回だけ使う人に聞き、「はい」なら登録する。フォルダを移したときは、聞かずに登録し直す。
+     */
+    public void registerCommandIfNeeded() {
+        Path dir = CommandRegistration.packageDir();
+        if (dir == null || dir.toString().equals(appSettings.getString(AppSettings.COMMAND_DIR, null))) {
+            return;                     // 配布版でない、または登録済み（Remove-Command.bat で消した場合も、足し直さない）
+        }
+        if (!appSettings.has(AppSettings.AUTO_COMMAND)) {
+            int answer = JOptionPane.showConfirmDialog(this,
+                    "<html>ターミナル（コマンドプロンプトや PowerShell）で「datum」と打って、DATUM-Editor を起動できるようにしますか？<br>"
+                            + "「datum 原稿.txt」と打つと、そのファイルを開けます。<br><br>"
+                            + "このフォルダを、自分のユーザーの PATH に足します（管理者の権限は要りません）。<br>"
+                            + "あとから「設定」で変えられます。足した分は Remove-Command.bat で消せます。</html>",
+                    "datum コマンド", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
+            appSettings.put(AppSettings.AUTO_COMMAND, answer == JOptionPane.YES_OPTION);
+            appSettings.save();
+        }
+        if (!appSettings.getBool(AppSettings.AUTO_COMMAND, false)) {
+            return;
+        }
+        Thread thread = new Thread(() -> {
+            if (CommandRegistration.register(dir)) {
+                SwingUtilities.invokeLater(() -> {
+                    appSettings.put(AppSettings.COMMAND_DIR, dir.toString());
+                    appSettings.save();
+                    flash("「datum」コマンドを登録しました。新しく開いたターミナルで使えます");
+                });
+            }
+        }, "datum-command");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
     public void startMcpIfEnabled() {
         if (!Edition.has(Edition.AI) || !mcp.settings().enabled) {
             return;

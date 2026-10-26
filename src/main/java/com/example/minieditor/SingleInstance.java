@@ -12,7 +12,6 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.ArrayList;
@@ -81,12 +80,7 @@ final class SingleInstance {
             new SecureRandom().nextBytes(secret);
             String token = HexFormat.of().formatHex(secret);
             Files.createDirectories(file().getParent());
-            Files.writeString(file(), Json.write(Map.of("port", server.getLocalPort(), "token", token)), StandardCharsets.UTF_8);
-            try {
-                Files.setPosixFilePermissions(file(), PosixFilePermissions.fromString("rw-------"));
-            } catch (UnsupportedOperationException | IOException ex) {
-                // Windows では、ユーザーのフォルダの中なので、ほかの人からは読めない
-            }
+            FileService.writeSafely(file(), Json.write(Map.of("port", server.getLocalPort(), "token", token)), true);
             Thread thread = new Thread(() -> {
                 while (!server.isClosed()) {
                     try (Socket socket = server.accept()) {
