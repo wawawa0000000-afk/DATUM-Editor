@@ -346,7 +346,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         format.addSeparator();
         wrapItem.addActionListener(e -> {
             if (currentPane() instanceof TextEditorPane text) {
-                text.setWrap(wrapItem.isSelected());
+                forEachView(text, view -> ((TextEditorPane) view).setWrap(wrapItem.isSelected()));
             } else {
                 wrapItem.setSelected(false);
                 flash("折り返しは、テキスト（横書き）の文書で使えます");
@@ -488,7 +488,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         manuscriptItem.setAccelerator(key(KeyEvent.VK_G, CTRL | SHIFT));
         manuscriptItem.addActionListener(e -> {
             if (currentPane() instanceof VerticalTextPane vertical) {
-                vertical.setManuscript(manuscriptItem.isSelected());
+                forEachView(vertical, view -> ((VerticalTextPane) view).setManuscript(manuscriptItem.isSelected()));
             } else {
                 manuscriptItem.setSelected(true);
                 flash("原稿用紙の表示は、縦書きの文書で使えます");
@@ -1760,6 +1760,8 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         }
         if (drop.group() == from) {
             from.movePane(pane, drop.index());      // 同じ側なら、並べ替え
+        } else if (mergeInto(drop.group(), from, pane)) {
+            return;
         } else {
             from.removePane(pane);
             if (drop.newSplit()) {
@@ -2028,18 +2030,31 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
 
         // 長い文章では少し時間がかかるので、その間は「待ち」のカーソルにする
         setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.WAIT_CURSOR));
+        // 一時ファイルに書いてから入れ替える（途中で失敗しても、上書きしようとした元の PDF は残る）
+        Path temp = null;
         try {
+            Path folder = path.toAbsolutePath().getParent();
+            temp = Files.createTempFile(folder, ".datum-", ".pdf.tmp");
             int pages;
-            try (PdfWriter writer = new PdfWriter(path)) {
+            try (PdfWriter writer = new PdfWriter(temp)) {
                 pane.exportPdf(writer);
                 pages = writer.getPageCount();
             }
+            try {
+                Files.move(temp, path, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                        java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            } catch (java.nio.file.AtomicMoveNotSupportedException ex) {
+                Files.move(temp, path, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+            temp = null;
             flash("PDF を書き出しました（" + pages + " ページ）: " + path);
         } catch (IOException ex) {
-            try {
-                java.nio.file.Files.deleteIfExists(path);   // 途中までしか書けていない PDF は残さない
-            } catch (IOException ignored) {
-                // 消せなくても、下のダイアログで失敗は伝わる
+            if (temp != null) {
+                try {
+                    Files.deleteIfExists(temp);     // 途中までしか書けていない一時ファイルは残さない
+                } catch (IOException ignored) {
+                    // 消せなくても、下のダイアログで失敗は伝わる
+                }
             }
             JOptionPane.showMessageDialog(this, "書き出せませんでした: " + ex.getMessage(),
                     "エラー", JOptionPane.ERROR_MESSAGE);
@@ -2185,6 +2200,17 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         for (EditorPane other : pane.otherViews()) {
             groupOf(other).removePane(other);
             other.unlinkView();
+        }
+    }
+
+    /**
+     * 文書の設定（文字・折り返し・原稿用紙の表示）を、同じ文書を映しているタブ全部に同じように入れる。
+     * ファイルに保存される設定なので、分割した片側だけ違うと、どちらで保存したかで中身が変わってしまう。
+     */
+    private void forEachView(EditorPane pane, java.util.function.Consumer<EditorPane> apply) {
+        apply.accept(pane);
+        for (EditorPane other : pane.otherViews()) {
+            apply.accept(other);
         }
     }
 
@@ -2580,6 +2606,9 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             flash("タブが1枚だけのときは移動できません（先に「画面を分割」をどうぞ）");
             return;
         }
+        if (mergeInto(to, from, pane)) {
+            return;
+        }
         from.removePane(pane);
         if (!split) {
             split = true;
@@ -2588,6 +2617,24 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         to.addPane(pane);
         setActiveGroup(to);
         tidyGroups();
+    }
+
+    /**
+     * 移す先のグループに、同じ文書を映すタブがもうあれば、移すタブは閉じて、そちらを表示する（同じ文書のタブが2枚並ばないように）。
+     * そうしたら true。
+     */
+    private boolean mergeInto(EditorGroup to, EditorGroup from, EditorPane pane) {
+        EditorPane existing = pane.otherViews().stream().filter(to.getPanes()::contains).findFirst().orElse(null);
+        if (existing == null) {
+            return false;
+        }
+        from.removePane(pane);
+        pane.unlinkView();
+        setActiveGroup(to);
+        to.select(existing);
+        tidyGroups();
+        SwingUtilities.invokeLater(existing::focusEditor);
+        return true;
     }
 
     // ---------- 書式 ----------
@@ -2761,7 +2808,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         Font font = pane.getEditorFont();
         int step = Math.max(2, font.getSize() / 8);
         int size = Math.max(10, Math.min(160, font.getSize() + direction * step));
-        pane.setEditorFont(font.deriveFont((float) size));
+        forEachView(pane, view -> view.setEditorFont(font.deriveFont((float) size)));
         flash("文字の大きさ: " + size);
     }
 
@@ -2801,8 +2848,8 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         int result = JOptionPane.showConfirmDialog(this, panel, "フォント",
                 JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
         if (result == JOptionPane.OK_OPTION) {
-            pane.setEditorFont(new Font((String) nameBox.getSelectedItem(), Font.PLAIN,
-                    (Integer) sizeBox.getSelectedItem()));
+            Font chosen = new Font((String) nameBox.getSelectedItem(), Font.PLAIN, (Integer) sizeBox.getSelectedItem());
+            forEachView(pane, view -> view.setEditorFont(chosen));
         }
         pane.focusEditor();
     }

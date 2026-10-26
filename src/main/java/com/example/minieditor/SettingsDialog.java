@@ -197,7 +197,12 @@ final class SettingsDialog extends JDialog {
         root.add(scroll, BorderLayout.CENTER);
         root.add(buttons, BorderLayout.SOUTH);
         setContentPane(root);
-        setSize(new Dimension(1080, 860));
+        // 画面に収まる大きさにする（高さ 768 の画面でも、下の OK ボタンが画面の外に出ないように。中身はスクロールできる）
+        java.awt.Rectangle screen = owner.getGraphicsConfiguration().getBounds();
+        java.awt.Insets taskbar = java.awt.Toolkit.getDefaultToolkit().getScreenInsets(owner.getGraphicsConfiguration());
+        int width = Math.min(1080, screen.width - taskbar.left - taskbar.right - 40);
+        int height = Math.min(860, screen.height - taskbar.top - taskbar.bottom - 40);
+        setSize(new Dimension(Math.max(480, width), Math.max(360, height)));
         setLocationRelativeTo(owner);
     }
 
