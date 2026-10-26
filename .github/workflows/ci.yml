@@ -31,14 +31,18 @@ jobs:
         shell: bash
         run: mvn -B -q test-compile
 
-      # src/test のテストは JUnit を使わず main で動かす。1つでも失敗すると終了コード 1 で終わる
-      - name: RubyTest
+      # src/test のテストは JUnit を使わず main で動かす。1つでも失敗すると終了コード 1 で終わる。
+      # テストが増えても書き足さなくてよいように、*Test.class を全部動かす（1つ失敗しても残りは動かし、最後にまとめて失敗にする）
+      - name: Run tests
         shell: bash
-        run: java -cp "target/classes;target/test-classes" com.example.minieditor.RubyTest
-
-      - name: SaveTest
-        shell: bash
-        run: java -cp "target/classes;target/test-classes" com.example.minieditor.SaveTest
+        run: |
+          failed=0
+          for f in target/test-classes/com/example/minieditor/*Test.class; do
+            name=$(basename "$f" .class)
+            echo "=== $name"
+            java -cp "target/classes;target/test-classes" "com.example.minieditor.$name" || { echo "FAILED: $name"; failed=1; }
+          done
+          exit $failed
 
       - name: Upload jar
         uses: actions/upload-artifact@v4

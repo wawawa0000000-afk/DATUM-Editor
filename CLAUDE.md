@@ -15,8 +15,7 @@
 - ビルド: `mvn -q -B package`（JDK 17 以上。依存の部品はない）。
 - テストは JUnit を使わず main で動かす。`mvn package` では走らない。
   - `mvn -q test-compile`
-  - `java -cp target/classes:target/test-classes com.example.minieditor.RubyTest`
-  - `java -cp target/classes:target/test-classes com.example.minieditor.SaveTest`
+  - `java -cp target/classes:target/test-classes com.example.minieditor.<テスト名>`（`src/test/java/com/example/minieditor/` の `*Test` が全部対象。CI は全部を自動で動かす）
   - Windows では `:` を `;` にする。1つでも失敗すると終了コード 1 で終わる。
 - push する前に、上のテストが通ることを確かめる。
 
