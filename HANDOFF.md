@@ -17,7 +17,8 @@
   - 分割の直し（主役）: 閉じたタブを共有の文書から切り離す（`EditorPane.detachShared`）。縦書きで片側で打っても、もう片側の選択とスクロールを戻さない。同じ文書を映すタブは、同じ文書 id を持つ（`linkView` で引き継ぐ。代表のタブを閉じても id は変わらない）。
   - AI の守り（並列エージェント）: 下の「並列エージェントの報告（AI の守り）」を参照。
 - コミットしていない変更: `.github/workflows/ci.yml`（McpTest の段。上の理由で push できない）。
-- テスト: `RubyTest`・`SaveTest`・`McpTest`（新規、9項目）。Linux で全部通った（主役が確認）。CI（`.github/workflows/ci.yml`）に `McpTest` の段を足したいが、**Linux 側からは `.github/workflows` の変更を push できない**（GitHub が「failure」で断る。この PC の鍵に、ワークフローを書き換える権限がないためと思われる）。変更は Linux の作業フォルダに残してある（未コミット）。Windows 側から push するか、利用者が GitHub の画面で足す。足す段: `- name: McpTest` / `shell: bash` / `run: java -cp "target/classes;target/test-classes" com.example.minieditor.McpTest`（SaveTest の段の後ろ）。
+- テスト: `RubyTest`・`SaveTest`・`McpTest`（9項目）・`ConnectionTest`（新規、17項目）。Linux で全部通った（主役が確認）。
+- つなぎ口の守り（並列エージェント、コミット済み）: 橋渡し役は、合言葉を送る前に、乱数への証明（HMAC-SHA256）で相手が本物のエディタかを確かめる。`SingleInstance` は、受け取る行の長さ・ファイルの数・時間に上限を付けた。CI（`.github/workflows/ci.yml`）に `McpTest` の段を足したいが、**Linux 側からは `.github/workflows` の変更を push できない**（GitHub が「failure」で断る。この PC の鍵に、ワークフローを書き換える権限がないためと思われる）。変更は Linux の作業フォルダに残してある（未コミット）。Windows 側から push するか、利用者が GitHub の画面で足す。足す段（McpTest と ConnectionTest の2つ）: `- name: McpTest` / `shell: bash` / `run: java -cp "target/classes;target/test-classes" com.example.minieditor.McpTest`（SaveTest の段の後ろ）。
 - 配布 ZIP: まだ作り直していない（`61f2c87` の時点のもの）。Windows の確認が済んだら、主役が `sh packaging/build-all.sh` で4種類とも同じ名前で作り直す。
 - Linux 側に `gh` が入っていないので、主役からは CI の結果が見えない（利用者が入れてログインすれば見られる）。
 
@@ -82,7 +83,7 @@
 
 1. Windows 側: 「Windows で未確認」の項目を確かめる（ビルドとテストは CI が自動で行う）。**この確認が済むまで、ルビの新しい作業には進まない。**
 2. 利用者: 「東京（とうきょう）」の書き換えの件を A〜C から選ぶ。決まったら、その実装。
-3. レビューの残り（並列エージェントに渡す候補）: 低-9 の残り（合言葉を送る前に相手を確かめる）、`SingleInstance` で受け取る長さの制限（低-8）、OpenAI 互換の接続先が http のときの警告（設定画面）→ 重さ・細かい点。
+3. レビューの残り: `SingleInstance.sendToRunning` も、相手を確かめずに合言葉を送っている（並列エージェントに渡した）→ OpenAI 互換の接続先が http のときの警告（設定画面）→ 重さ・細かい点。
 4. 利用者の承認が出たら、PATH の古い項目を外す処理（決まったこと 2）。`command-path.ps1` の `Resolve-Path` は、フォルダがないとエラーで止まるので、`-Remove` のときは文字列のまま比べるように直す必要がある。
 5. 主役: Windows の確認が済んだら、配布 ZIP を4種類とも同じ名前で作り直す。
 
@@ -135,3 +136,35 @@
   - 低-9 の残り（合言葉を送る前に相手を確かめる仕組み）。
   - `SingleInstance` の長さ制限（低-8。担当外）。
   - OpenAI 互換の接続先が http のときの警告（設定画面は担当外）。
+
+## 並列エージェントの報告（つなぎ口の守り：低-8・低-9 の残り。コミット済み。主役がレビューした）
+
+担当: 橋渡し役が合言葉を送る前に相手を確かめる（低-9 の残り）と、SingleInstance の受け取り量の上限（低-8）。コミットしていない。
+
+変えたファイル: `McpService`、`McpBridge`、`SingleInstance`（いずれも `src/main/java/com/example/minieditor/`）、`src/test/java/com/example/minieditor/ConnectionTest.java`（新規）。PATH まわりと `ci.yml` には触っていない。
+
+直した内容:
+1. **橋渡し役が、本物か確かめずに合言葉を送っていた**（低-9）
+   - `McpBridge.isEditor`：道具を転送する前に、まず乱数（`X-Datum-Challenge`）だけを送る。
+   - エディタ（`McpService.handle`）は、合言葉と乱数から作った証明（HMAC-SHA256、`X-Datum-Proof`、`McpService.proof`）を返す。証明が合ったときだけ、合言葉と頼みごとを送る。合わなければ「DATUM-Editor ではありませんでした。合言葉は送っていません」と AI に返す。
+   - 合言葉そのものは、確かめる段階では出ていかない。乱数は決まった形（16 進数 64 文字）だけを受け付ける。
+   - 互換性：古い橋渡し役は、今までどおり使える（乱数を送らないため）。新しい橋渡し役と古いエディタの組み合わせでは、「DATUM-Editor ではありませんでした」になる（同じ JAR を使っていれば起きない）。
+2. **SingleInstance が、長さの制限なしに1行を読んでいた**（低-8）
+   - `readLine` を自前にした。上限は、合言葉の行 64 文字・ファイルの場所 4096 文字・ファイル 100 個。
+   - 1つの受け取りにかける時間は、5 秒まで（読むごとの待ちは今までどおり3秒）。
+   - 上限を超えた・時間切れ・送り終わりの空行が来ない、のどれかのときは、何も開かない。
+
+テストの結果（Linux）:
+- `mvn -q -B package` が通った。`RubyTest`・`SaveTest`・`McpTest`・`ConnectionTest` も、すべて通った（終了コード 0）。
+- `ConnectionTest`（17項目）は画面も本物の設定フォルダも使わないので、CI でも動く。**`ci.yml` に足すときは、McpTest と一緒にこれもお願いしたい。**
+  - 証明の形・合言葉の違い。
+  - 偽のエディタを立てて、本物と認める／証明なし・でたらめな証明は認めない。確かめる間に Authorization が一度も送られないこと。
+  - 受け取り口：とても長い1行目、合言葉違い、101 個のファイル、5000 文字の場所を受け取らない。
+- 端から端まで（scratchpad の使い捨てのプログラム。設定フォルダは `DATUM_EDITOR_CONFIG_DIR` で差し替え）でも確かめた。
+  - 本物のエディタの `McpService` と、`--mcp-stdio` の橋渡し役を、別のプロセスで動かして `list_documents` が通る。
+  - エディタを止めて、同じポートで偽物を待ち受けさせると、偽物には Authorization が届かず、AI には上の案内が返る。
+
+確かめていないこと:
+- Windows での動き（CI に入れれば、ConnectionTest で確かめられる）。
+- 実際の Claude Code / Claude Desktop から、橋渡し役を通して使う動き（上の端から端までのテストは、自分で JSON を送って確かめた）。
+- `SingleInstance.sendToRunning` も、相手を確かめずに合言葉とファイルの場所を送っている。合言葉は起動ごとに作り直されるので害は小さいが、同じ仕組みで確かめるようにはしていない（頼まれた範囲の外なので、未着手）。

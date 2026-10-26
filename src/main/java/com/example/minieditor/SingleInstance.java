@@ -4,6 +4,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
+import java.io.Reader;
 import java.io.Writer;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -32,6 +33,13 @@ import javax.swing.SwingUtilities;
  * 届かなければ（エディタが動いていない・前回の書き置きが古い）、ふつうに起動する。
  */
 final class SingleInstance {
+
+    // 受け取る量の上限。同じパソコンのほかの利用者もこの口につなげるので、送られ続けても、
+    // メモリがあふれたり、待ち受けを占められたりしないようにする
+    private static final int MAX_TOKEN = 64;            // 合言葉の行（本物は 32 文字）
+    private static final int MAX_PATH = 4096;           // ファイルの場所1行
+    private static final int MAX_FILES = 100;           // 一度に開くファイルの数
+    private static final long RECEIVE_MILLIS = 5000;    // 1つの受け取りにかけてよい時間
 
     private SingleInstance() {
     }
@@ -97,26 +105,58 @@ final class SingleInstance {
         }
     }
 
-    private static void receive(Socket socket, String token, Consumer<List<Path>> open) throws IOException {
+    static void receive(Socket socket, String token, Consumer<List<Path>> open) throws IOException {
         socket.setSoTimeout(3000);
-        BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
-        String first = in.readLine();
+        long deadline = System.nanoTime() + RECEIVE_MILLIS * 1_000_000;
+        Reader in = new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8);
+        String first = readLine(in, MAX_TOKEN, deadline);
         if (first == null || !MessageDigest.isEqual(first.getBytes(StandardCharsets.UTF_8), token.getBytes(StandardCharsets.UTF_8))) {
             return;                             // 合言葉が違う相手には、何もしない
         }
         List<Path> files = new ArrayList<>();
         String line;
-        while ((line = in.readLine()) != null && !line.isEmpty()) {
+        while ((line = readLine(in, MAX_PATH, deadline)) != null && !line.isEmpty()) {
+            if (files.size() >= MAX_FILES) {
+                return;                         // 多すぎるときは、何も開かない
+            }
             try {
                 files.add(Path.of(line));
             } catch (RuntimeException ex) {
                 // ファイルの場所として読めない行は飛ばす
             }
         }
+        if (line == null) {
+            return;                             // 長すぎる行・時間切れ・途中で切れた：送り終わりの印（空の行）が来ていない
+        }
         Writer out = new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8);
         out.write("OK\n");
         out.flush();
         SwingUtilities.invokeLater(() -> open.accept(files));
+    }
+
+    /**
+     * 1行読む（改行は含めない。\r も取り除く）。max 文字を超えた・締め切りを過ぎた・行の途中で切れたときは null。
+     * BufferedReader.readLine は、改行が来るまでいくらでも読み続けてしまうので、自分で読む。
+     */
+    static String readLine(Reader in, int max, long deadline) throws IOException {
+        StringBuilder sb = new StringBuilder();
+        while (System.nanoTime() < deadline) {
+            int c = in.read();
+            if (c < 0) {
+                return null;
+            }
+            if (c == '\n') {
+                return sb.toString();
+            }
+            if (c == '\r') {
+                continue;
+            }
+            if (sb.length() >= max) {
+                return null;
+            }
+            sb.append((char) c);
+        }
+        return null;
     }
 
     /** 起動したときの引数から、開くファイルを取り出す（場所は、起動した所から見た絶対パスにする）。 */

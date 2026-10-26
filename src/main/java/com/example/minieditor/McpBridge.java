@@ -13,6 +13,9 @@ import java.net.HttpURLConnection;
 import java.net.Proxy;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
+import java.util.HexFormat;
 import java.util.Map;
 
 /**
@@ -61,6 +64,33 @@ public final class McpBridge {
         }
     }
 
+    /**
+     * そのポートで待ち受けているのが、合言葉を知っている本物のエディタかを確かめる。
+     * 乱数を送り、合言葉から作った証明（McpService.proof）が返ってくれば本物。合言葉そのものは送らない。
+     *
+     * @throws ConnectException 誰も待ち受けていないとき（エディタが動いていない）
+     */
+    static boolean isEditor(int port, String token) throws IOException {
+        byte[] random = new byte[32];
+        new SecureRandom().nextBytes(random);
+        String challenge = HexFormat.of().formatHex(random);
+        HttpURLConnection connection = (HttpURLConnection) URI.create("http://127.0.0.1:" + port + "/mcp")
+                .toURL().openConnection(Proxy.NO_PROXY);
+        connection.setRequestMethod("POST");
+        connection.setConnectTimeout(3000);
+        connection.setReadTimeout(5000);
+        connection.setRequestProperty(McpService.CHALLENGE_HEADER, challenge);
+        connection.setDoOutput(true);
+        connection.getOutputStream().close();          // 中身は送らない
+        if (connection.getResponseCode() != 204) {
+            return false;
+        }
+        String proof = connection.getHeaderField(McpService.PROOF_HEADER);
+        String expected = McpService.proof(token, challenge);
+        return proof != null && expected != null
+                && MessageDigest.isEqual(proof.getBytes(StandardCharsets.UTF_8), expected.getBytes(StandardCharsets.UTF_8));
+    }
+
     /** 道具を使う頼みごとを、動いているエディタへ転送して、結果を受け取る。 */
     @SuppressWarnings("unchecked")
     private static Map<String, Object> forward(String name, Map<String, Object> arguments) {
@@ -71,6 +101,12 @@ public final class McpBridge {
         Map<String, Object> request = McpServer.map("jsonrpc", "2.0", "id", 1, "method", "tools/call",
                 "params", McpServer.map("name", name, "arguments", arguments));
         try {
+            // エディタが止まっている間に、別のプログラムが同じポートで待ち受けていることがある。
+            // 合言葉や頼みごとの中身を渡す前に、相手が合言葉を知っている（本物のエディタである）ことを確かめる
+            if (!isEditor(settings.port, settings.token)) {
+                return McpServer.textResult("そのポートで待ち受けているのは、DATUM-Editor ではありませんでした（確かめられませんでした）。"
+                        + "合言葉は送っていません。DATUM-Editor を起動して、「AI 連携 → MCP サーバーを動かす」を入れ直してください。", true);
+            }
             HttpURLConnection connection = (HttpURLConnection) URI.create("http://127.0.0.1:" + settings.port + "/mcp")
                     .toURL().openConnection(Proxy.NO_PROXY);
             connection.setRequestMethod("POST");

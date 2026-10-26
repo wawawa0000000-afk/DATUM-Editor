@@ -12,13 +12,18 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -38,6 +43,13 @@ public final class McpService {
 
     /** 返事に付ける印。ポートがふさがっているとき、相手が別の DATUM-Editor かどうかを見分けるのに使う（橋渡し役も確かめる）。 */
     static final String MARK_HEADER = "X-Datum-Editor";
+    /**
+     * 橋渡し役が、合言葉を送る前に「相手が本物のエディタか」を確かめるための見出し。
+     * 橋渡し役が乱数（CHALLENGE_HEADER）を送り、エディタは「合言葉と乱数から作った証明」（PROOF_HEADER）を返す。
+     * 合言葉を知らない別のプログラムには証明が作れないので、そこへ合言葉を渡さずに済む。
+     */
+    static final String CHALLENGE_HEADER = "X-Datum-Challenge";
+    static final String PROOF_HEADER = "X-Datum-Proof";
     private static final int MAX_BODY = 8 * 1024 * 1024;
 
     private final EditorFrame frame;
@@ -178,7 +190,20 @@ public final class McpService {
                 return;
             }
 
-            // 2) 合言葉を確かめる
+            // 2) 橋渡し役からの「本物か」の問い合わせには、合言葉から作った証明を返す（合言葉そのものは出さない）
+            String challenge = exchange.getRequestHeaders().getFirst(CHALLENGE_HEADER);
+            if (challenge != null && exchange.getRequestHeaders().getFirst("Authorization") == null) {
+                String proof = proof(settings.token, challenge);
+                if (proof == null) {
+                    send(exchange, 400, "Bad Request: bad challenge");
+                    return;
+                }
+                exchange.getResponseHeaders().set(PROOF_HEADER, proof);
+                exchange.sendResponseHeaders(204, -1);
+                return;
+            }
+
+            // 3) 合言葉を確かめる
             if (!tokenMatches(exchange.getRequestHeaders().getFirst("Authorization"))) {
                 exchange.getResponseHeaders().set("WWW-Authenticate", "Bearer");
                 send(exchange, 401, "Unauthorized");
@@ -190,7 +215,7 @@ public final class McpService {
                 return;
             }
 
-            // 3) 中身を読んで、返事を作る
+            // 4) 中身を読んで、返事を作る
             byte[] body;
             try (InputStream in = exchange.getRequestBody()) {
                 body = in.readNBytes(MAX_BODY + 1);
@@ -223,6 +248,24 @@ public final class McpService {
         exchange.sendResponseHeaders(status, bytes.length);
         try (OutputStream out = exchange.getResponseBody()) {
             out.write(bytes);
+        }
+    }
+
+    /**
+     * 合言葉と乱数から作る証明（HMAC-SHA256 の 16 進数）。乱数が決まった形（16 進数 64 文字）でなければ null。
+     * エディタが返し、橋渡し役が自分でも作って比べる。
+     */
+    static String proof(String token, String challenge) {
+        if (token == null || challenge == null || !challenge.matches("[0-9a-f]{64}")) {
+            return null;
+        }
+        try {
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(token.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            // ほかの使いみちの計算と混ざらないよう、決まった前置きを付ける
+            return HexFormat.of().formatHex(mac.doFinal(("datum-editor-proof\n" + challenge).getBytes(StandardCharsets.UTF_8)));
+        } catch (GeneralSecurityException ex) {
+            throw new IllegalStateException(ex);   // HmacSHA256 は、どの Java にも必ずある
         }
     }
 
