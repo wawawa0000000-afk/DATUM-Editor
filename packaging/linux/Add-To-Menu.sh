@@ -7,10 +7,11 @@ Version=1.0
 Type=Application
 Name=DATUM-Editor
 Comment=原稿用紙・縦書き・ルビ対応のテキストエディタ
-Exec=\"$APP_DIR/bin/DATUM-Editor\"
+Exec=\"$APP_DIR/bin/DATUM-Editor\" %F
 Icon=$APP_DIR/lib/DATUM-Editor.png
 Terminal=false
 Categories=Utility;TextEditor;
+MimeType=text/plain;
 "
 MENU_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 mkdir -p "$MENU_DIR"

@@ -1,5 +1,8 @@
 package com.example.minieditor;
 
+import java.nio.file.Path;
+import java.util.List;
+
 import javax.swing.SwingUtilities;
 
 /**
@@ -15,6 +18,12 @@ public class Main {
             return;
         }
 
+        // ファイルを指定して起動されたとき、エディタがもう開いていれば、そちらで開いてもらって終わる
+        List<Path> files = SingleInstance.filesFrom(args);
+        if (!files.isEmpty() && SingleInstance.sendToRunning(files)) {
+            return;
+        }
+
         // Swing の部品は必ず「イベントディスパッチスレッド（EDT）」で作る必要がある。
         // invokeLater でその手順を予約し、画面を作って表示する。
         SwingUtilities.invokeLater(() -> {
@@ -26,6 +35,8 @@ public class Main {
             EditorFrame frame = new EditorFrame();
             frame.restoreSession();     // 前回閉じたときのタブ・分割・ウィンドウの大きさに戻す
             frame.setVisible(true);
+            frame.openFiles(files);     // 起動するときに指定されたファイルを開く
+            SingleInstance.listen(frame::openFiles);    // あとから「このファイルを開いて」と起動されたら、このウィンドウで開く
             frame.startMcpIfEnabled();  // 前回、AI 連携を使っていたら、続きから使えるようにする
             SwingUtilities.invokeLater(frame::offerRecovery);   // 前回、保存されずに終わった文書があれば、復元するかを聞く
         });

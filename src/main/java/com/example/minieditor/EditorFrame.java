@@ -2213,6 +2213,31 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         activeGroup.select(pane);
     }
 
+    /** 起動するときに指定されたファイル（あとから起動されたぶんも）を開いて、ウィンドウを手前に出す。 */
+    void openFiles(List<Path> files) {
+        if (files.isEmpty()) {
+            return;
+        }
+        for (Path path : files) {
+            if (!Files.isRegularFile(path)) {
+                flash("ファイルが見つかりません: " + path);
+                continue;
+            }
+            try {
+                openPath(path, false, false);
+            } catch (IOException ex) {
+                flash(ex.getMessage());
+            }
+        }
+        currentPaneChanged();
+        if ((getExtendedState() & ICONIFIED) != 0) {
+            setExtendedState(getExtendedState() & ~ICONIFIED);     // しまってあったら、元に戻す
+        }
+        toFront();
+        requestFocus();
+        withPane(pane -> SwingUtilities.invokeLater(pane::focusEditor));
+    }
+
     EditorPane openDocument(Path path, boolean vertical) throws IOException {
         return openPath(path, vertical, vertical);
     }
