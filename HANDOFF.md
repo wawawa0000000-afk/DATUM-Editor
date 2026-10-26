@@ -15,6 +15,7 @@
 
 - 最新のコミット: ルビの修正（この節の下の「ルビの修正」）。主役がレビューし、コミットと push をした。
   - その前の `4006526`: 存在しないファイルを指定したら、探した場所（フルパス）をダイアログで知らせ、「新しく作りますか？」と聞く（`EditorFrame.openFiles`・`offerToCreate`）。保存できなかったときの説明をわかりやすくした（`EditorFrame.saveFailure`）。保存と復旧のテスト `SaveTest` を `src/test` に入れた。
+- **自動化（追加）**: `CLAUDE.md`（起動のたびに自動で読まれ、「最初に `HANDOFF.md` を読む」と役割を書いてある）と、`.github/workflows/ci.yml`（push のたびに、Windows で `mvn package`・`RubyTest`・`SaveTest` を自動実行する）を足した。結果は GitHub の Actions のページか、`gh run list` で見られる。利用者がコマンドの結果を中継しなくてよくする狙い。画面の操作が要る確認だけは、これまでどおり利用者に頼む。
 - コミットしていない変更: なし。
 - ビルド: Linux・Windows とも `mvn -q -B package` が通る。`RubyTest`（12項目）と `SaveTest`（17項目）は Linux で全部通った（主役が確認）。
 - 配布 ZIP: まだ作り直していない（`61f2c87` の時点のもの）。Windows の確認が済んだら、主役が `sh packaging/build-all.sh` で4種類とも同じ名前で作り直す。
@@ -46,6 +47,12 @@
 - 保存: 通常の保存と開き直し（C: と Google ドライブ）。メモ帳で変えたあとに保存すると「上書きしますか？」が出る。自動保存は、外部で変わっていると止まって知らせる。
 - 復元: 文字を打って30秒待ち、タスクマネージャーで終了させたあと、起動し直すと「復元しますか」が出て戻る。
 - 部品のテスト（`FileService`・`Recovery` を直接動かす）: 保存13項目（C: と Google ドライブ）、復元8項目、全部通った。
+
+## Windows で確認済み（`2df0aa2`、ルビの修正）
+
+- ビルド: `mvn package` が通る（JDK 27、Maven 3.10.0）。
+- テスト: `RubyTest` 12項目、`SaveTest` 13項目、すべて通った（終了コード 0）。`SaveTest` が Linux の17項目より少ないのは、Windows に権限（POSIX）がなく、リンクも作りにくいため、その項目を飛ばす作りだから。
+- 以後の「ビルドとテスト」は、CI が自動で行う。
 
 ## Windows で未確認
 

@@ -1,0 +1,48 @@
+name: Windows build and test
+
+# push と pull request のたびに、Windows でビルドして、main で動かすテストを実行する。
+# 結果は GitHub の Actions のページに残る（Linux 側のエージェントは `gh run list` で見られる）。
+# 画面の操作が要る確認（ダイアログなど）は、ここでは行わない。HANDOFF.md の「Windows で未確認」に書く。
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      JAVA_TOOL_OPTIONS: -Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Build (mvn package)
+        shell: bash
+        run: mvn -B -q package
+
+      - name: Compile tests
+        shell: bash
+        run: mvn -B -q test-compile
+
+      # src/test のテストは JUnit を使わず main で動かす。1つでも失敗すると終了コード 1 で終わる
+      - name: RubyTest
+        shell: bash
+        run: java -cp "target/classes;target/test-classes" com.example.minieditor.RubyTest
+
+      - name: SaveTest
+        shell: bash
+        run: java -cp "target/classes;target/test-classes" com.example.minieditor.SaveTest
+
+      - name: Upload jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: minieditor-jar
+          path: target/minieditor.jar
+          retention-days: 7
