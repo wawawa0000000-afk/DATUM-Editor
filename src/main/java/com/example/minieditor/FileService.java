@@ -138,12 +138,33 @@ public class FileService {
      *
      * @param secret 合言葉や API キーが入ったファイル（本人だけが読めるようにする）
      */
+    /**
+     * 入れ替えに失敗したときの知らせが、一時ファイル（.名前.数字.tmp）を指していたら、保存先のファイルを指すように作り直す。
+     * 利用者には一時ファイルは見えないので、見覚えのない名前を出さないため（読み取り専用のファイルに保存したときなど）。
+     */
+    private static IOException aboutTarget(java.nio.file.FileSystemException ex, Path target) {
+        String name = ex.getFile() == null ? "" : Path.of(ex.getFile()).getFileName().toString();
+        if (!(name.startsWith("." + target.getFileName() + ".") && name.endsWith(".tmp"))) {
+            return ex;                  // 一時ファイルの話でなければ、そのまま
+        }
+        java.nio.file.FileSystemException fixed = ex instanceof java.nio.file.AccessDeniedException
+                ? new java.nio.file.AccessDeniedException(target.toString(), null, ex.getReason())
+                : new java.nio.file.FileSystemException(target.toString(), null, ex.getReason());
+        fixed.initCause(ex);
+        return fixed;
+    }
+
     public static void writeSafely(Path path, String text, boolean secret) throws IOException {
         // 書けない文字があれば、何も書かないうちに失敗させる（? に置き換えて保存してしまわないように）
         ByteBuffer bytes = StandardCharsets.UTF_8.newEncoder().encode(CharBuffer.wrap(text));
         // ファイルの別名（シンボリックリンク）なら、別名そのものではなく、指している先を書き換える
         Path target = (Files.isSymbolicLink(path) ? path.toRealPath() : path).toAbsolutePath();
-        Path temp = Files.createTempFile(target.getParent(), "." + target.getFileName() + ".", ".tmp");
+        Path temp;
+        try {
+            temp = Files.createTempFile(target.getParent(), "." + target.getFileName() + ".", ".tmp");
+        } catch (java.nio.file.FileSystemException ex) {
+            throw aboutTarget(ex, target);      // フォルダに書けない（Linux の読み取り専用のフォルダなど）
+        }
         try {
             try (FileChannel channel = FileChannel.open(temp, StandardOpenOption.WRITE)) {
                 while (bytes.hasRemaining()) {
@@ -161,9 +182,13 @@ public class FileService {
                 // Windows には、この形の権限がない
             }
             try {
-                Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-            } catch (AtomicMoveNotSupportedException ex) {
-                Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
+                try {
+                    Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                } catch (AtomicMoveNotSupportedException ex) {
+                    Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
+                }
+            } catch (java.nio.file.FileSystemException ex) {
+                throw aboutTarget(ex, target);  // 入れ替えられない（Windows の読み取り専用のファイルなど）
             }
         } finally {
             Files.deleteIfExists(temp);  // うまく入れ替えられなかったときだけ残っている

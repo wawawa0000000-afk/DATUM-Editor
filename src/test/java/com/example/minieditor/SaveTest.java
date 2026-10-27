@@ -33,6 +33,7 @@ public class SaveTest {
         try {
             saving(dir.resolve("save"));
             recovery(dir.resolve("recovery"));
+            readOnly(dir.resolve("readonly"));
         } finally {
             try (Stream<Path> walk = Files.walk(dir)) {
                 for (Path p : walk.sorted(java.util.Comparator.reverseOrder()).toList()) {
@@ -137,6 +138,26 @@ public class SaveTest {
         check(same.leftovers().size() == 1, "同じ番号だった前回の控えも、復元の候補に出る");
         same.clear();
         check(Files.exists(leftover.resolve("1.json")), "ふつうに終了しても、同じ番号だった前回の控えは消さない");
+    }
+
+    /** 書けない場所に保存したとき、知らせに出るのは保存先の名前（一時ファイルの名前ではない）。 */
+    private static void readOnly(Path dir) throws Exception {
+        Files.createDirectories(dir);
+        if (!dir.getFileSystem().supportedFileAttributeViews().contains("posix")) {
+            return;                     // Windows では、フォルダを読み取り専用にしても書けてしまうので、確かめない
+        }
+        Path file = dir.resolve("読み取り専用.txt");
+        Files.writeString(file, "元");
+        Files.setPosixFilePermissions(dir, PosixFilePermissions.fromString("r-xr-xr-x"));
+        try {
+            FileService.writeSafely(file, "新", false);
+            check(false, "書けない場所には保存できない");
+        } catch (java.nio.file.FileSystemException ex) {
+            check(file.toAbsolutePath().toString().equals(ex.getFile()), "保存できないときの知らせは、一時ファイルではなく保存先を指す");
+        } finally {
+            Files.setPosixFilePermissions(dir, PosixFilePermissions.fromString("rwxr-xr-x"));
+        }
+        check(Files.readString(file).equals("元"), "保存できなくても、元の中身は無事");
     }
 
     private static long count(Path dir) throws IOException {
