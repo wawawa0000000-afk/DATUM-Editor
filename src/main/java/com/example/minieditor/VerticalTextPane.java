@@ -930,10 +930,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
             int sheets = Math.max(column / SHEET_COLUMNS + 1, (usedCols + SHEET_COLUMNS - 1) / SHEET_COLUMNS);
             status = "原稿用紙 " + (column / SHEET_COLUMNS + 1) + " / " + sheets + " 枚    " + status;
         }
-        if (selectionEnd() > selectionStart()) {
-            status += "（" + (selectionEnd() - selectionStart()) + " 文字を選択）";
-        }
-        return status + "    " + text.length() + " 文字";
+        return status;
     }
 
     /** position が何行目か（1 から）。行の始まりの表を作っておき、半分ずつ探す。 */

@@ -269,12 +269,7 @@ public class TextEditorPane extends EditorPane implements Searchable {
         } catch (BadLocationException ex) {
             // カーソル位置は必ず文書の中にあるので、通常は起きない
         }
-        String status = "行 " + line + ", 列 " + column;
-        int selected = area.getSelectionEnd() - area.getSelectionStart();
-        if (selected > 0) {
-            status += "（" + selected + " 文字を選択）";
-        }
-        return status + "    " + area.getDocument().getLength() + " 文字";
+        return "行 " + line + ", 列 " + column;
     }
 
     @Override

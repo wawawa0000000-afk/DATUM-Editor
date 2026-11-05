@@ -111,6 +111,67 @@ public final class WritingStats {
         return 0;
     }
 
+    /** ステータスバーに出す字数の数え方。 */
+    public enum CountMode {
+        ALL("all", "全体"),
+        NO_SPACE("noSpace", "空白・改行を除く"),
+        BODY("body", "ルビ・改行を除く");
+
+        public final String id;
+        public final String label;
+
+        CountMode(String id, String label) {
+            this.id = id;
+            this.label = label;
+        }
+
+        /** 設定の名前から選ぶ。知らない名前は「全体」にする。 */
+        public static CountMode fromId(String id) {
+            for (CountMode mode : values()) {
+                if (mode.id.equals(id)) {
+                    return mode;
+                }
+            }
+            return ALL;
+        }
+    }
+
+    /**
+     * 文字列の字数。単位はコードポイント（𠮷 のようなサロゲートペアは1字）。
+     * rubyNotation が true なら、記法（｜親文字《ルビ》）を含む横書きとして読む。ルビを除くモードでは、親文字だけを数える。
+     * 結合文字（か＋濁点の U+3099 など）は、別々に1字と数える。
+     */
+    public static int countChars(String text, CountMode mode, boolean rubyNotation) {
+        String body = mode == CountMode.BODY && rubyNotation ? NarouRuby.strip(text) : text;
+        int n = 0;
+        for (int i = 0; i < body.length(); ) {
+            int c = body.codePointAt(i);
+            i += Character.charCount(c);
+            boolean space = Character.isWhitespace(c) || Character.isSpaceChar(c);
+            if (mode == CountMode.ALL
+                    || mode == CountMode.NO_SPACE && !space
+                    || mode == CountMode.BODY && c != '\n') {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    /**
+     * ステータスバーに出す字数。「N 字（数え方）」のあとに、選んでいるときだけ「選択 M 字」を続ける。
+     * 選んだ範囲の字数も、同じ数え方で数える。
+     */
+    public static String charCountText(Searchable pane, CountMode mode, boolean rubyNotation) {
+        String text = pane.getText();
+        String status = String.format("%,d", countChars(text, mode, rubyNotation)) + " 字（" + mode.label + "）";
+        int start = Math.min(pane.getSelectionStart(), text.length());
+        int end = Math.min(pane.getSelectionEnd(), text.length());
+        if (end > start) {
+            status += "    選択 " + String.format("%,d", countChars(text.substring(start, end), mode, rubyNotation)) + " 字";
+        }
+        return status;
+    }
+
     /** 400字詰め原稿用紙に換算した枚数（1行20字・20行。段落ごとに行を改める）。 */
     public static int manuscriptSheets(String text) {
         // 段落ごとに文字数を数える（split で段落の文字列を作らずに、1回たどるだけにする）

@@ -30,6 +30,7 @@ public final class AppSettings {
     public static final String AUTO_SAVE = "autoSaveToFile";        // 保存済みのファイルを自動で上書き保存するか
     public static final String HISTORY_LIMIT = "historyLimit";      // 1つのファイルにつき残す版の数
     public static final String DAILY_GOAL = "dailyGoal";            // 1日の目標字数（0 なら目標なし）
+    public static final String COUNT_MODE = "countMode";            // ステータスバーの字数の数え方 "all" / "noSpace" / "body"
     public static final String DAILY = "daily";                     // 日ごとの執筆量 {"2026-10-17": 1234}
     public static final String SESSION = "session";                 // 前回閉じたときの状態（タブ・分割・ウィンドウ）
     public static final String SIDEBAR_FOLDER = "sidebarFolder";    // サイドバーに表示するフォルダ

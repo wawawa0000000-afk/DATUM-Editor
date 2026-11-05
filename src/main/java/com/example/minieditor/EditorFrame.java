@@ -386,6 +386,17 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             schemeMenu.add(schemeItem);
         }
         view.add(schemeMenu);
+        // ステータスバーの字数の数え方（選ぶとすぐに変わる）
+        JMenu countMenu = new JMenu("文字数の数え方");
+        javax.swing.ButtonGroup countGroup = new javax.swing.ButtonGroup();
+        WritingStats.CountMode currentCount = WritingStats.CountMode.fromId(appSettings.getString(AppSettings.COUNT_MODE, "all"));
+        for (WritingStats.CountMode mode : WritingStats.CountMode.values()) {
+            javax.swing.JRadioButtonMenuItem countItem = new javax.swing.JRadioButtonMenuItem(mode.label, mode == currentCount);
+            countItem.addActionListener(e -> setCountMode(mode));
+            countGroup.add(countItem);
+            countMenu.add(countItem);
+        }
+        view.add(countMenu);
         JCheckBoxMenuItem stripeItem = new JCheckBoxMenuItem("行の縞模様", Theme.stripes);
         stripeItem.addActionListener(e -> {
             Theme.stripes = stripeItem.isSelected();
@@ -1584,8 +1595,20 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         String sheets = pane instanceof TextEditorPane text && Edition.has(Edition.VERTICAL)
                 ? "    原稿用紙換算 " + sheetCache.computeIfAbsent(text.firstView(), p -> WritingStats.manuscriptSheets(text.getText())) + " 枚"
                 : "";
-        statusRight.setText(pane.statusText() + sheets + "    UTF-8    " + format
+        // 字数は、設定の数え方で数える（横書きは記法を含むので、ルビを除くモードでは親文字だけを数える）
+        String count = pane instanceof Searchable s
+                ? "    " + WritingStats.charCountText(s, WritingStats.CountMode.fromId(appSettings.getString(AppSettings.COUNT_MODE, "all")),
+                        pane instanceof TextEditorPane)
+                : "";
+        statusRight.setText(pane.statusText() + count + sheets + "    UTF-8    " + format
                 + (mcp.isRunning() ? "    AI 連携中" : ""));
+    }
+
+    /** 字数の数え方を変える。ステータスバーにすぐ出し、設定にも残す。 */
+    private void setCountMode(WritingStats.CountMode mode) {
+        appSettings.put(AppSettings.COUNT_MODE, mode.id);
+        appSettings.save();
+        updateStatus();
     }
 
     /** ステータスバーに、数秒だけお知らせを出す（ポップアップで作業を止めないため）。 */
