@@ -27,6 +27,7 @@ import javax.swing.event.DocumentListener;
  *
  * 入力するたびに一致箇所をすべて色付けし、Enter / Shift+Enter で前後に移動する。
  * 相手の文書は Searchable という約束だけを通して操作するので、横書きでも縦書きでも同じ処理で動く。
+ * 一致を探すのは FindMatcher に任せる（正規表現・大文字小文字・時間切れの扱いもそこ）。
  */
 public class FindBar extends JPanel {
 
@@ -36,9 +37,14 @@ public class FindBar extends JPanel {
     private final JTextField replaceField = new JTextField(18);
     private final JLabel countLabel = new JLabel(" ");
     private final JButton caseButton = Theme.flatButton("Aa");
+    private final JButton regexButton = Theme.flatButton(".*");
+    private final JButton selectionButton = Theme.flatButton("選択内");
     private final JPanel replaceRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
 
     private boolean caseSensitive = false;
+    private boolean regexMode = false;      // 正規表現で検索するか
+    private boolean selectionOnly = false;  // 選んでいる範囲の中だけを検索するか
+    private int[] selectionScope;           // 最後に選んでいた範囲（一致へ移ると選びが消えるので、覚えておく）
     private int lastStart = 0;          // 今いる一致箇所の、始まりと終わり
     private int lastEnd = 0;
     private final List<int[]> replaced = new ArrayList<>();    // 置換した範囲（緑で表示する）
@@ -65,16 +71,25 @@ public class FindBar extends JPanel {
         caseButton.setToolTipText("大文字と小文字を区別する");
         caseButton.addActionListener(e -> {
             caseSensitive = !caseSensitive;
-            caseButton.setForeground(caseSensitive ? Theme.FG_STRONG : Theme.FG_DIM);
-            caseButton.setBorder(BorderFactory.createCompoundBorder(
-                    BorderFactory.createLineBorder(caseSensitive ? Theme.ACCENT : Theme.INPUT),
-                    BorderFactory.createEmptyBorder(3, 11, 3, 11)));
+            styleToggle(caseButton, caseSensitive);
             refresh(true);
         });
-        caseButton.setForeground(Theme.FG_DIM);
-        caseButton.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(Theme.INPUT),
-                BorderFactory.createEmptyBorder(3, 11, 3, 11)));
+        styleToggle(caseButton, false);
+        regexButton.setToolTipText("正規表現で検索する");
+        regexButton.addActionListener(e -> {
+            regexMode = !regexMode;
+            styleToggle(regexButton, regexMode);
+            refresh(true);
+        });
+        styleToggle(regexButton, false);
+        selectionButton.setToolTipText("選んでいる範囲の中だけを検索する");
+        selectionButton.addActionListener(e -> {
+            selectionOnly = !selectionOnly;
+            styleToggle(selectionButton, selectionOnly);
+            refresh(true);
+        });
+        styleToggle(selectionButton, false);
+        selectionButton.setEnabled(false);
         JButton closeButton = Theme.flatButton("×");
         closeButton.setToolTipText("閉じる（Esc）");
         closeButton.addActionListener(e -> close());
@@ -89,6 +104,8 @@ public class FindBar extends JPanel {
         findRow.add(label("検索"));
         findRow.add(findField);
         findRow.add(caseButton);
+        findRow.add(regexButton);
+        findRow.add(selectionButton);
         findRow.add(previousButton);
         findRow.add(nextButton);
         findRow.add(countLabel);
@@ -154,6 +171,14 @@ public class FindBar extends JPanel {
         });
     }
 
+    /** 「Aa」「.*」「選択内」の切り替えボタンの見た目。on のときは枠を青にする。 */
+    private static void styleToggle(JButton button, boolean on) {
+        button.setForeground(on ? Theme.FG_STRONG : Theme.FG_DIM);
+        button.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(on ? Theme.ACCENT : Theme.INPUT),
+                BorderFactory.createEmptyBorder(3, 11, 3, 11)));
+    }
+
     // ---------- 開く・閉じる ----------
 
     /** バーを表示する。withReplace が true なら、置換の行も出す。 */
@@ -163,12 +188,14 @@ public class FindBar extends JPanel {
         revalidate();
         findField.requestFocusInWindow();
         findField.selectAll();
+        rememberSelection();
         refresh(false);
     }
 
     public void close() {
         clearHighlights();
         replaced.clear();
+        selectionScope = null;
         setVisible(false);
         EditorPane pane = currentPane.get();
         if (pane != null) {
@@ -181,6 +208,7 @@ public class FindBar extends JPanel {
         if (highlighted != currentPane.get()) {
             clearHighlights();
             replaced.clear();
+            selectionScope = null;
             lastStart = 0;
             lastEnd = 0;
         }
@@ -195,6 +223,7 @@ public class FindBar extends JPanel {
             return;
         }
         replaced.clear();               // 位置がずれるので、緑の表示はやめる
+        selectionScope = null;          // 選んでいた範囲の位置も、ずれているかもしれないので、覚えない
         refresh(false);
     }
 
@@ -209,50 +238,61 @@ public class FindBar extends JPanel {
         return currentPane.get() instanceof Searchable s ? s : null;
     }
 
-    /** 一致する場所を、先頭から順にすべて集める。 */
-    private List<Integer> findAll(String text, String keyword) {
-        List<Integer> positions = new ArrayList<>();
-        if (keyword.isEmpty()) {
-            return positions;           // 空欄は「一致なし」にする（ここを抜かすと、無限に見つかり続ける）
+    /**
+     * 選んでいる範囲があれば覚え、「選択内」ボタンを使えるかを決める。
+     * 一致へ移ると（reveal で）選びが消えるので、覚えておいた範囲で検索を続ける。
+     */
+    private void rememberSelection() {
+        Searchable s = target();
+        if (s != null && s.getSelectionStart() < s.getSelectionEnd()) {
+            selectionScope = new int[]{s.getSelectionStart(), s.getSelectionEnd()};
         }
-        if (caseSensitive) {
-            int index = text.indexOf(keyword);
-            while (index >= 0) {
-                positions.add(index);
-                index = text.indexOf(keyword, index + keyword.length());
-            }
-            return positions;
+        selectionButton.setEnabled(selectionScope != null);
+    }
+
+    /** 検索する範囲。「選択内」のときは覚えておいた範囲（なければ、文書全体）。 */
+    private int[] searchRange(int length) {
+        if (selectionOnly && selectionScope != null && selectionScope[1] <= length) {
+            return selectionScope;
         }
-        // toLowerCase で文章ごと変えると、İ などで長さが変わり、見つけた位置が本文とずれる。
-        // 1文字ずつ大文字・小文字を区別せずに比べれば、位置も長さも本文のまま
-        int length = keyword.length();
-        for (int i = 0; i + length <= text.length(); i++) {
-            if (text.regionMatches(true, i, keyword, 0, length)) {
-                positions.add(i);
-                i += length - 1;
-            }
-        }
-        return positions;
+        return new int[]{0, length};
+    }
+
+    /** 今の設定で、一致をすべて集める。エラーがあれば、その中身が Result.error に入る。 */
+    private FindMatcher.Result findAll(String text, String keyword, String replacement) {
+        rememberSelection();
+        int[] range = searchRange(text.length());
+        return FindMatcher.find(text, keyword, replacement, regexMode, caseSensitive, range[0], range[1]);
     }
 
     /** from 以上で一番近い一致。なければ先頭に戻る。 */
-    private static int nextFrom(List<Integer> positions, int from) {
-        for (int p : positions) {
-            if (p >= from) {
-                return p;
+    private static FindMatcher.Hit nextFrom(List<FindMatcher.Hit> hits, int from) {
+        for (FindMatcher.Hit hit : hits) {
+            if (hit.start() >= from) {
+                return hit;
             }
         }
-        return positions.get(0);
+        return hits.get(0);
     }
 
     /** from より前で一番近い一致。なければ最後に戻る。 */
-    private static int previousFrom(List<Integer> positions, int from) {
-        for (int i = positions.size() - 1; i >= 0; i--) {
-            if (positions.get(i) < from) {
-                return positions.get(i);
+    private static FindMatcher.Hit previousFrom(List<FindMatcher.Hit> hits, int from) {
+        for (int i = hits.size() - 1; i >= 0; i--) {
+            if (hits.get(i).start() < from) {
+                return hits.get(i);
             }
         }
-        return positions.get(positions.size() - 1);
+        return hits.get(hits.size() - 1);
+    }
+
+    /** 始まりが start の一致。なければ null。 */
+    private static FindMatcher.Hit hitAt(List<FindMatcher.Hit> hits, int start) {
+        for (FindMatcher.Hit hit : hits) {
+            if (hit.start() == start) {
+                return hit;
+            }
+        }
+        return null;
     }
 
     /** 今の場所を保ったまま、検索し直す。 */
@@ -263,14 +303,20 @@ public class FindBar extends JPanel {
             return;
         }
         String keyword = findField.getText();
-        List<Integer> positions = findAll(s.getText(), keyword);
-        if (positions.isEmpty()) {
-            show(s, positions, keyword.length(), -1, false);
+        FindMatcher.Result result = findAll(s.getText(), keyword, replaceField.getText());
+        if (result.error() != null) {
+            showError(s, result.error());
             return;
         }
-        lastStart = nextFrom(positions, lastStart);
-        lastEnd = lastStart + keyword.length();
-        show(s, positions, keyword.length(), lastStart, reveal);
+        List<FindMatcher.Hit> hits = result.hits();
+        if (hits.isEmpty()) {
+            show(s, hits, -1, false);
+            return;
+        }
+        FindMatcher.Hit current = nextFrom(hits, lastStart);
+        lastStart = current.start();
+        lastEnd = current.end();
+        show(s, hits, lastStart, reveal);
     }
 
     /** 次（forward が true）または前の一致へ移る。 */
@@ -281,35 +327,47 @@ public class FindBar extends JPanel {
             return;
         }
         String keyword = findField.getText();
-        List<Integer> positions = findAll(s.getText(), keyword);
-        if (positions.isEmpty()) {
-            show(s, positions, keyword.length(), -1, false);
+        FindMatcher.Result result = findAll(s.getText(), keyword, replaceField.getText());
+        if (result.error() != null) {
+            showError(s, result.error());
             return;
         }
-        lastStart = forward ? nextFrom(positions, lastEnd) : previousFrom(positions, lastStart);
-        lastEnd = lastStart + keyword.length();
-        show(s, positions, keyword.length(), lastStart, true);
+        List<FindMatcher.Hit> hits = result.hits();
+        if (hits.isEmpty()) {
+            show(s, hits, -1, false);
+            return;
+        }
+        FindMatcher.Hit current = forward ? nextFrom(hits, lastEnd) : previousFrom(hits, lastStart);
+        lastStart = current.start();
+        lastEnd = current.end();
+        show(s, hits, lastStart, true);
     }
 
     /** 結果を画面に出す。current が今いる一致の始まり（なければ -1）。 */
-    private void show(Searchable s, List<Integer> positions, int length, int current, boolean reveal) {
+    private void show(Searchable s, List<FindMatcher.Hit> hits, int current, boolean reveal) {
         List<EditorPane.Highlight> highlights = new ArrayList<>();
         for (int[] range : replaced) {
             highlights.add(new EditorPane.Highlight(range[0], range[1], Theme.REPLACED));
         }
-        for (int start : positions) {
-            highlights.add(new EditorPane.Highlight(start, start + length,
-                    start == current ? Theme.MATCH_CURRENT : Theme.MATCH));
+        for (FindMatcher.Hit hit : hits) {
+            highlights.add(new EditorPane.Highlight(hit.start(), hit.end(),
+                    hit.start() == current ? Theme.MATCH_CURRENT : Theme.MATCH));
         }
         s.setHighlights(highlights);
         highlighted = currentPane.get();
 
+        int index = -1;
+        for (int i = 0; i < hits.size(); i++) {
+            if (hits.get(i).start() == current) {
+                index = i;
+            }
+        }
         if (findField.getText().isEmpty()) {
             setCount(" ", Theme.FG);
-        } else if (positions.isEmpty()) {
+        } else if (hits.isEmpty()) {
             setCount("見つかりません", Theme.ERROR);
         } else {
-            setCount((positions.indexOf(current) + 1) + " / " + positions.size() + " 件", Theme.FG);
+            setCount((index + 1) + " / " + hits.size() + " 件", Theme.FG);
         }
         if (reveal && current >= 0) {
             s.reveal(current);
@@ -325,6 +383,12 @@ public class FindBar extends JPanel {
         setCount("この文書は検索できません", Theme.ERROR);
     }
 
+    /** 検索の欄に出すエラー（不正な正規表現など）。一致は消す。 */
+    private void showError(Searchable s, String error) {
+        show(s, List.of(), -1, false);
+        setCount(error, Theme.ERROR);
+    }
+
     private void clearHighlights() {
         if (highlighted instanceof Searchable s) {
             s.setHighlights(List.of());
@@ -334,7 +398,7 @@ public class FindBar extends JPanel {
 
     // ---------- 置換 ----------
 
-    /** 今いる一致箇所を置き換えて、次へ進む。 */
+    /** 今いる一致箇所を置き換えて、次へ進む。ルビ記号をまたぐものは置き換えず、次へ進む。 */
     private void replaceOne() {
         Searchable s = target();
         if (s == null) {
@@ -342,21 +406,34 @@ public class FindBar extends JPanel {
             return;
         }
         String keyword = findField.getText();
-        List<Integer> positions = findAll(s.getText(), keyword);
-        if (positions.isEmpty()) {
-            show(s, positions, keyword.length(), -1, false);
+        String text = s.getText();
+        FindMatcher.Result result = findAll(text, keyword, replaceField.getText());
+        if (result.error() != null) {
+            showError(s, result.error());
             return;
         }
-        if (!positions.contains(lastStart) || lastEnd != lastStart + keyword.length()) {
+        List<FindMatcher.Hit> hits = result.hits();
+        if (hits.isEmpty()) {
+            show(s, hits, -1, false);
+            return;
+        }
+        FindMatcher.Hit hit = hitAt(hits, lastStart);
+        if (hit == null || hit.end() != lastEnd) {
             move(true);                 // まだ一致箇所の上にいなければ、先に探す
             return;
         }
 
-        String replacement = replaceField.getText();
-        int start = lastStart;
-        int delta = replacement.length() - keyword.length();
+        if (FindMatcher.touchesRuby(text.substring(hit.start(), hit.end()), hit.replacement())) {
+            move(true);                 // ルビ記号をまたぐので、置き換えずに次へ
+            setCount(rubySkipped(1), Theme.FG);
+            return;
+        }
+
+        int start = hit.start();
+        int length = hit.replacement().length();
+        int delta = length - (hit.end() - hit.start());
         internalEdit = true;
-        s.replaceRange(replacement, start, start + keyword.length());
+        s.replaceRange(hit.replacement(), start, hit.end());
         internalEdit = false;
 
         // 置換した場所より後ろにある緑の範囲は、文字数の差だけずらす
@@ -366,24 +443,33 @@ public class FindBar extends JPanel {
                 range[1] += delta;
             }
         }
-        if (!replacement.isEmpty()) {
-            replaced.add(new int[]{start, start + replacement.length()});
+        if (length > 0) {
+            replaced.add(new int[]{start, start + length});
         }
-        lastStart = start + replacement.length();
+        if (selectionScope != null) {
+            selectionScope[1] += delta;
+        }
+        lastStart = start + length;
         lastEnd = lastStart;
 
-        positions = findAll(s.getText(), keyword);
-        if (positions.isEmpty()) {
-            show(s, positions, keyword.length(), -1, false);
+        result = findAll(s.getText(), keyword, replaceField.getText());
+        if (result.error() != null) {
+            showError(s, result.error());
+            return;
+        }
+        hits = result.hits();
+        if (hits.isEmpty()) {
+            show(s, hits, -1, false);
             setCount("置換しました（残り 0 件）", Theme.FG);
             return;
         }
-        lastStart = nextFrom(positions, lastEnd);
-        lastEnd = lastStart + keyword.length();
-        show(s, positions, keyword.length(), lastStart, true);
+        FindMatcher.Hit next = nextFrom(hits, lastEnd);
+        lastStart = next.start();
+        lastEnd = next.end();
+        show(s, hits, lastStart, true);
     }
 
-    /** 一致するものを、すべて置き換える。 */
+    /** 一致するものを、すべて置き換える。ルビ記号をまたぐものは置き換えない。 */
     private void replaceAll() {
         Searchable s = target();
         if (s == null) {
@@ -392,33 +478,57 @@ public class FindBar extends JPanel {
         }
         String keyword = findField.getText();
         String text = s.getText();
-        List<Integer> positions = findAll(text, keyword);
-        if (positions.isEmpty()) {
-            show(s, positions, keyword.length(), -1, false);
+        FindMatcher.Result result = findAll(text, keyword, replaceField.getText());
+        if (result.error() != null) {
+            showError(s, result.error());
+            return;
+        }
+        List<FindMatcher.Hit> hits = result.hits();
+        if (hits.isEmpty()) {
+            show(s, hits, -1, false);
             return;
         }
 
         // 見つけた場所だけを置き換える（全文を入れ替えると、縦書きのルビや傍点が外れてしまうため）。
         // あわせて、置き換えたあとの文章の中での「置き換えた場所」を覚えておく
-        String replacement = replaceField.getText();
         List<Searchable.Replacement> replacements = new ArrayList<>();
         replaced.clear();
         int shift = 0;                  // それまでの置き換えで、位置がどれだけずれたか
-        for (int pos : positions) {
-            replacements.add(new Searchable.Replacement(pos, pos + keyword.length(), replacement));
-            if (!replacement.isEmpty()) {
-                replaced.add(new int[]{pos + shift, pos + shift + replacement.length()});
+        int skipped = 0;                // ルビ記号をまたぐので、置き換えなかった数
+        for (FindMatcher.Hit hit : hits) {
+            if (FindMatcher.touchesRuby(text.substring(hit.start(), hit.end()), hit.replacement())) {
+                skipped++;
+                continue;
             }
-            shift += replacement.length() - keyword.length();
+            int length = hit.replacement().length();
+            replacements.add(new Searchable.Replacement(hit.start(), hit.end(), hit.replacement()));
+            if (length > 0) {
+                replaced.add(new int[]{hit.start() + shift, hit.start() + shift + length});
+            }
+            shift += length - (hit.end() - hit.start());
         }
 
-        internalEdit = true;
-        s.replaceRanges(replacements);
-        internalEdit = false;
+        if (!replacements.isEmpty()) {
+            internalEdit = true;
+            s.replaceRanges(replacements);
+            internalEdit = false;
+        }
+        if (selectionScope != null) {
+            selectionScope[1] += shift;
+        }
         lastStart = 0;
         lastEnd = 0;
 
-        show(s, new ArrayList<>(), keyword.length(), -1, false);
-        setCount(positions.size() + " 件を置換しました", Theme.FG);
+        show(s, new ArrayList<>(), -1, false);
+        String message = (hits.size() - skipped) + " 件を置換しました";
+        if (skipped > 0) {
+            message += "（" + rubySkipped(skipped) + "）";
+        }
+        setCount(message, Theme.FG);
+    }
+
+    /** ルビ記号をまたぐので置き換えなかったことを伝える文。 */
+    private static String rubySkipped(int count) {
+        return "ルビ記号をまたぐ " + count + " 件は置換しませんでした";
     }
 }
