@@ -8,12 +8,8 @@ cd "$(dirname "$0")/.."
 WORK=$(mktemp -d)
 mkdir -p "$WORK/in" dist
 edition_jar "$WORK/in"
-jpackage --type app-image \
-  --name DATUM-Editor --app-version "$VERSION" --vendor wazaseisakujo \
-  --input "$WORK/in" --main-jar minieditor.jar --main-class com.example.minieditor.Main \
-  --add-modules java.desktop,jdk.httpserver,java.net.http \
-  --icon src/main/resources/icon.png \
-  --dest "$WORK"
+make_app_image "$WORK"      # 同梱の Java で、フォルダのままの版を作る
+add_app_cds "$WORK"         # 起動を速くするアーカイブを、同じ版から作って入れる
 cp LICENSE README.md packaging/linux/Add-To-Menu.sh packaging/linux/Add-Command.sh packaging/linux/START-HERE.txt "$WORK/DATUM-Editor/"
 chmod +x "$WORK/DATUM-Editor/Add-To-Menu.sh" "$WORK/DATUM-Editor/Add-Command.sh"
 OUT="$(pwd)/dist/$PRODUCT-$VERSION-linux-x64.tar.gz"

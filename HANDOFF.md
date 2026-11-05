@@ -402,3 +402,18 @@ Windows で確かめてほしいこと（画面の操作が要る。「Windows �
 - 代わりの符号（私用領域）は、1つの PDF で6400種類まで。それを超える種類のサロゲートペアの文字は、文字の層に入らない（画像には出る）。
 - 本文の文字が私用領域の文字と重なる場合は、その代わりの番号を使わない（`reserveText`）。`PdfWriter.addPage` を直接、`reserveText` を呼ばずに使うと、符号が重なったときに例外になる（今の呼び方はすべて `PagePrinter` 経由で、呼んでいる）。
 - 確かめていないこと：Windows での動き（CI で `PdfTextTest` は動く。pdftotext が無い環境では取り出しの項目が「確認できなかった」になる）。上の「Windows で未確認」の画面操作。
+
+## 並列エージェントの報告（起動の速さ: AppCDS。Linux 側はコミット済み。主役がレビューした）
+
+変えたファイル: `packaging/edition.sh`（`make_app_image`・`add_app_cds` を追加）、`packaging/build-linux-portable.sh`（tar.gz を、フォルダ版からの作り方に変更）、`packaging/build-linux-deb.sh`（フォルダ版から .deb を作る。AppCDS は入れない）。Java のソース（src/main）は変えていない。
+
+計測（画面にウィンドウが出るまで、各5回の中央値）:
+- 開発用 jar を直接起動: 266ms → 165ms（約 38% 短縮）。
+- Linux tar.gz: 540ms → 346ms（約 36% 短縮）。サイズは 30.4MB → 44.5MB。
+- .deb は AppCDS なし（jpackage の作成中にファイルの時刻が変わり、アーカイブが使われなくなるため）。
+
+確かめたこと: アーカイブが使われている（class+load のログ）。アーカイブを消す・壊すと、表示なしで普通に起動する（`-Xlog:disable`）。9本のテストは通った。
+
+**保留（承認が要る）**: Windows の `DATUM-Editor.bat` に AppCDS を入れる変更は、コミットしていない。変更の内容は `scratchpad/appcds-windows-bat.patch` にある。承認された方針は「配布の時に作る」だったが、Linux からは Windows 用のアーカイブを作れない。実装役は「初回起動時に `-XX:+AutoCreateSharedArchive` で作る」方式にしたが、アプリのフォルダに約 14MB のファイルが増える。これは承認の範囲外のため、取り消した。選択肢: (A) 初回起動時に作る方式を承認する（Windows で確かめてから入れる）／(B) Windows は AppCDS なしのまま。
+
+残った課題: .deb での AppCDS。Java 側の遅延（EditorFrame など）は効果を測っていないので入れていない。

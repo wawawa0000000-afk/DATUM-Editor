@@ -25,3 +25,37 @@ edition_jar() {
   (cd "$EDITION_TMP" && zip -q "$1/minieditor.jar" edition.properties)
   rm -rf "$EDITION_TMP"
 }
+
+# jpackage で、フォルダのままの版（$1/DATUM-Editor/）を作る。同梱の Java の共有データ（基本の分）も入れて、起動を速くする。
+# 先に edition_jar で jar を「$1/in」に置いておくこと。
+make_app_image() {
+  jpackage --type app-image --name DATUM-Editor --app-version "$VERSION" --vendor wazaseisakujo \
+    --input "$1/in" --main-jar minieditor.jar --main-class com.example.minieditor.Main \
+    --add-modules java.desktop,jdk.httpserver,java.net.http \
+    --icon src/main/resources/icon.png \
+    --jlink-options '--generate-cds-archive' \
+    --java-options '-Xlog:disable' \
+    --dest "$1"
+  # 同梱の Java の共有データは、ふつうの設定の分（classes.jsa）だけ残す（配布を小さくするため。外した分の設定では、普通に起動する）
+  rm -f "$1/DATUM-Editor/lib/runtime/lib/server/classes_nocoh.jsa" "$1/DATUM-Editor/lib/runtime/lib/server/classes_nocoops.jsa" \
+    "$1/DATUM-Editor/lib/runtime/lib/server/classes_nocoops_nocoh.jsa"
+}
+
+# 起動を速くする AppCDS のアーカイブ（minieditor.jsa）を、その版の Java と jar から作り、起動の指定に加える（$1 は make_app_image の場所）。
+# アーカイブは、配る中身と同じ Java・同じ jar から作る（別の Java や古い jar のものは使われない）。
+# 作れなかったときも配布は止めない。JVM は使えないアーカイブを黙って捨てて、普通に起動する（-Xlog:disable で表示も消す）。
+add_app_cds() {
+  CFG="$1/DATUM-Editor/lib/app/DATUM-Editor.cfg"
+  # 練習の起動で、アーカイブを作る（利用者の設定フォルダには入らないように、一時フォルダを使う）
+  CDS_TMP=$(mktemp -d)
+  cp "$CFG" "$CDS_TMP/cfg.orig"
+  printf 'java-options=-XX:ArchiveClassesAtExit=$APPDIR/minieditor.jsa\n' >> "$CFG"
+  HOME="$CDS_TMP" DATUM_EDITOR_CONFIG_DIR="$CDS_TMP/config" timeout -s TERM 5 "$1/DATUM-Editor/bin/DATUM-Editor" >/dev/null 2>&1 || true
+  mv "$CDS_TMP/cfg.orig" "$CFG"
+  rm -rf "$CDS_TMP"
+  if [ -s "$1/DATUM-Editor/lib/app/minieditor.jsa" ]; then
+    printf 'java-options=-XX:SharedArchiveFile=$APPDIR/minieditor.jsa\n' >> "$CFG"
+  else
+    echo "注意: AppCDS のアーカイブが作れませんでした（配布は作ります。起動は普通どおりになります）。"
+  fi
+}

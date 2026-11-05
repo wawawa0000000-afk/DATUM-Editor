@@ -8,13 +8,12 @@ cd "$(dirname "$0")/.."
 WORK=$(mktemp -d)
 mkdir -p "$WORK/in" dist
 edition_jar "$WORK/in"
-jpackage --type deb \
+# フォルダのままの版を作り（同梱の Java の共有データを入れる）、それを .deb にする。AppCDS のアーカイブは、.deb の作る過程で時刻が変わって使えなくなるので入れない
+make_app_image "$WORK"
+jpackage --type deb --app-image "$WORK/DATUM-Editor" \
   --name DATUM-Editor --linux-package-name datum-editor \
   --app-version "$VERSION" --vendor wazaseisakujo \
   --description "Text editor with manuscript paper, vertical writing and ruby" \
-  --input "$WORK/in" --main-jar minieditor.jar --main-class com.example.minieditor.Main \
-  --add-modules java.desktop,jdk.httpserver,java.net.http \
-  --icon src/main/resources/icon.png \
   --linux-shortcut --linux-menu-group "Utility;TextEditor;" --linux-app-category text \
   --license-file LICENSE \
   --dest dist
