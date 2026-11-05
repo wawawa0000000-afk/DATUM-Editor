@@ -195,6 +195,9 @@ public final class Proofreader {
     private static final Pattern SINGLE_DASH = Pattern.compile("(?<!―)―(?!―)");
     private static final Pattern NO_SPACE_AFTER_MARK = Pattern.compile("[！？]+(?=[^\\s　！？!?」』）)\\]】])");
     private static final Pattern PERIOD_BEFORE_CLOSE = Pattern.compile("。(?=[」』])");
+    private static final Pattern ASCII_PERIOD_RUN = Pattern.compile("\\.{2,}");
+    private static final Pattern ASCII_HYPHEN_RUN = Pattern.compile("-{2,}");
+    private static final Pattern FULL_MINUS_RUN = Pattern.compile("－{2,}");
 
     private static void symbols(String text, List<Issue> issues) {
         each(text, DOUBLE_COMMA, m -> new Issue(m.start(), m.end(), Category.SYMBOL, "読点（、）が続いています", "、"), issues);
@@ -204,6 +207,12 @@ public final class Proofreader {
         each(text, SINGLE_LEADER, m -> new Issue(m.start(), m.end(), Category.SYMBOL,
                 "三点リーダーは2つ続けて「……」と書くのが一般的です", "……"), issues);
         each(text, SINGLE_DASH, m -> new Issue(m.start(), m.end(), Category.SYMBOL,
+                "ダッシュは2つ続けて「――」と書くのが一般的です", "――"), issues);
+        each(text, ASCII_PERIOD_RUN, m -> new Issue(m.start(), m.end(), Category.SYMBOL,
+                "半角のピリオドが続いています。三点リーダーは2つ続けて「……」と書くのが一般的です", "……"), issues);
+        each(text, ASCII_HYPHEN_RUN, m -> new Issue(m.start(), m.end(), Category.SYMBOL,
+                "ダッシュは2つ続けて「――」と書くのが一般的です", "――"), issues);
+        each(text, FULL_MINUS_RUN, m -> new Issue(m.start(), m.end(), Category.SYMBOL,
                 "ダッシュは2つ続けて「――」と書くのが一般的です", "――"), issues);
         each(text, NO_SPACE_AFTER_MARK, m -> new Issue(m.start(), m.end(), Category.SYMBOL,
                 "「！」「？」のあとに文が続くときは、全角スペースを1つ空けるのが一般的です", m.group() + "　"), issues);
