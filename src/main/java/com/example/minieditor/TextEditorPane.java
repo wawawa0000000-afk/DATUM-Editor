@@ -7,8 +7,12 @@ import java.awt.Point;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.awt.event.InputEvent;
+import java.awt.event.InputMethodEvent;
+import java.awt.event.InputMethodListener;
+import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.awt.geom.Rectangle2D;
+import java.text.AttributedCharacterIterator;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -69,6 +73,7 @@ public class TextEditorPane extends EditorPane implements Searchable {
     };
     private final JScrollPane scrollPane;
     private final LineNumberGutter gutter;
+    private boolean composing;          // IME で変換中か（入力補助は、変換中には規則を当てない）
     private boolean focusMode;          // 集中モード（文字の列を中央に寄せ、カーソルの行を画面の真ん中に保つ）
     private boolean wrapBeforeFocus;
 
@@ -97,6 +102,31 @@ public class TextEditorPane extends EditorPane implements Searchable {
         // "none" を入れて無効にし、メニューの「置換」(Ctrl+H) が動くようにする。
         area.getInputMap(JComponent.WHEN_FOCUSED).put(
                 KeyStroke.getKeyStroke(KeyEvent.VK_H, InputEvent.CTRL_DOWN_MASK), "none");
+        // 日本語入力（IME）の変換中かを、知らせから覚える。変換中の字は、入力補助の対象にしない
+        area.addInputMethodListener(new InputMethodListener() {
+            @Override
+            public void inputMethodTextChanged(InputMethodEvent e) {
+                AttributedCharacterIterator text = e.getText();
+                // 確定していない字が残っていれば、変換中
+                composing = text != null && text.getEndIndex() - text.getBeginIndex() > e.getCommittedCharacterCount();
+            }
+
+            @Override
+            public void caretPositionChanged(InputMethodEvent e) {
+            }
+        });
+        // 入力補助（段落頭の全角スペース・かっこの自動閉じ）。キーで打ったときだけ、規則を当てる
+        area.addKeyListener(new KeyAdapter() {
+            @Override
+            public void keyPressed(KeyEvent e) {
+                handleEnter(e);
+            }
+
+            @Override
+            public void keyTyped(KeyEvent e) {
+                handleTyped(e);
+            }
+        });
 
         scrollPane = new JScrollPane(area);
         scrollPane.setBorder(null);
@@ -406,5 +436,63 @@ public class TextEditorPane extends EditorPane implements Searchable {
         shared.compound.end();
         shared.undoManager.addEdit(shared.compound);
         shared.compound = null;
+    }
+
+    /** 入力補助：Enter で改行したあと、段落頭の全角スペースを入れる（設定が入っているときだけ）。 */
+    private void handleEnter(KeyEvent e) {
+        if (e.getKeyCode() != KeyEvent.VK_ENTER || e.isControlDown() || e.isAltDown() || e.isMetaDown()
+                || !InputAssist.indentOnBreak || isComposing()) {
+            return;
+        }
+        typeAsOne("\n" + InputAssist.INDENT);     // 範囲を選んでいれば、その範囲を改行で置き換えてから入れる
+        e.consume();
+    }
+
+    /**
+     * 入力補助：開きかっこで閉じかっこも入れ、間にカーソルを置く。閉じかっこを打つとき、すぐ右が同じ閉じかっこなら、
+     * 入れずに右へ進むだけ（設定が入っているときだけ）。範囲を選んでいるときは、ふつうに置き換える。
+     */
+    private void handleTyped(KeyEvent e) {
+        char c = e.getKeyChar();
+        if (!InputAssist.pairs || isComposing() || e.isControlDown() || e.isMetaDown()
+                || (e.isAltDown() && !e.isAltGraphDown()) || area.getSelectionStart() != area.getSelectionEnd()) {
+            return;
+        }
+        int caret = area.getCaretPosition();
+        if (InputAssist.isClosing(c) && String.valueOf(c).equals(textAt(caret))) {
+            area.setCaretPosition(caret + 1);
+            e.consume();
+            return;
+        }
+        String closing = InputAssist.closingFor(c);
+        if (closing != null) {
+            typeAsOne(c + closing);
+            area.setCaretPosition(caret + 1);       // 2字のあいだに、カーソルを置く
+            e.consume();
+        }
+    }
+
+    /** 1回の打つ操作（かっこの2字など）を、「元に戻す」1回ぶんにまとめて入れる。 */
+    private void typeAsOne(String s) {
+        shared.compound = new CompoundEdit();
+        try {
+            area.replaceSelection(s);
+        } finally {
+            finishCompound();
+        }
+    }
+
+    /** カーソルの位置の1字（文書の終わりなら空）。 */
+    private String textAt(int position) {
+        try {
+            return position < area.getDocument().getLength() ? area.getText(position, 1) : "";
+        } catch (BadLocationException ex) {
+            return "";
+        }
+    }
+
+    /** IME の変換中か（知らせの受け取りで覚えた状態。変換中は、入力補助の規則を当てない）。 */
+    private boolean isComposing() {
+        return composing;
     }
 }

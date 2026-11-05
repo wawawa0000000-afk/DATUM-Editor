@@ -408,6 +408,25 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             repaint();
         });
         view.add(stripeItem);
+        // 入力補助（段落頭の全角スペース・かっこの自動閉じ）。前回の設定を読んで、メニューと打つ処理に反映する。既定は切
+        InputAssist.indentOnBreak = appSettings.getBool(AppSettings.INPUT_INDENT, false);
+        InputAssist.pairs = appSettings.getBool(AppSettings.INPUT_PAIRS, false);
+        JMenu assistMenu = new JMenu("入力補助");
+        JCheckBoxMenuItem indentItem = new JCheckBoxMenuItem("段落頭に全角スペース", InputAssist.indentOnBreak);
+        indentItem.addActionListener(e -> {
+            InputAssist.indentOnBreak = indentItem.isSelected();
+            appSettings.put(AppSettings.INPUT_INDENT, InputAssist.indentOnBreak);
+            appSettings.save();
+        });
+        assistMenu.add(indentItem);
+        JCheckBoxMenuItem pairsItem = new JCheckBoxMenuItem("かっこの自動閉じ", InputAssist.pairs);
+        pairsItem.addActionListener(e -> {
+            InputAssist.pairs = pairsItem.isSelected();
+            appSettings.put(AppSettings.INPUT_PAIRS, InputAssist.pairs);
+            appSettings.save();
+        });
+        assistMenu.add(pairsItem);
+        view.add(assistMenu);
         view.addSeparator();
         view.add(item("フォルダのサイドバー", key(KeyEvent.VK_E, CTRL | SHIFT), this::toggleSidebar));
         if (Edition.has(Edition.VERTICAL)) {

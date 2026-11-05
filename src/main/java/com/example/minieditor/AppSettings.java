@@ -42,6 +42,8 @@ public final class AppSettings {
     public static final String CLAUDE_COMMAND = "claudeCommand";    // Claude Code のコマンド（既定は claude）
     public static final String AUTO_COMMAND = "autoCommand";        // 「datum」コマンドを登録するか（まだ聞いていなければ、項目がない）
     public static final String COMMAND_DIR = "commandDir";          // 「datum」コマンドとして PATH に足したフォルダ
+    public static final String INPUT_INDENT = "inputAssistIndent";  // Enter で段落頭に全角スペースを入れるか（既定は切）
+    public static final String INPUT_PAIRS = "inputAssistPairs";    // 開きかっこで閉じかっこも入れるか（既定は切）
 
     private final Map<String, Object> data;
 

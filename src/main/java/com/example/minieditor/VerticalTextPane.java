@@ -1511,7 +1511,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
                     int end = text.indexOf('\n', caret);
                     moveCaret(end < 0 ? text.length() : end, shift);
                 }
-                case KeyEvent.VK_ENTER -> insert("\n");
+                case KeyEvent.VK_ENTER -> insert("\n" + InputAssist.paragraphIndent());   // 入力補助：段落頭の全角スペース（設定が入っているときだけ）
                 case KeyEvent.VK_BACK_SPACE -> {
                     if (freeCell != null) {
                         freeCell = null;        // 空きマスにいるときは、何も消さずに、元の行の終わりへ戻るだけ
@@ -1543,6 +1543,21 @@ public class VerticalTextPane extends EditorPane implements Searchable {
             if (c == KeyEvent.CHAR_UNDEFINED || c < 0x20 || c == 0x7F
                     || e.isControlDown() || e.isMetaDown() || (e.isAltDown() && !e.isAltGraphDown())) {
                 return;
+            }
+            // 入力補助（かっこの自動閉じ）。ルビの入力欄の中と、変換中は、規則を当てない。範囲を選んでいるときは、ふつうに置き換える
+            if (InputAssist.pairs && rubyField == null && composed.isEmpty() && selectionEnd() == selectionStart()) {
+                if (InputAssist.isClosing(c) && freeCell == null && caret < text.length() && text.charAt(caret) == c) {
+                    moveCaret(caret + 1, false);        // 同じ閉じかっこが右にあるときは、入れずに右へ進むだけ
+                    e.consume();
+                    return;
+                }
+                String closing = InputAssist.closingFor(c);
+                if (closing != null) {
+                    insert(c + closing);                // 空きマスからでも、そこまで埋めてから入れる（1回の取り消しにまとまる）
+                    moveCaret(caret - 1, false);        // 2字のあいだに、カーソルを置く
+                    e.consume();
+                    return;
+                }
             }
             insert(String.valueOf(c));
             e.consume();
