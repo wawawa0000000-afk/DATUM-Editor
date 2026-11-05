@@ -36,6 +36,7 @@ public final class PagePrinter {
         final double height;
         final BufferedImage image;
         final Graphics2D g;
+        final List<PdfWriter.Glyph> glyphs = new ArrayList<>();     // 画像の上に重ねる、文字の層
 
         Sheet(Font font) {
             this(font, PAGE_WIDTH, PAGE_HEIGHT);
@@ -66,13 +67,14 @@ public final class PagePrinter {
             float width = (float) g.getFont().getStringBounds(number, g.getFontRenderContext()).getWidth();
             g.drawString(number, (float) (this.width - width) / 2, (float) (this.height - 22));
             g.dispose();
-            writer.addPage(image, this.width, this.height);
+            writer.addPage(image, this.width, this.height, glyphs);
         }
     }
 
     // ---------- 横書き ----------
 
     public static void printHorizontal(String text, String fontFamily, PdfWriter writer) throws IOException {
+        writer.reserveText(text);
         Font font = new Font(fontFamily, Font.PLAIN, 11);
         double lineHeight = 11 * 1.7;
         double usableWidth = PAGE_WIDTH - 2 * MARGIN;
@@ -82,6 +84,8 @@ public final class PagePrinter {
         List<String> lines = wrap(text.replace("\r", "").replace("\t", "    "), font,
                 sheet.g.getFontRenderContext(), usableWidth);
         float ascent = sheet.g.getFontMetrics().getAscent();
+        FontRenderContext context = sheet.g.getFontRenderContext();
+        Map<Integer, Double> widths = new HashMap<>();
         int lineOnPage = 0;
         for (String line : lines) {
             if (lineOnPage == linesPerPage) {               // ページがいっぱいになったら、次の紙へ
@@ -89,7 +93,21 @@ public final class PagePrinter {
                 sheet = new Sheet(font);
                 lineOnPage = 0;
             }
-            sheet.g.drawString(line, (float) MARGIN, (float) (MARGIN + lineOnPage * lineHeight) + ascent);
+            double baseline = MARGIN + lineOnPage * lineHeight + ascent;
+            sheet.g.drawString(line, (float) MARGIN, (float) baseline);
+            // 文字の層：1字ずつ、描いたのと同じ位置に置く（控除の幅は、折り返しと同じ計算）
+            double x = MARGIN;
+            for (int i = 0; i < line.length(); ) {
+                int codePoint = line.codePointAt(i);
+                String character = new String(Character.toChars(codePoint));
+                double w = widths.computeIfAbsent(codePoint,
+                        key -> font.getStringBounds(character, context).getWidth());
+                if (!Character.isISOControl(codePoint)) {
+                    sheet.glyphs.add(new PdfWriter.Glyph(character, x, baseline, 11, w));
+                }
+                x += w;
+                i += character.length();
+            }
             lineOnPage++;
         }
         sheet.finish(writer);
@@ -123,8 +141,29 @@ public final class PagePrinter {
 
     // ---------- 縦書き ----------
 
+    /**
+     * 縦書きの1文字（または縦中横の2文字）を、文字の層に加える。ルビは入れない（本文だけを検索・コピーできるように）。
+     * 位置は、画面と同じマスの中心。文字の層の基準線は、描く文字と同じ高さにそろえる。
+     */
+    private static void addVerticalGlyph(Sheet sheet, FontMetrics fm, VerticalLayout layout, String text, int i,
+            double centerX, double centerY, double size) {
+        if (!layout.isDrawn(i)) {
+            return;
+        }
+        int end;
+        if (i + 1 < text.length() && text.charAt(i + 1) != '\n' && !layout.isDrawn(i + 1)
+                && !VerticalLayout.joinsPrevious(text, i + 1)) {
+            end = i + 2;                                    // 縦中横：2文字を1つの枠にまとめる（次の文字は描かない）
+        } else {
+            end = VerticalLayout.clusterEnd(text, i);       // 異体字セレクタなどは、前の文字と一緒に
+        }
+        double baseline = centerY + (fm.getAscent() - fm.getDescent()) / 2.0;
+        sheet.glyphs.add(new PdfWriter.Glyph(text.substring(i, end), centerX - size / 2, baseline, size, size));
+    }
+
     public static void printVertical(String text, List<VerticalLayout.RubyRun> rubies, String fontFamily,
             PdfWriter writer) throws IOException {
+        writer.reserveText(text);
         int size = 12;
         Font font = new Font(fontFamily, Font.PLAIN, size);
         double cellHeight = size * 1.12;                    // 1文字ぶんの高さ
@@ -155,8 +194,10 @@ public final class PagePrinter {
             };
             // 文字は列の順に並んでいるので、このページの最後の列を過ぎたら次のページへ
             while (next < body.length() && layout.col[next] <= lastColumn) {
-                layout.drawCharacter(sheet.g, fm, next, place.centerX(layout.col[next]),
-                        place.centerY(layout.row[next]), size);
+                double cx = place.centerX(layout.col[next]);
+                double cy = place.centerY(layout.row[next]);
+                layout.drawCharacter(sheet.g, fm, next, cx, cy, size);
+                addVerticalGlyph(sheet, fm, layout, body, next, cx, cy, size);
                 next++;
             }
             sheet.g.setColor(INK);
@@ -170,6 +211,7 @@ public final class PagePrinter {
     /** A4 を横向きにして、400字詰めの原稿用紙として書き出す。1ページが、原稿用紙1枚。 */
     public static void printManuscript(String text, List<VerticalLayout.RubyRun> rubies, String fontFamily,
             PdfWriter writer) throws IOException {
+        writer.reserveText(text);
         final int rows = VerticalTextPane.SHEET_ROWS;
         final int columns = VerticalTextPane.SHEET_COLUMNS;
         final double width = PAGE_HEIGHT;                   // 横向きなので、幅と高さを入れ替える
@@ -222,8 +264,10 @@ public final class PagePrinter {
             g.setColor(INK);
             FontMetrics fm = g.getFontMetrics();
             while (next < text.length() && layout.col[next] <= lastColumn) {
-                layout.drawCharacter(g, fm, next, place.centerX(layout.col[next]),
-                        place.centerY(layout.row[next]), size);
+                double cx = place.centerX(layout.col[next]);
+                double cy = place.centerY(layout.row[next]);
+                layout.drawCharacter(g, fm, next, cx, cy, size);
+                addVerticalGlyph(sheet, fm, layout, text, next, cx, cy, size);
                 next++;
             }
             layout.drawRubies(g, font, place, cell, size, cell / 2 + strip / 2, firstColumn, lastColumn);
