@@ -6,4 +6,5 @@ if not exist "%~dp0runtime\bin\javaw.exe" (
   pause
   exit /b 1
 )
-start "" "%~dp0runtime\bin\javaw.exe" -jar "%~dp0minieditor.jar" %*
+rem Startup speed: the class-data archive minieditor.jsa is made by Java on the first run (and again after an update). If it is missing or unusable, Java starts normally without a message.
+start "" "%~dp0runtime\bin\javaw.exe" -Xlog:disable -XX:+AutoCreateSharedArchive -XX:SharedArchiveFile="%~dp0minieditor.jsa" -jar "%~dp0minieditor.jar" %*

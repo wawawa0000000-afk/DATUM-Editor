@@ -417,3 +417,19 @@ Windows で確かめてほしいこと（画面の操作が要る。「Windows �
 **保留（承認が要る）**: Windows の `DATUM-Editor.bat` に AppCDS を入れる変更は、コミットしていない。変更の内容は `scratchpad/appcds-windows-bat.patch` にある。承認された方針は「配布の時に作る」だったが、Linux からは Windows 用のアーカイブを作れない。実装役は「初回起動時に `-XX:+AutoCreateSharedArchive` で作る」方式にしたが、アプリのフォルダに約 14MB のファイルが増える。これは承認の範囲外のため、取り消した。選択肢: (A) 初回起動時に作る方式を承認する（Windows で確かめてから入れる）／(B) Windows は AppCDS なしのまま。
 
 残った課題: .deb での AppCDS。Java 側の遅延（EditorFrame など）は効果を測っていないので入れていない。
+
+## Windows の起動（AppCDS・A 方式。承認済み。2026-11-05）
+
+変えたファイル: `packaging/windows/DATUM-Editor.bat`（javaw の行に `-Xlog:disable -XX:+AutoCreateSharedArchive -XX:SharedArchiveFile="%~dp0minieditor.jsa"` を足した。CRLF のまま）。
+
+方式: 初回起動のときに、アプリのフォルダに `minieditor.jsa`（約 14MB）を Java が作る。jar が変わると作り直す。ファイルが無い・壊れているときは、表示なしで普通に起動する。Linux では、壊れたファイル（文字列・途中で切れたもの）でも普通に起動することを確かめた。配布の作り方（`build-linux-*.sh`）は Linux 用のまま。
+
+**Windows で確かめてほしいこと（画面の操作）**
+1. 配布 ZIP を展開し、`DATUM-Editor.bat`（または `datum`）を起動する。終了してから、フォルダに `minieditor.jsa` ができていること。
+2. もう一度起動して、普通に起動すること（遅く感じないか）。
+3. `minieditor.jsa` を消して起動する。普通に起動して、メッセージが出ないこと。
+4. 壊れたファイル（適当な文字を書いたもの）を `minieditor.jsa` として置いて起動する。普通に起動すること。
+
+**まだ確かめていないこと**
+- Windows の同梱 Java（JRE 21）での `AutoCreateSharedArchive` の動き（Linux の JDK 27 では確かめた）。
+- 配布 ZIP はまだ作り直していない。Windows の確認が済んでから作り直す（`sh packaging/build-all.sh`）。
