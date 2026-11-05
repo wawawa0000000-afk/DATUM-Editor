@@ -484,10 +484,17 @@ final class McpTools implements McpServer.Backend {
     }
 
     /** ファイルの中の、探す対象にする文章。このアプリの .json は、本文やカードの文字だけを取り出す。 */
+    static String searchableContent(Path file) throws IOException {
+        return searchableText(file, Files.readString(file, StandardCharsets.UTF_8));
+    }
+
+    /**
+     * 中身（ファイルの中身、または開いている文書の保存形式の文字）から、探す対象にする文章を取り出す。
+     * 形式は nameForKind の拡張子で決める（ファイルでなくてもよい）。
+     */
     @SuppressWarnings("unchecked")
-    private static String searchableContent(Path file) throws IOException {
-        String content = Files.readString(file, StandardCharsets.UTF_8);
-        if (EditorFrame.isJsonPath(file)) {
+    static String searchableText(Path nameForKind, String content) {
+        if (EditorFrame.isJsonPath(nameForKind)) {
             try {
                 if (Json.parse(content) instanceof Map<?, ?> raw && EditorPane.FORMAT_NAME.equals(raw.get("format"))) {
                     Map<String, Object> json = (Map<String, Object>) raw;

@@ -92,6 +92,10 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
 
     private TerminalPane terminal;              // 下に出すターミナル。初めて表示するときに作る
     private boolean terminalVisible = false;
+    private FolderSearchPanel folderSearch;     // 下に出すフォルダ内の検索。初めて表示するときに作る
+    private boolean folderSearchVisible = false;
+    private JSplitPane folderSearchSplit;       // エディタ（上）と検索の欄（下）の分割。いったん作ったら使い回す（欄の高さを覚えておくため）
+    private boolean folderSearchBeforeFocus;
     private final JToggleButton terminalButton = createToolButton(">_", "ターミナルを表示する / 隠す（Ctrl+J）",
             () -> setTerminalVisible(!terminalVisible));
     private final JToggleButton folderButton = createIconButton(ToolIcons.folder(), "フォルダ",
@@ -339,6 +343,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         edit.addSeparator();
         edit.add(item("検索", key(KeyEvent.VK_F, CTRL), () -> findBar.open(false)));
         edit.add(item("置換", key(KeyEvent.VK_H, CTRL), () -> findBar.open(true)));
+        edit.add(item("フォルダ内を検索…", key(KeyEvent.VK_F, CTRL | SHIFT), this::showFolderSearch));
 
         JMenu format = new JMenu("書式");
         format.add(item("フォント…", null, this::chooseFont));
@@ -812,9 +817,15 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         if (focusMode) {
             stateBeforeFocus = getExtendedState();
             terminalBeforeFocus = terminalVisible;
+            folderSearchBeforeFocus = folderSearchVisible;
+            if (folderSearchVisible) {
+                folderSearch.cancelSearch();
+                folderSearchVisible = false;
+            }
             if (terminalVisible) {
                 setTerminalVisible(false);
             }
+            layoutCenter();
             // メニューは隠すと Ctrl+S などのショートカットも効かなくなるので、高さを 0 にして見えなくする
             menuBar.setPreferredSize(new Dimension(0, 0));
             statusBar.setVisible(false);
@@ -836,8 +847,11 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
                     text.setFocusMode(false);
                 }
             }
+            folderSearchVisible = folderSearchBeforeFocus;
             if (terminalBeforeFocus) {
-                setTerminalVisible(true);
+                setTerminalVisible(true);       // 中で、検索の欄の分と一緒に並べ直す
+            } else {
+                layoutCenter();
             }
         }
         menuBar.revalidate();
@@ -1266,30 +1280,130 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         if (terminal == null) {
             terminal = new TerminalPane(this::terminalFolder, () -> setTerminalVisible(false));
         }
-        // 真ん中に置いてあるもの（エディタだけ、または、エディタとターミナルの上下分割）を入れ替える
-        BorderLayout layout = (BorderLayout) center.getLayout();
-        center.remove(layout.getLayoutComponent(BorderLayout.CENTER));
+        layoutCenter();
         if (visible) {
-            JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, editorArea, terminal);
-            splitPane.setUI(new BasicSplitPaneUI());
-            splitPane.setBorder(null);
-            splitPane.setBackground(Theme.BORDER);
-            splitPane.setDividerSize(4);
-            splitPane.setResizeWeight(1.0);     // ウィンドウの大きさを変えたときは、エディタの側が伸び縮みする
-            splitPane.setContinuousLayout(true);
-            editorArea.setMinimumSize(new Dimension(0, 80));
-            terminal.setMinimumSize(new Dimension(0, 80));
-            center.add(splitPane, BorderLayout.CENTER);
-            center.revalidate();
-            SwingUtilities.invokeLater(() -> splitPane.setDividerLocation(0.65));
             terminal.start();
             SwingUtilities.invokeLater(terminal::focusInput);
         } else {
-            center.add(editorArea, BorderLayout.CENTER);
-            center.revalidate();
             withPane(pane -> SwingUtilities.invokeLater(pane::focusEditor));
         }
+    }
+
+    /**
+     * 真ん中（検索バーの下）を並べ直す。上からエディタ、その下にフォルダ内の検索の欄（出ていれば）、
+     * いちばん下にターミナル（出ていれば）。ターミナルの分割は、出すたびに作り直す（高さは 0.65 にそろえる）。
+     */
+    private void layoutCenter() {
+        center.removeAll();
+        center.add(findBar, BorderLayout.NORTH);
+        JComponent middle = editorArea;
+        if (folderSearchVisible) {
+            if (folderSearchSplit == null) {
+                folderSearchSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT, editorArea, folderSearch);
+                styleSplit(folderSearchSplit);
+                editorArea.setMinimumSize(new Dimension(0, 80));
+                folderSearch.setMinimumSize(new Dimension(0, 120));
+                SwingUtilities.invokeLater(() -> folderSearchSplit.setDividerLocation(0.66));   // 検索の欄は、下の 1/3 くらい
+            } else {
+                folderSearchSplit.setTopComponent(editorArea);
+                folderSearchSplit.setBottomComponent(folderSearch);
+            }
+            middle = folderSearchSplit;
+        }
+        if (terminalVisible) {
+            JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, middle, terminal);
+            styleSplit(splitPane);
+            middle.setMinimumSize(new Dimension(0, 80));
+            terminal.setMinimumSize(new Dimension(0, 80));
+            SwingUtilities.invokeLater(() -> splitPane.setDividerLocation(0.65));
+            middle = splitPane;
+        }
+        center.add(middle, BorderLayout.CENTER);
+        center.revalidate();
         center.repaint();
+    }
+
+    /** 真ん中の縦の分割の見た目（ターミナルと検索の欄で同じ）。上の欄が伸び縮みする。 */
+    private static void styleSplit(JSplitPane splitPane) {
+        splitPane.setUI(new BasicSplitPaneUI());
+        splitPane.setBorder(null);
+        splitPane.setBackground(Theme.BORDER);
+        splitPane.setDividerSize(4);
+        splitPane.setResizeWeight(1.0);     // ウィンドウの大きさを変えたときは、上の欄が伸び縮みする
+        splitPane.setContinuousLayout(true);
+    }
+
+    // ---------- フォルダ内の検索 ----------
+
+    /** フォルダ内の検索の欄を出す。出ていれば、欄へ移って文字を全部選ぶ。 */
+    private void showFolderSearch() {
+        if (focusMode) {
+            flash("集中モードの間は出せません（F11 で戻ります）");
+            return;
+        }
+        if (folderSearch == null) {
+            folderSearch = new FolderSearchPanel(new FolderSearchPanel.Host() {
+                @Override
+                public Path searchRoot() {
+                    return sidebar().getRoot();
+                }
+
+                @Override
+                public Map<Path, String> openTexts() {
+                    Map<Path, String> texts = new HashMap<>();
+                    for (EditorPane pane : documentPanes()) {
+                        Path path = pane.getPath();
+                        if (path != null) {
+                            texts.put(path.toAbsolutePath().normalize(), fileContent(pane, path));
+                        }
+                    }
+                    return texts;
+                }
+
+                @Override
+                public void reveal(Path file, int start, int end, boolean jsonBody) {
+                    revealSearchHit(file, start, end, jsonBody);
+                }
+            }, this::hideFolderSearch);
+        }
+        if (!folderSearchVisible) {
+            folderSearchVisible = true;
+            layoutCenter();
+        }
+        folderSearch.focusKeyword();
+    }
+
+    /** フォルダ内の検索の欄を隠して、エディタへ戻す。探している最中なら止める。 */
+    private void hideFolderSearch() {
+        if (!folderSearchVisible) {
+            return;
+        }
+        folderSearch.cancelSearch();
+        folderSearchVisible = false;
+        layoutCenter();
+        withPane(pane -> SwingUtilities.invokeLater(pane::focusEditor));
+    }
+
+    /**
+     * 検索の結果の一致へ移る。開いていればそのタブを前に出し、開いていなければ開く（サイドバーからの開き方と同じ）。
+     * jsonBody のときは、位置がファイルの中のものではないので、開くだけで選ばない。
+     */
+    private void revealSearchHit(Path file, int start, int end, boolean jsonBody) {
+        try {
+            Path path = file.toAbsolutePath().normalize();
+            EditorPane pane = findOpenDocument(path);
+            if (pane != null) {
+                showDocument(pane);
+            } else {
+                pane = openPath(path, currentPane() instanceof VerticalTextPane, false);
+            }
+            if (!jsonBody && pane instanceof Searchable found) {
+                found.select(start, end);
+            }
+        } catch (IOException ex) {
+            JOptionPane.showMessageDialog(this, "開けませんでした: " + ex.getMessage(),
+                    "エラー", JOptionPane.ERROR_MESSAGE);
+        }
     }
 
     /** ターミナルを始めるフォルダ。今の文書が保存されていればその場所、なければ「開く」の最初の場所と同じ。 */
