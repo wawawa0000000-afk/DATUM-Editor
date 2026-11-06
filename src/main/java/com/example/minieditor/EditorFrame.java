@@ -94,8 +94,12 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     private boolean terminalVisible = false;
     private FolderSearchPanel folderSearch;     // 下に出すフォルダ内の検索。初めて表示するときに作る
     private boolean folderSearchVisible = false;
-    private JSplitPane folderSearchSplit;       // エディタ（上）と検索の欄（下）の分割。いったん作ったら使い回す（欄の高さを覚えておくため）
     private boolean folderSearchBeforeFocus;
+    private OutlinePanel outline;               // 下に出す見出し一覧の欄。初めて表示するときに作る
+    private boolean outlineVisible = false;
+    private boolean outlineBeforeFocus;
+    private JSplitPane lowerSplit;              // エディタ（上）と下の欄（検索・見出し）の分割。いったん作ったら使い回す（欄の高さを覚えておくため）
+    private JSplitPane lowerSideSplit;          // フォルダ内の検索と見出し一覧を左右に並べるときの分割（いったん作ったら使い回す）
     private final JToggleButton terminalButton = createToolButton(">_", "ターミナルを表示する / 隠す（Ctrl+J）",
             () -> setTerminalVisible(!terminalVisible));
     private final JToggleButton folderButton = createIconButton(ToolIcons.folder(), "フォルダ",
@@ -429,6 +433,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         view.add(assistMenu);
         view.addSeparator();
         view.add(item("フォルダのサイドバー", key(KeyEvent.VK_E, CTRL | SHIFT), this::toggleSidebar));
+        view.add(item("見出し一覧", key(KeyEvent.VK_L, CTRL | ALT), this::toggleOutline));
         if (Edition.has(Edition.VERTICAL)) {
             view.add(item("校正の欄", key(KeyEvent.VK_F7, 0), () -> showRight("proof")));
         }
@@ -841,6 +846,8 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
                 folderSearch.cancelSearch();
                 folderSearchVisible = false;
             }
+            outlineBeforeFocus = outlineVisible;
+            outlineVisible = false;
             if (terminalVisible) {
                 setTerminalVisible(false);
             }
@@ -867,6 +874,10 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
                 }
             }
             folderSearchVisible = folderSearchBeforeFocus;
+            outlineVisible = outlineBeforeFocus;
+            if (outlineVisible) {
+                outline.refresh();              // 集中モードの間に文書が変わっているかもしれないので、探し直す
+            }
             if (terminalBeforeFocus) {
                 setTerminalVisible(true);       // 中で、検索の欄の分と一緒に並べ直す
             } else {
@@ -1283,6 +1294,43 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         }
     }
 
+    // ---------- 見出し一覧 ----------
+
+    /** 見出し一覧の欄を出す、または隠す（「表示」の「見出し一覧」・Ctrl+Alt+L）。 */
+    private void toggleOutline() {
+        if (outlineVisible) {
+            hideOutline();
+        } else {
+            showOutline();
+        }
+    }
+
+    /** 見出し一覧の欄を出す。今の文書の見出しを探して、欄へ移る。 */
+    private void showOutline() {
+        if (focusMode) {
+            flash("集中モードの間は出せません（F11 で戻ります）");
+            return;
+        }
+        if (outline == null) {
+            outline = new OutlinePanel(() -> currentPane() instanceof Searchable s ? s : null,
+                    () -> withPane(EditorPane::focusEditor), this::hideOutline);
+        }
+        outlineVisible = true;
+        outline.refresh();
+        layoutCenter();
+        outline.focusList();
+    }
+
+    /** 見出し一覧の欄を隠して、エディタへ戻す。 */
+    private void hideOutline() {
+        if (!outlineVisible) {
+            return;
+        }
+        outlineVisible = false;
+        layoutCenter();
+        withPane(pane -> SwingUtilities.invokeLater(pane::focusEditor));
+    }
+
     // ---------- ターミナル ----------
 
     /** エディタの下にターミナルを出す、または隠す。隠しても、中で動いているコマンドは止めない。 */
@@ -1309,25 +1357,26 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     }
 
     /**
-     * 真ん中（検索バーの下）を並べ直す。上からエディタ、その下にフォルダ内の検索の欄（出ていれば）、
-     * いちばん下にターミナル（出ていれば）。ターミナルの分割は、出すたびに作り直す（高さは 0.65 にそろえる）。
+     * 真ん中（検索バーの下）を並べ直す。上からエディタ、その下に下の欄（フォルダ内の検索・見出し一覧。出ていれば）、
+     * いちばん下にターミナル（出ていれば）。下の欄の分割は、いったん作ったら使い回す（欄の高さを覚えておくため）。
+     * ターミナルの分割は、出すたびに作り直す（高さは 0.65 にそろえる）。
      */
     private void layoutCenter() {
         center.removeAll();
         center.add(findBar, BorderLayout.NORTH);
         JComponent middle = editorArea;
-        if (folderSearchVisible) {
-            if (folderSearchSplit == null) {
-                folderSearchSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT, editorArea, folderSearch);
-                styleSplit(folderSearchSplit);
+        JComponent lower = lowerPanels();
+        if (lower != null) {
+            if (lowerSplit == null) {
+                lowerSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT, editorArea, lower);
+                styleSplit(lowerSplit);
                 editorArea.setMinimumSize(new Dimension(0, 80));
-                folderSearch.setMinimumSize(new Dimension(0, 120));
-                SwingUtilities.invokeLater(() -> folderSearchSplit.setDividerLocation(0.66));   // 検索の欄は、下の 1/3 くらい
+                SwingUtilities.invokeLater(() -> lowerSplit.setDividerLocation(0.66));   // 下の欄は、下の 1/3 くらい
             } else {
-                folderSearchSplit.setTopComponent(editorArea);
-                folderSearchSplit.setBottomComponent(folderSearch);
+                lowerSplit.setTopComponent(editorArea);
+                lowerSplit.setBottomComponent(lower);
             }
-            middle = folderSearchSplit;
+            middle = lowerSplit;
         }
         if (terminalVisible) {
             JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, middle, terminal);
@@ -1342,7 +1391,28 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         center.repaint();
     }
 
-    /** 真ん中の縦の分割の見た目（ターミナルと検索の欄で同じ）。上の欄が伸び縮みする。 */
+    /**
+     * エディタの下に出す欄。フォルダ内の検索と見出し一覧の両方が出るときは、左右に並べる。どちらも出ていなければ null。
+     */
+    private JComponent lowerPanels() {
+        if (folderSearchVisible && outlineVisible) {
+            if (lowerSideSplit == null) {
+                lowerSideSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, folderSearch, outline);
+                styleSplit(lowerSideSplit);
+                SwingUtilities.invokeLater(() -> lowerSideSplit.setDividerLocation(0.6));   // 検索の欄を少し広く
+            } else {
+                lowerSideSplit.setLeftComponent(folderSearch);
+                lowerSideSplit.setRightComponent(outline);
+            }
+            return lowerSideSplit;
+        }
+        if (folderSearchVisible) {
+            return folderSearch;
+        }
+        return outlineVisible ? outline : null;
+    }
+
+    /** 真ん中の分割の見た目（ターミナル・下の欄で同じ）。上の欄が伸び縮みする。 */
     private static void styleSplit(JSplitPane splitPane) {
         splitPane.setUI(new BasicSplitPaneUI());
         splitPane.setBorder(null);
@@ -1694,6 +1764,9 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         if (proofPanel != null && "proof".equals(rightPanel)) {
             proofPanel.refresh();
         }
+        if (outlineVisible) {
+            outline.refresh();
+        }
         if (focusMode && currentPane() instanceof TextEditorPane text) {
             text.setFocusMode(true);
         }
@@ -1760,6 +1833,9 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         stats.changed(pane);
         if (proofPanel != null && pane == currentPane()) {
             proofPanel.contentChanged();
+        }
+        if (outlineVisible && pane == currentPane()) {
+            outline.refresh();
         }
     }
 
