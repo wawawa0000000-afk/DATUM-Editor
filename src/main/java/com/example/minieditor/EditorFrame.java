@@ -98,8 +98,10 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     private OutlinePanel outline;               // 下に出す見出し一覧の欄。初めて表示するときに作る
     private boolean outlineVisible = false;
     private boolean outlineBeforeFocus;
-    private JSplitPane lowerSplit;              // エディタ（上）と下の欄（検索・見出し）の分割。いったん作ったら使い回す（欄の高さを覚えておくため）
-    private JSplitPane lowerSideSplit;          // フォルダ内の検索と見出し一覧を左右に並べるときの分割（いったん作ったら使い回す）
+    private WorkPanel work;                     // 下に出す作品の集計の欄。初めて表示するときに作る
+    private boolean workVisible = false;
+    private boolean workBeforeFocus;
+    private JSplitPane lowerSplit;              // エディタ（上）と下の欄（検索・見出し・集計）の分割。いったん作ったら使い回す（欄の高さを覚えておくため）
     private final JToggleButton terminalButton = createToolButton(">_", "ターミナルを表示する / 隠す（Ctrl+J）",
             () -> setTerminalVisible(!terminalVisible));
     private final JToggleButton folderButton = createIconButton(ToolIcons.folder(), "フォルダ",
@@ -434,6 +436,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         view.addSeparator();
         view.add(item("フォルダのサイドバー", key(KeyEvent.VK_E, CTRL | SHIFT), this::toggleSidebar));
         view.add(item("見出し一覧", key(KeyEvent.VK_L, CTRL | ALT), this::toggleOutline));
+        view.add(item("作品の集計", null, this::toggleWork));
         if (Edition.has(Edition.VERTICAL)) {
             view.add(item("校正の欄", key(KeyEvent.VK_F7, 0), () -> showRight("proof")));
         }
@@ -640,12 +643,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             sidebar = new FolderSidebar(new FolderSidebar.Host() {
                 @Override
                 public void openFromSidebar(Path file) {
-                    try {
-                        openPath(file.toAbsolutePath(), currentPane() instanceof VerticalTextPane, false);
-                    } catch (IOException ex) {
-                        JOptionPane.showMessageDialog(EditorFrame.this, "開けませんでした: " + ex.getMessage(),
-                                "エラー", JOptionPane.ERROR_MESSAGE);
-                    }
+                    openSidebarFile(file);
                 }
 
                 @Override
@@ -848,6 +846,11 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             }
             outlineBeforeFocus = outlineVisible;
             outlineVisible = false;
+            workBeforeFocus = workVisible;
+            if (workVisible) {
+                work.cancel();
+                workVisible = false;
+            }
             if (terminalVisible) {
                 setTerminalVisible(false);
             }
@@ -877,6 +880,10 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             outlineVisible = outlineBeforeFocus;
             if (outlineVisible) {
                 outline.refresh();              // 集中モードの間に文書が変わっているかもしれないので、探し直す
+            }
+            workVisible = workBeforeFocus;
+            if (workVisible) {
+                work.refresh();                 // 集中モードの間に文書が変わっているかもしれないので、数え直す
             }
             if (terminalBeforeFocus) {
                 setTerminalVisible(true);       // 中で、検索の欄の分と一緒に並べ直す
@@ -1331,6 +1338,90 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         withPane(pane -> SwingUtilities.invokeLater(pane::focusEditor));
     }
 
+    // ---------- 作品の集計 ----------
+
+    /** 作品の集計の欄を出す、または隠す（「表示」の「作品の集計」）。 */
+    private void toggleWork() {
+        if (workVisible) {
+            hideWork();
+        } else {
+            showWork();
+        }
+    }
+
+    /** 作品の集計の欄を出して、フォルダの中の文章を数える。欄へ移る。 */
+    private void showWork() {
+        if (focusMode) {
+            flash("集中モードの間は出せません（F11 で戻ります）");
+            return;
+        }
+        if (work == null) {
+            work = new WorkPanel(new WorkPanel.Host() {
+                @Override
+                public Path root() {
+                    return sidebar().getRoot();
+                }
+
+                @Override
+                public Map<Path, String> openTexts() {
+                    return openFileTexts();
+                }
+
+                @Override
+                public WritingStats.CountMode countMode() {
+                    return WritingStats.CountMode.fromId(appSettings.getString(AppSettings.COUNT_MODE, "all"));
+                }
+
+                @Override
+                public boolean rubyNotation() {
+                    return currentPane() instanceof TextEditorPane;     // ステータスバーの字数と同じ判定
+                }
+
+                @Override
+                public void open(Path file) {
+                    openSidebarFile(file);
+                }
+            }, this::hideWork);
+        }
+        workVisible = true;
+        layoutCenter();
+        work.refresh();
+        work.focusList();
+    }
+
+    /** 作品の集計の欄を隠して、エディタへ戻す。数えている最中なら止める。 */
+    private void hideWork() {
+        if (!workVisible) {
+            return;
+        }
+        work.cancel();
+        workVisible = false;
+        layoutCenter();
+        withPane(pane -> SwingUtilities.invokeLater(pane::focusEditor));
+    }
+
+    /** 開いている文書の中身（絶対パス → 保存形式の文字）。未保存の変更も入る。フォルダ内の検索・作品の集計で使う。 */
+    private Map<Path, String> openFileTexts() {
+        Map<Path, String> texts = new HashMap<>();
+        for (EditorPane pane : documentPanes()) {
+            Path path = pane.getPath();
+            if (path != null) {
+                texts.put(path.toAbsolutePath().normalize(), fileContent(pane, path));
+            }
+        }
+        return texts;
+    }
+
+    /** サイドバー・作品の集計の一覧からファイルを開く（開いていれば、そのタブを前に出す）。 */
+    private void openSidebarFile(Path file) {
+        try {
+            openPath(file.toAbsolutePath(), currentPane() instanceof VerticalTextPane, false);
+        } catch (IOException ex) {
+            JOptionPane.showMessageDialog(EditorFrame.this, "開けませんでした: " + ex.getMessage(),
+                    "エラー", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
     // ---------- ターミナル ----------
 
     /** エディタの下にターミナルを出す、または隠す。隠しても、中で動いているコマンドは止めない。 */
@@ -1392,24 +1483,41 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     }
 
     /**
-     * エディタの下に出す欄。フォルダ内の検索と見出し一覧の両方が出るときは、左右に並べる。どちらも出ていなければ null。
+     * エディタの下に出す欄。出ている欄（フォルダ内の検索・見出し一覧・作品の集計）を、この順に左から並べる。
+     * 1つだけならその欄を、どれも出ていなければ null を返す。
      */
     private JComponent lowerPanels() {
-        if (folderSearchVisible && outlineVisible) {
-            if (lowerSideSplit == null) {
-                lowerSideSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, folderSearch, outline);
-                styleSplit(lowerSideSplit);
-                SwingUtilities.invokeLater(() -> lowerSideSplit.setDividerLocation(0.6));   // 検索の欄を少し広く
-            } else {
-                lowerSideSplit.setLeftComponent(folderSearch);
-                lowerSideSplit.setRightComponent(outline);
-            }
-            return lowerSideSplit;
-        }
+        List<JComponent> shown = new ArrayList<>();
         if (folderSearchVisible) {
-            return folderSearch;
+            shown.add(folderSearch);
         }
-        return outlineVisible ? outline : null;
+        if (outlineVisible) {
+            shown.add(outline);
+        }
+        if (workVisible) {
+            shown.add(work);
+        }
+        if (shown.isEmpty()) {
+            return null;
+        }
+        return shown.size() == 1 ? shown.get(0) : sideBySide(shown);
+    }
+
+    /**
+     * 欄を左から右へ並べる。欄の間は分割の線（ドラッグで幅を変えられる）。最初の位置は、欄を同じ幅に分ける。
+     * 欄を出し入れするたびに作り直すので、ドラッグで変えた左右の幅は覚えない（上下の高さは lowerSplit が覚える）。
+     */
+    private static JComponent sideBySide(List<JComponent> panels) {
+        int count = panels.size();
+        JComponent right = panels.get(count - 1);
+        for (int i = count - 2; i >= 0; i--) {
+            JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, panels.get(i), right);
+            styleSplit(split);
+            double share = 1.0 / (count - i);   // 左の欄が受け持つ幅（残りの欄と同じ割合）
+            SwingUtilities.invokeLater(() -> split.setDividerLocation(share));
+            right = split;
+        }
+        return right;
     }
 
     /** 真ん中の分割の見た目（ターミナル・下の欄で同じ）。上の欄が伸び縮みする。 */
@@ -1439,14 +1547,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
 
                 @Override
                 public Map<Path, String> openTexts() {
-                    Map<Path, String> texts = new HashMap<>();
-                    for (EditorPane pane : documentPanes()) {
-                        Path path = pane.getPath();
-                        if (path != null) {
-                            texts.put(path.toAbsolutePath().normalize(), fileContent(pane, path));
-                        }
-                    }
-                    return texts;
+                    return openFileTexts();
                 }
 
                 @Override
@@ -1815,6 +1916,9 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         appSettings.put(AppSettings.COUNT_MODE, mode.id);
         appSettings.save();
         updateStatus();
+        if (workVisible) {
+            work.refresh();                     // 作品の集計の欄が出ていれば、新しい数え方で数え直す
+        }
     }
 
     /** ステータスバーに、数秒だけお知らせを出す（ポップアップで作業を止めないため）。 */
