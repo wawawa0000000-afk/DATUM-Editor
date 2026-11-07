@@ -358,6 +358,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         edit.add(item("フォルダ内を検索…", key(KeyEvent.VK_F, CTRL | SHIFT), this::showFolderSearch));
         edit.addSeparator();
         edit.add(createSnippetMenu());
+        edit.add(item("校正辞書を編集…", null, this::editProofDictionary));
 
         JMenu format = new JMenu("書式");
         format.add(item("フォント…", null, this::chooseFont));
@@ -803,7 +804,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         String next = which != null && which.equals(rightPanel) ? null : which;
         if ("proof".equals(next) && proofPanel == null) {
             proofPanel = new ProofreadPanel(() -> currentPane() instanceof Searchable s ? s : null,
-                    () -> withPane(EditorPane::focusEditor), appSettings, () -> showRight(null));
+                    () -> withPane(EditorPane::focusEditor), appSettings, McpSettings::directory, () -> showRight(null));
         }
         if ("ai".equals(next) && chatPanel == null) {
             chatPanel = new AiChatPanel(new AiChatPanel.Host() {
@@ -1157,6 +1158,18 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         Path file = Snippets.fileIn(McpSettings.directory());
         try {
             Snippets.ensureFile(file);
+            openPath(file.toAbsolutePath(), false, false);
+        } catch (IOException ex) {
+            JOptionPane.showMessageDialog(this, "開けませんでした: " + ex.getMessage(),
+                    "エラー", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    /** 「校正辞書を編集…」：校正辞書.txt（無ければ作る）を、エディタのタブで開く。開いていれば、そのタブを前に出す。 */
+    private void editProofDictionary() {
+        Path file = ProofreadDictionary.fileIn(McpSettings.directory());
+        try {
+            ProofreadDictionary.ensureFile(file);
             openPath(file.toAbsolutePath(), false, false);
         } catch (IOException ex) {
             JOptionPane.showMessageDialog(this, "開けませんでした: " + ex.getMessage(),

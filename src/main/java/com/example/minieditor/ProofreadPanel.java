@@ -5,6 +5,8 @@ import java.awt.Component;
 import java.awt.FlowLayout;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
@@ -37,6 +39,7 @@ public final class ProofreadPanel extends JPanel {
     private final Supplier<Searchable> target;      // 今の文書（文章でなければ null）
     private final Runnable focusEditor;
     private final AppSettings settings;
+    private final Supplier<Path> configDir;     // 設定フォルダ（校正辞書.txt を置く所）
 
     private final DefaultListModel<Proofreader.Issue> model = new DefaultListModel<>();
     private final JList<Proofreader.Issue> list = new JList<>(model) {
@@ -48,17 +51,20 @@ public final class ProofreadPanel extends JPanel {
     private final JLabel summary = new JLabel(" ");
     private final JButton fixButton = Theme.flatButton("直す");
     private final JButton ignoreButton = Theme.flatButton("無視");
+    private final JButton registerButton = Theme.flatButton("辞書に登録");
     private final Set<String> ignored = new HashSet<>();     // 「無視」した所（言葉と項目の組。エディタを閉じるまで覚える）
     private final Timer recheck = new Timer(700, e -> refresh());
     private String checkedText;                             // 最後に調べた文章（変わっていなければ、調べ直さない）
     private String linesOf;                                 // lineStarts を数えた文章
     private int[] lineStarts = {0};                         // 各行の始まりの位置（一覧の「何行目」を、毎回 先頭から数えないため）
 
-    public ProofreadPanel(Supplier<Searchable> target, Runnable focusEditor, AppSettings settings, Runnable onClose) {
+    public ProofreadPanel(Supplier<Searchable> target, Runnable focusEditor, AppSettings settings,
+            Supplier<Path> configDir, Runnable onClose) {
         super(new BorderLayout());
         this.target = target;
         this.focusEditor = focusEditor;
         this.settings = settings;
+        this.configDir = configDir;
         recheck.setRepeats(false);
         setBackground(Theme.PANEL);
 
@@ -128,6 +134,8 @@ public final class ProofreadPanel extends JPanel {
         fixButton.addActionListener(e -> fixSelected());
         ignoreButton.setToolTipText("この言葉を、今回は一覧に出さない");
         ignoreButton.addActionListener(e -> ignoreSelected());
+        registerButton.setToolTipText("この言葉を校正辞書に入れて、以後は指摘しません（校正辞書.txt に保存）");
+        registerButton.addActionListener(e -> registerSelected());
         JButton recheckButton = Theme.flatButton("調べ直す");
         recheckButton.addActionListener(e -> {
             checkedText = null;
@@ -137,8 +145,9 @@ public final class ProofreadPanel extends JPanel {
         actions.setBackground(Theme.PANEL);
         actions.add(fixButton);
         actions.add(ignoreButton);
+        actions.add(registerButton);
         actions.add(recheckButton);
-        for (JButton button : new JButton[]{items, close, fixButton, ignoreButton, recheckButton}) {
+        for (JButton button : new JButton[]{items, close, fixButton, ignoreButton, registerButton, recheckButton}) {
             button.setFocusable(false);
         }
 
@@ -171,8 +180,10 @@ public final class ProofreadPanel extends JPanel {
         }
         checkedText = text;
         Proofreader.Issue selected = list.getSelectedValue();
+        // 校正辞書は、一覧を作るたびに読む（ファイルは小さいので、覚えておかない）
+        Set<String> words = ProofreadDictionary.load(ProofreadDictionary.fileIn(configDir.get()));
         List<Proofreader.Issue> issues = new ArrayList<>();
-        for (Proofreader.Issue issue : Proofreader.check(text, enabledCategories())) {
+        for (Proofreader.Issue issue : ProofreadDictionary.filter(Proofreader.check(text, enabledCategories()), words, text)) {
             if (!ignored.contains(ignoreKey(text, issue))) {
                 issues.add(issue);
             }
@@ -302,6 +313,34 @@ public final class ProofreadPanel extends JPanel {
         return true;
     }
 
+    /** 選んでいる指摘の文字を、校正辞書.txt に入れて、一覧を作り直す。辞書に既にあれば、何も変わらない。 */
+    private void registerSelected() {
+        Proofreader.Issue issue = list.getSelectedValue();
+        Searchable doc = target.get();
+        if (issue == null || doc == null) {
+            return;
+        }
+        if (refreshIfChanged(doc)) {
+            summary.setText("文章が変わったので、調べ直しました。場所を確かめて、もう一度「辞書に登録」を押してください");
+            return;
+        }
+        String text = doc.getText();
+        int end = Math.min(issue.end(), text.length());
+        String word = text.substring(Math.min(issue.start(), end), end);
+        if (word.isEmpty() || !word.equals(word.strip()) || word.contains("\n")) {
+            summary.setText("この所は、前後に空白や改行があるので辞書に登録できません");
+            return;
+        }
+        try {
+            ProofreadDictionary.add(ProofreadDictionary.fileIn(configDir.get()), word);
+        } catch (IOException ex) {
+            summary.setText("辞書に登録できませんでした: " + ex.getMessage());
+            return;
+        }
+        checkedText = null;
+        refresh();
+    }
+
     private static String ignoreKey(String text, Proofreader.Issue issue) {
         int end = Math.min(issue.end(), text.length());
         return issue.category() + ":" + text.substring(Math.min(issue.start(), end), end);
@@ -311,6 +350,7 @@ public final class ProofreadPanel extends JPanel {
         Proofreader.Issue issue = list.getSelectedValue();
         fixButton.setEnabled(issue != null && issue.fix() != null);
         ignoreButton.setEnabled(issue != null);
+        registerButton.setEnabled(issue != null);
     }
 
     /** 一覧の1行：項目名と説明、その下に該当する文字と直す案。 */
