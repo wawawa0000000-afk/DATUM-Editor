@@ -44,6 +44,8 @@ public final class AppSettings {
     public static final String COMMAND_DIR = "commandDir";          // 「datum」コマンドとして PATH に足したフォルダ
     public static final String INPUT_INDENT = "inputAssistIndent";  // Enter で段落頭に全角スペースを入れるか（既定は切）
     public static final String INPUT_PAIRS = "inputAssistPairs";    // 開きかっこで閉じかっこも入れるか（既定は切）
+    public static final String SHEET_CHARS = "sheetChars";          // 原稿用紙の字数（1行の字数。既定は 20）
+    public static final String SHEET_LINES = "sheetLines";          // 原稿用紙の行数（1枚の列の数。既定は 20）
 
     private final Map<String, Object> data;
 

@@ -206,24 +206,27 @@ public final class PagePrinter {
         }
     }
 
-    // ---------- 原稿用紙（20字×20行） ----------
+    // ---------- 原稿用紙（字数×行数） ----------
 
-    /** A4 を横向きにして、400字詰めの原稿用紙として書き出す。1ページが、原稿用紙1枚。 */
+    /** A4 を横向きにして、原稿用紙として書き出す（字数×行数。既定は 400字詰め）。1ページが、原稿用紙1枚。 */
     public static void printManuscript(String text, List<VerticalLayout.RubyRun> rubies, String fontFamily,
             PdfWriter writer) throws IOException {
         writer.reserveText(text);
-        final int rows = VerticalTextPane.SHEET_ROWS;
-        final int columns = VerticalTextPane.SHEET_COLUMNS;
+        final int rows = SheetSize.chars();                 // 1列の字数（マスの縦の数）
+        final int columns = SheetSize.lines();              // 1枚の行数（列の数）
         final double width = PAGE_HEIGHT;                   // 横向きなので、幅と高さを入れ替える
         final double height = PAGE_WIDTH;
-        final double cell = 25;                             // マス1つの大きさ
-        final double strip = 12;                            // ルビ欄の幅
         final double fold = 14;                             // 中央（10行目と11行目のあいだ）の空き
+        final double edge = 40;                             // 紙の左右の、最低限の空き
+        final double top = 34;
+        // マス1つの大きさ。縦は字数、横は行数が紙に収まるように決める。既定の 25pt を上限にして、
+        // 字数・行数が少ないときも、マスは今と同じ大きさにする（縦の 500pt は、20字のときの 25pt × 20）
+        final double cell = Math.min(25, Math.min(500.0 / rows, (width - 2 * edge - fold) * 25 / (37 * columns)));
+        final double strip = cell * 12 / 25;                // ルビ欄の幅（マスに比例。既定では 12pt）
         final double pitch = cell + strip;
         final double side = (width - columns * pitch - fold) / 2;
-        final double top = 34;
         final Color gridColor = new Color(0xB08D6A);        // マス目の線（茶色）
-        int size = 19;
+        int size = (int) Math.round(cell * 0.76);           // 文字の大きさ（既定では 19pt）
         Font font = new Font(fontFamily, Font.PLAIN, size);
 
         VerticalLayout layout = new VerticalLayout(text, rows, rubies);

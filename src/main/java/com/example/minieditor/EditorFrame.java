@@ -133,7 +133,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     private final JLabel statusRight = new JLabel(" ");
     private JLabel zoomLabel;       // ステータスバーの「100%」
     private final JCheckBoxMenuItem wrapItem = new JCheckBoxMenuItem("折り返し");
-    private final JCheckBoxMenuItem manuscriptItem = new JCheckBoxMenuItem("原稿用紙（20字×20行）", true);
+    private final JCheckBoxMenuItem manuscriptItem = new JCheckBoxMenuItem("原稿用紙", true);   // 文字は、字数・行数に合わせて作り直す
     private final AppSettings appSettings = AppSettings.load();  // 最後に保存したフォルダなど
     private final WritingStats stats = new WritingStats(appSettings);   // 1日に書いた字数
     private final GoalMeter goalMeter = new GoalMeter(stats, appSettings, this::updateStatus);  // 目標の進み具合（マス目）
@@ -318,6 +318,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
 
     private JMenuBar createMenuBar() {
         JMenuBar menuBar = new JMenuBar();
+        SheetSize.load(appSettings);    // 原稿用紙の字数・行数（前回の設定。メニューの項目と、縦書きの表示に使う）
 
         JMenu file = new JMenu("ファイル");
         file.add(item("新規（テキスト）", key(KeyEvent.VK_N, CTRL), () -> newDocument(EditorPane.Mode.TEXT)));
@@ -416,6 +417,11 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             countMenu.add(countItem);
         }
         view.add(countMenu);
+        // 原稿用紙の字数・行数（選ぶと、開いている縦書きの文書にすぐ反映する）
+        JMenu sheetMenu = new JMenu("原稿用紙");
+        sheetMenu.add(sheetSizeMenu("字数", true));
+        sheetMenu.add(sheetSizeMenu("行数", false));
+        view.add(sheetMenu);
         JCheckBoxMenuItem stripeItem = new JCheckBoxMenuItem("行の縞模様", Theme.stripes);
         stripeItem.addActionListener(e -> {
             Theme.stripes = stripeItem.isSelected();
@@ -534,9 +540,49 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         return menuBar;
     }
 
+    /** 原稿用紙の見出し（例「原稿用紙（25字×20行）」）。 */
+    private static String sheetLabel() {
+        return "原稿用紙（" + SheetSize.chars() + "字×" + SheetSize.lines() + "行）";
+    }
+
+    /** 原稿用紙の字数（chars が真）または行数を選ぶサブメニュー。今の値にチェックが付く。 */
+    private JMenu sheetSizeMenu(String title, boolean chars) {
+        JMenu menu = new JMenu(title);
+        javax.swing.ButtonGroup group = new javax.swing.ButtonGroup();
+        int current = chars ? SheetSize.chars() : SheetSize.lines();
+        for (int value : SheetSize.CHOICES) {
+            javax.swing.JRadioButtonMenuItem sizeItem = new javax.swing.JRadioButtonMenuItem(
+                    value + (chars ? " 字" : " 行"), value == current);
+            sizeItem.addActionListener(e -> setSheetSize(chars, value));
+            group.add(sizeItem);
+            menu.add(sizeItem);
+        }
+        return menu;
+    }
+
+    /** 原稿用紙の字数または行数を変えて覚える。開いている縦書きの文書（すべて）を描き直し、枚数の表示も直す。 */
+    private void setSheetSize(boolean chars, int value) {
+        if (chars) {
+            SheetSize.setChars(value);
+        } else {
+            SheetSize.setLines(value);
+        }
+        SheetSize.save(appSettings);
+        appSettings.save();
+        manuscriptItem.setText(sheetLabel());
+        sheetCache.clear();
+        for (EditorPane pane : documentPanes()) {
+            if (pane instanceof VerticalTextPane vertical) {
+                forEachView(vertical, view -> ((VerticalTextPane) view).setManuscript(((VerticalTextPane) view).isManuscript()));
+            }
+        }
+        updateStatus();
+    }
+
     /** 書式メニューの、縦書き（Writer から）の項目。 */
     private void addVerticalFormatItems(JMenu format) {
         format.add(item("横書き ⇔ 縦書き を切り替え", key(KeyEvent.VK_T, CTRL | SHIFT), this::switchWriting));
+        manuscriptItem.setText(sheetLabel());
         manuscriptItem.setAccelerator(key(KeyEvent.VK_G, CTRL | SHIFT));
         manuscriptItem.addActionListener(e -> {
             if (currentPane() instanceof VerticalTextPane vertical) {

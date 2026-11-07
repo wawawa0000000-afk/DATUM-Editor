@@ -63,7 +63,7 @@ import javax.swing.undo.UndoManager;
  * 開くときは、その記法を読み取って属性に戻す。
  *
  * 表示は2通り：
- *   原稿用紙 … 20字×20行のマス目。1枚ごとに区切って、右から左へ並べる。マスの右の細い欄がルビ欄。
+ *   原稿用紙 … 字数×行数（既定は 20字×20行）のマス目。1枚ごとに区切って、右から左へ並べる。マスの右の細い欄がルビ欄。
  *   ふつう   … マス目なし。1列の文字数は、ウィンドウの高さで決まる。
  */
 public class VerticalTextPane extends EditorPane implements Searchable {
@@ -118,9 +118,6 @@ public class VerticalTextPane extends EditorPane implements Searchable {
     private int anchor = 0;             // 範囲選択の起点（選択していないときは caret と同じ）
     private List<Highlight> highlights = List.of();
 
-    /** 原稿用紙1枚の、1行の文字数と行数（400字詰め）。 */
-    public static final int SHEET_ROWS = 20;
-    public static final int SHEET_COLUMNS = 20;
     private boolean manuscript = true;
     private List<VerticalLayout.RubyRun> runs = List.of();  // ルビの一覧（文書の属性から作った写し）
 
@@ -635,11 +632,11 @@ public class VerticalTextPane extends EditorPane implements Searchable {
     }
 
     /**
-     * 原稿用紙のマス1つの大きさ。20マスと、その下の余白（何枚目かを書く所など）が、
+     * 原稿用紙のマス1つの大きさ。字数のマスと、その下の余白（何枚目かを書く所など）が、
      * ちょうど画面の高さに収まるように決める（ウィンドウを大きくすると、マスも大きくなる）。
      */
     private int sheetCell() {
-        return Math.max(14, (int) ((viewportHeight() - 2 * margin()) / (SHEET_ROWS + 1.6)));
+        return Math.max(14, (int) ((viewportHeight() - 2 * margin()) / (SheetSize.chars() + 1.6)));
     }
 
     /** 1文字ぶんの高さ（下へ進む量）。 */
@@ -676,12 +673,13 @@ public class VerticalTextPane extends EditorPane implements Searchable {
         return manuscript ? Math.round(sheetCell() * 1.4f) : 0;
     }
 
-    /** 画面に並べる列の数。原稿用紙では、最後の1枚も 20 行ぶんのマスを描くので、20 の倍数に切り上げる。 */
+    /** 画面に並べる列の数。原稿用紙では、最後の1枚も行数ぶんのマスを描くので、行数の倍数に切り上げる。 */
     private int displayColumns() {
         if (!manuscript) {
             return totalCols;
         }
-        return Math.max(1, (totalCols + SHEET_COLUMNS - 1) / SHEET_COLUMNS) * SHEET_COLUMNS;
+        int lines = SheetSize.lines();
+        return Math.max(1, (totalCols + lines - 1) / lines) * lines;
     }
 
     /** col 列目より右にある「すき間」（中央の空きと、紙と紙のあいだ）の合計。 */
@@ -689,8 +687,9 @@ public class VerticalTextPane extends EditorPane implements Searchable {
         if (!manuscript) {
             return 0;
         }
-        return (col / SHEET_COLUMNS) * (sheetGap() + foldGap())
-                + (col % SHEET_COLUMNS >= SHEET_COLUMNS / 2 ? foldGap() : 0);
+        int lines = SheetSize.lines();
+        return (col / lines) * (sheetGap() + foldGap())
+                + (col % lines >= lines / 2 ? foldGap() : 0);
     }
 
     /** col 列目の左端の位置。列は右から数えるので、右端から引いていく。 */
@@ -753,7 +752,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
 
         // 配置は「画面に出す文章」（変換中の文字をはさんだもの）で計算する。
         // 一番下の1文字ぶんは、余白として空けておく。
-        rowsPerColumn = manuscript ? SHEET_ROWS
+        rowsPerColumn = manuscript ? SheetSize.chars()
                 : Math.max(1, (height - 2 * margin() - cellHeight()) / cellHeight());
         layout = new VerticalLayout(shownText(), rowsPerColumn, shownRuns());
         colOf = layout.col;
@@ -927,8 +926,9 @@ public class VerticalTextPane extends EditorPane implements Searchable {
         if (manuscript && colOf.length > 0) {
             // 原稿用紙の何枚目にいるか（配置の計算が済んでいる範囲で求める）
             int column = colOf[Math.min(toShown(caret), colOf.length - 1)];
-            int sheets = Math.max(column / SHEET_COLUMNS + 1, (usedCols + SHEET_COLUMNS - 1) / SHEET_COLUMNS);
-            status = "原稿用紙 " + (column / SHEET_COLUMNS + 1) + " / " + sheets + " 枚    " + status;
+            int lines = SheetSize.lines();
+            int sheets = Math.max(column / lines + 1, (usedCols + lines - 1) / lines);
+            status = "原稿用紙 " + (column / lines + 1) + " / " + sheets + " 枚    " + status;
         }
         return status;
     }
@@ -1723,16 +1723,18 @@ public class VerticalTextPane extends EditorPane implements Searchable {
             g2.dispose();
         }
 
-        /** 原稿用紙を描く。20行ごとに1枚の紙にして、中央を少し空け、マス目とルビ欄を引く。 */
+        /** 原稿用紙を描く。行数ごとに1枚の紙にして、中央を少し空け、マス目とルビ欄を引く。 */
         private void paintSheets(Graphics2D g2, Rectangle clip, int caretColumn) {
             int cell = sheetCell();
             int strip = rubyStrip();
             int top = margin();
-            int gridHeight = SHEET_ROWS * cell;
-            int sheets = displayColumns() / SHEET_COLUMNS;
+            int chars = SheetSize.chars();
+            int lines = SheetSize.lines();
+            int gridHeight = chars * cell;
+            int sheets = displayColumns() / lines;
             for (int sheet = 0; sheet < sheets; sheet++) {
-                int firstColumn = sheet * SHEET_COLUMNS;
-                int lastColumn = firstColumn + SHEET_COLUMNS - 1;
+                int firstColumn = sheet * lines;
+                int lastColumn = firstColumn + lines - 1;
                 int paperLeft = columnLeft(lastColumn) - cell / 2;
                 int paperRight = columnLeft(firstColumn) + columnWidth() + cell / 2;
                 if (paperLeft > clip.x + clip.width || paperRight < clip.x) {
@@ -1748,7 +1750,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
                         g2.fillRect(x, top, columnWidth(), gridHeight);
                     }
                     g2.setColor(Theme.GRID);
-                    for (int row = 0; row < SHEET_ROWS; row++) {
+                    for (int row = 0; row < chars; row++) {
                         g2.drawRect(x, top + row * cell, cell, cell);       // 文字を書くマス
                     }
                     g2.drawRect(x + cell, top, strip, gridHeight);          // ルビ欄

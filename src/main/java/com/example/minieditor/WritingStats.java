@@ -172,22 +172,24 @@ public final class WritingStats {
         return status;
     }
 
-    /** 400字詰め原稿用紙に換算した枚数（1行20字・20行。段落ごとに行を改める）。 */
+    /** 原稿用紙に換算した枚数（1行は字数、1枚は行数。段落ごとに行を改める）。字数と行数は SheetSize の値。 */
     public static int manuscriptSheets(String text) {
+        int chars = SheetSize.chars();
+        int columns = SheetSize.lines();
         // 段落ごとに文字数を数える（split で段落の文字列を作らずに、1回たどるだけにする）
         int lines = 0;
         int length = 0;
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
             if (c == '\n') {
-                lines += Math.max(1, (length + 19) / 20);
+                lines += Math.max(1, (length + chars - 1) / chars);
                 length = 0;
             } else if (!Character.isLowSurrogate(c)) {
                 length++;
             }
         }
-        lines += Math.max(1, (length + 19) / 20);
-        return Math.max(1, (lines + 19) / 20);
+        lines += Math.max(1, (length + chars - 1) / chars);
+        return Math.max(1, (lines + columns - 1) / columns);
     }
 
     /** 連続して書いた日数（今日、まだ書いていなければ昨日まで）。 */
