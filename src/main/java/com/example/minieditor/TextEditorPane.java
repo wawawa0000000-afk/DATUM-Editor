@@ -1,9 +1,13 @@
 package com.example.minieditor;
 
 import java.awt.BorderLayout;
+import java.awt.Color;
 import java.awt.Font;
+import java.awt.FontMetrics;
+import java.awt.Graphics;
 import java.awt.Insets;
 import java.awt.Point;
+import java.awt.Rectangle;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.awt.event.InputEvent;
@@ -56,15 +60,31 @@ public class TextEditorPane extends EditorPane implements Searchable {
         }
     }
 
-    private final StripedTextArea area = new StripedTextArea();
+    /** 横書きで、ルビを親文字の上に小さく出すか（表示メニューの「ルビを上に表示」。開いている横書きの文書すべてに効く）。 */
+    static boolean rubyAbove = false;
+
+    /** 文章の中のルビの場所。文章が変わったら空にして、次に描くときに探し直す。 */
+    private List<RubySpans.Span> rubySpans;
+
+    private final StripedTextArea area = new StripedTextArea() {
+        @Override
+        protected void paintComponent(Graphics g) {
+            super.paintComponent(g);            // 文字や選択を描いたあとに、ルビの記法を覆って、ふりがなを重ねる
+            if (rubyAbove) {
+                paintRuby(g);
+            }
+        }
+    };
     private final Shared shared;
     private final List<Object> highlightTags = new ArrayList<>();
     private final DocumentListener documentListener = new DocumentListener() {
         public void insertUpdate(DocumentEvent e) {
+            rubySpans = null;
             changed();
         }
 
         public void removeUpdate(DocumentEvent e) {
+            rubySpans = null;
             changed();
         }
 
@@ -242,6 +262,76 @@ public class TextEditorPane extends EditorPane implements Searchable {
         } catch (BadLocationException ex) {
             // カーソル位置は必ず文書の中にあるので、通常は起きない
         }
+    }
+
+    /**
+     * ルビを上に表示するとき：ルビの記法（｜《》など）を行の背景色で覆い、親文字の上にふりがなを小さく描く。
+     * 描くのは見えている範囲のルビだけ。位置は描くたびに画面の座標から求め直すので、スクロールや折り返しに追従する。
+     * 覆うのは見た目だけで、文書の中身・カーソル・選択は変えない。
+     */
+    private void paintRuby(Graphics g) {
+        if (rubySpans == null) {
+            rubySpans = RubySpans.find(area.getText());
+        }
+        if (rubySpans.isEmpty()) {
+            return;
+        }
+        Rectangle visible = area.getVisibleRect();
+        int first = area.viewToModel2D(new Point(visible.x, visible.y));
+        int last = area.viewToModel2D(new Point(visible.x, visible.y + visible.height));
+        Font rubyFont = area.getFont().deriveFont(Math.max(9f, area.getFont().getSize2D() / 2));
+        FontMetrics metrics = g.getFontMetrics(rubyFont);
+        int caret = area.getCaretPosition();
+        boolean noSelection = area.getSelectionStart() == area.getSelectionEnd();
+        int caretY = -1;                        // カーソルのある行の高さ（強調の色を決めるため）
+        try {
+            caretY = (int) area.modelToView2D(caret).getY();
+        } catch (BadLocationException ex) {
+            // カーソル位置は必ず文書の中にあるので、通常は起きない
+        }
+        boolean caretCovered = false;           // カーソルが覆った記法の中にあるか（覆ったあと、カーソルを描き直す）
+        for (RubySpans.Span span : rubySpans) {
+            if (span.markupEnd() < first || span.markupStart() > last) {
+                continue;                       // 画面の外のルビは描かない
+            }
+            try {
+                for (int p = span.markupStart(); p < span.markupEnd(); p++) {
+                    Rectangle2D r = area.modelToView2D(p);
+                    boolean current = noSelection && (int) r.getY() == caretY;
+                    g.setColor(current ? Theme.CURRENT_LINE : rowBackground((int) r.getY()));
+                    g.fillRect((int) r.getX(), (int) r.getY(), (int) Math.ceil(r.getWidth()), (int) Math.ceil(r.getHeight()));
+                }
+                if (noSelection && caret >= span.markupStart() && caret < span.markupEnd()) {
+                    caretCovered = true;
+                }
+                // ふりがなは、親文字の1行目の左端と右端の真ん中にそろえ、その行の上に描く
+                Rectangle2D head = area.modelToView2D(span.baseStart());
+                double right = head.getMaxX();
+                for (int p = span.baseStart() + 1; p < span.baseEnd(); p++) {
+                    Rectangle2D r = area.modelToView2D(p);
+                    if (r.getY() == head.getY()) {
+                        right = Math.max(right, r.getMaxX());
+                    }
+                }
+                int x = (int) Math.round((head.getX() + right) / 2 - metrics.stringWidth(span.reading()) / 2.0);
+                int y = (int) head.getY() - metrics.getDescent() - 1;
+                g.setFont(rubyFont);
+                g.setColor(area.getForeground());
+                g.drawString(span.reading(), x, y);
+            } catch (BadLocationException ex) {
+                // 位置は文書の中にあるので、通常は起きない。この1つだけ飛ばす
+            }
+        }
+        if (caretCovered) {
+            area.getCaret().paint(g);           // 覆った上から、カーソルを描き直す（文字の上のカーソルが隠れないように）
+        }
+    }
+
+    /** 画面の行の背景色（縞模様は StripedTextArea と同じ決め方）。 */
+    private Color rowBackground(int y) {
+        int rowHeight = area.getFontMetrics(area.getFont()).getHeight();     // JTextArea の1行の高さと同じ
+        int row = rowHeight > 0 ? (y - area.getInsets().top) / rowHeight : 0;
+        return Theme.stripes && row % 2 == 1 ? Theme.BG_STRIPE : Theme.BG;
     }
 
     /** カーソルの位置（前回の状態を復元するときに使う）。 */

@@ -428,6 +428,18 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             repaint();
         });
         view.add(stripeItem);
+        // ルビを上に表示（横書きだけ。前回の設定を読んで、描き方に反映する。既定は切）。切り替えたら、開いている文書をすべて描き直す
+        TextEditorPane.rubyAbove = appSettings.getBool(AppSettings.RUBY_ABOVE, false);
+        JCheckBoxMenuItem rubyItem = new JCheckBoxMenuItem("ルビを上に表示", TextEditorPane.rubyAbove);
+        rubyItem.addActionListener(e -> {
+            TextEditorPane.rubyAbove = rubyItem.isSelected();
+            appSettings.put(AppSettings.RUBY_ABOVE, TextEditorPane.rubyAbove);
+            appSettings.save();
+            for (EditorPane pane : allPanes()) {
+                pane.repaint();
+            }
+        });
+        view.add(rubyItem);
         // 入力補助（段落頭の全角スペース・かっこの自動閉じ）。前回の設定を読んで、メニューと打つ処理に反映する。既定は切
         InputAssist.indentOnBreak = appSettings.getBool(AppSettings.INPUT_INDENT, false);
         InputAssist.pairs = appSettings.getBool(AppSettings.INPUT_PAIRS, false);
