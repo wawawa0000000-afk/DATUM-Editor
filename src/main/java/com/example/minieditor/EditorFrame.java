@@ -25,6 +25,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -63,6 +65,8 @@ import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import javax.swing.filechooser.FileNameExtensionFilter;
+import javax.swing.event.MenuEvent;
+import javax.swing.event.MenuListener;
 import javax.swing.plaf.basic.BasicSplitPaneUI;
 
 /**
@@ -114,6 +118,8 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     private final JToggleButton paletteButton = createIconButton(ToolIcons.search(), "すべての操作を探す",
             "すべての操作を、名前で探して実行する（Ctrl+P）", this::showPalette);
     private JMenuItem paletteItem;
+    private JMenu snippetMenu;          // 「編集 → 定型文」（中身は開くたびに作り直す）
+    private JMenu snippetDateMenu;      // 「定型文 → 日付・時刻」
     private final JToggleButton splitSideButton = createIconButton(ToolIcons.split(() -> false), "左右に分割",
             "左右に分割する / 分割をやめる（Ctrl+\\）。タブが2枚以上なら今のタブを右へ、1枚なら同じ文書を右にも出します",
             () -> splitTo(JSplitPane.HORIZONTAL_SPLIT));
@@ -350,6 +356,8 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         edit.add(item("検索", key(KeyEvent.VK_F, CTRL), () -> findBar.open(false)));
         edit.add(item("置換", key(KeyEvent.VK_H, CTRL), () -> findBar.open(true)));
         edit.add(item("フォルダ内を検索…", key(KeyEvent.VK_F, CTRL | SHIFT), this::showFolderSearch));
+        edit.addSeparator();
+        edit.add(createSnippetMenu());
 
         JMenu format = new JMenu("書式");
         format.add(item("フォント…", null, this::chooseFont));
@@ -1002,6 +1010,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     /** コマンドパレット（すべての操作を名前で探す）を開く。メニューの項目は自動で集める。 */
     private void showPalette() {
         paletteButton.setSelected(false);   // 押したままの見た目にしない（欄の出し入れのボタンではないため）
+        refreshSnippetMenu();               // 定型文は、パレットに集める前に作り直す（メニューを開いていなくても最新にするため）
         List<CommandPalette.Command> extras = new ArrayList<>();
         // メニューにない操作（タブの右クリックなどでしかできないもの）
         extras.add(new CommandPalette.Command("extra/ほかのタブを閉じる", "ほかのタブを閉じる", "タブ", "", () -> {
@@ -1016,6 +1025,98 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             extras.add(new CommandPalette.Command("extra/目標字数", "1日の目標字数を決める…", "執筆", "", () -> goalMeter.openEditor()));
         }
         CommandPalette.show(this, appSettings, CommandPalette.collect(getJMenuBar(), extras, paletteItem));
+    }
+
+    /** 「編集」メニューの「定型文」サブメニューを作る。中身は、開くたびに作り直す（refreshSnippetMenu）。 */
+    private JMenu createSnippetMenu() {
+        snippetDateMenu = new JMenu("日付・時刻");
+        snippetDateMenu.addMenuListener(new MenuListener() {
+            @Override
+            public void menuSelected(MenuEvent e) {
+                fillDateMenu();            // 例の数字を、開いた時点の日時にする
+            }
+
+            @Override
+            public void menuDeselected(MenuEvent e) {
+            }
+
+            @Override
+            public void menuCanceled(MenuEvent e) {
+            }
+        });
+        snippetMenu = new JMenu("定型文");
+        snippetMenu.addMenuListener(new MenuListener() {
+            @Override
+            public void menuSelected(MenuEvent e) {
+                refreshSnippetMenu();      // 定型文.txt を編集したあとでも、新しい内容が出るように、開くたびに読み直す
+            }
+
+            @Override
+            public void menuDeselected(MenuEvent e) {
+            }
+
+            @Override
+            public void menuCanceled(MenuEvent e) {
+            }
+        });
+        refreshSnippetMenu();
+        return snippetMenu;
+    }
+
+    /** 「定型文」の中身を、定型文.txt の今の内容で作り直す（定型文 → 区切り → 日付・時刻 → 区切り → 編集）。 */
+    private void refreshSnippetMenu() {
+        snippetMenu.removeAll();
+        List<String> snippets = Snippets.load(Snippets.fileIn(McpSettings.directory()));
+        if (snippets.isEmpty()) {
+            JMenuItem none = new JMenuItem("（定型文.txt に書くと、ここに出ます）");
+            none.setEnabled(false);
+            snippetMenu.add(none);
+        }
+        for (String snippet : snippets) {
+            snippetMenu.add(item(Snippets.menuLabel(snippet), null, () -> insertSnippet(snippet)));
+        }
+        snippetMenu.addSeparator();
+        fillDateMenu();
+        snippetMenu.add(snippetDateMenu);
+        snippetMenu.addSeparator();
+        snippetMenu.add(item("定型文を編集…", null, this::editSnippets));
+    }
+
+    /** 「日付・時刻」の4項目を、今の日時の例で作り直す。挿入する文字は、選んだ時点の日時で作る。 */
+    private void fillDateMenu() {
+        LocalDateTime now = LocalDateTime.now();
+        snippetDateMenu.removeAll();
+        snippetDateMenu.add(item("日付（" + Snippets.dateJapanese(now.toLocalDate()) + "）", null,
+                () -> insertSnippet(Snippets.dateJapanese(LocalDate.now()))));
+        snippetDateMenu.add(item("日付（" + Snippets.dateIso(now.toLocalDate()) + "）", null,
+                () -> insertSnippet(Snippets.dateIso(LocalDate.now()))));
+        snippetDateMenu.add(item("時刻（" + Snippets.time(now) + "）", null,
+                () -> insertSnippet(Snippets.time(LocalDateTime.now()))));
+        snippetDateMenu.add(item("日時（" + Snippets.dateTimeIso(now) + "）", null,
+                () -> insertSnippet(Snippets.dateTimeIso(LocalDateTime.now()))));
+    }
+
+    /** 今の文書の、選んでいる範囲（なければカーソル）を text に置き換える。カーソルは挿入した文字の後ろに置く。 */
+    private void insertSnippet(String text) {
+        if (!(currentPane() instanceof Searchable doc)) {
+            flash("この文書には入れられません");
+            return;
+        }
+        int start = doc.getSelectionStart();
+        doc.replaceRange(text, start, doc.getSelectionEnd());
+        doc.reveal(start + text.length());
+    }
+
+    /** 「定型文を編集…」：定型文.txt（無ければ作る）を、エディタのタブで開く。開いていれば、そのタブを前に出す。 */
+    private void editSnippets() {
+        Path file = Snippets.fileIn(McpSettings.directory());
+        try {
+            Snippets.ensureFile(file);
+            openPath(file.toAbsolutePath(), false, false);
+        } catch (IOException ex) {
+            JOptionPane.showMessageDialog(this, "開けませんでした: " + ex.getMessage(),
+                    "エラー", JOptionPane.ERROR_MESSAGE);
+        }
     }
 
     /** 配色や倍率を変えるときにたどる部品。画面に出ていない部品（裏のタブ・閉じている欄）も入れる。 */
