@@ -3,7 +3,6 @@ package com.example.minieditor;
 import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.nio.charset.CharacterCodingException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
@@ -485,7 +484,7 @@ final class McpTools implements McpServer.Backend {
 
     /** ファイルの中の、探す対象にする文章。このアプリの .json は、本文やカードの文字だけを取り出す。 */
     static String searchableContent(Path file) throws IOException {
-        return searchableText(file, Files.readString(file, StandardCharsets.UTF_8));
+        return searchableText(file, new FileService().readText(file));
     }
 
     /**
@@ -688,8 +687,8 @@ final class McpTools implements McpServer.Backend {
         }
         String content;
         try {
-            content = Files.readString(path, StandardCharsets.UTF_8).replace("\r", "");
-        } catch (CharacterCodingException ex) {
+            content = fileService.readText(path).replace("\r", "");
+        } catch (FileService.UnreadableException ex) {
             throw new ToolException(display(path) + " は、UTF-8 の文章として読めませんでした（別の文字コードか、文章ではないファイルです）。");
         }
         StringBuilder sb = new StringBuilder("ファイル: " + display(path) + "（" + size(Files.size(path)) + "）\n");

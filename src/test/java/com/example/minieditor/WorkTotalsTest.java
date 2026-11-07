@@ -43,6 +43,7 @@ public class WorkTotalsTest {
             crlf(base);
             skipped(base);
             empty(base);
+            shiftJis(base);
         } finally {
             deleteTree(base);
         }
@@ -175,6 +176,22 @@ public class WorkTotalsTest {
         write(root.resolve("picture.png"), "数えない");
         WorkTotals.Totals totals = WorkTotals.count(root, WritingStats.CountMode.ALL, false, Map.of());
         check(totals.entries().isEmpty() && totals.total() == 0, "対象が1つもなければ、entries は空・total は 0");
+    }
+
+    /** Shift_JIS のファイルは飛ばさず、UTF-8 の同じ文章と同じ字数で数える。 */
+    private static void shiftJis(Path base) throws IOException {
+        Path root = folder(base, "shift-jis");
+        String text = "吾輩は猫である。名前はまだ無い。";
+        Files.write(root.resolve("01_sjis.txt"), text.getBytes(EncodingChoice.SHIFT_JIS_CHARSET));
+        write(root.resolve("02_utf8.txt"), text);
+        WorkTotals.Totals totals = WorkTotals.count(root, WritingStats.CountMode.ALL, false, Map.of());
+        check(names(totals).equals(List.of("01_sjis.txt", "02_utf8.txt")) && !totals.skippedAny(),
+                "Shift_JIS のファイルも飛ばさない（読めないファイルとして飛ばさない）");
+        int expected = text.length();
+        check(totals.entries().size() == 2 && totals.entries().get(0).chars() == expected
+                        && totals.entries().get(1).chars() == expected,
+                "Shift_JIS のファイルの字数は、UTF-8 の同じ文章と同じ（" + expected + " 字）");
+        check(totals.total() == 2 * expected, "合計は2つ分: " + totals.total());
     }
 
     private static List<String> names(WorkTotals.Totals totals) {

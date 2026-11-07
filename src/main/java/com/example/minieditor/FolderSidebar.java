@@ -520,7 +520,7 @@ public final class FolderSidebar extends JPanel {
                 continue;
             }
             try {
-                String text = Files.readString(file, StandardCharsets.UTF_8).replace("\r\n", "\n").stripTrailing();
+                String text = new FileService().readText(file).replace("\r\n", "\n").stripTrailing();
                 if (count > 0) {
                     sb.append("\n\n");
                 }

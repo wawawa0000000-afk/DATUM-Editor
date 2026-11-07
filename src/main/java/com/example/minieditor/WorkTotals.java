@@ -1,7 +1,6 @@
 package com.example.minieditor;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -73,7 +72,7 @@ final class WorkTotals {
             if (Files.size(file) > MAX_FILE_BYTES) {
                 return null;
             }
-            return Files.readString(file, StandardCharsets.UTF_8);
+            return new FileService().readText(file);
         } catch (IOException ex) {
             return null;                // 読めないファイルは飛ばして、ほかを数え続ける
         }

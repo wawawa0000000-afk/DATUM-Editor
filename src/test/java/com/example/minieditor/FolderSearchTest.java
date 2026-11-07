@@ -48,6 +48,7 @@ public class FolderSearchTest {
             regexAndEmpty(base);
             sizeLimit(base);
             order(base);
+            shiftJis(base);
         } finally {
             deleteTree(base);
         }
@@ -230,6 +231,20 @@ public class FolderSearchTest {
     // ---------- 補助 ----------
 
     /** フォルダの中で「key」を探して、見つかった一致の一覧。 */
+    /** Shift_JIS で書いたファイルも、UTF-8 のファイルと同じように探せる。 */
+    private static void shiftJis(Path base) throws IOException {
+        Path root = folder(base, "sjis");
+        Files.write(root.resolve("sjis.txt"), "一行目\n東京の本文です\n".getBytes(EncodingChoice.SHIFT_JIS_CHARSET));
+        write(root.resolve("utf8.txt"), "一行目\n東京の本文です\n");
+        List<FolderSearch.Hit> hits = new ArrayList<>();
+        search(root, "東京", false, false, Map.of(), hits);
+        Set<String> names = names(root, hits);
+        check(names.equals(Set.of("sjis.txt", "utf8.txt")), "Shift_JIS のファイルも、UTF-8 のファイルと同じく「東京」を見つける: " + names);
+        check(hits.stream().filter(h -> h.file().getFileName().toString().equals("sjis.txt"))
+                .allMatch(h -> h.line() == 2 && h.lineText().equals("東京の本文です")),
+                "Shift_JIS のファイルの一致は、2行目「東京の本文です」");
+    }
+
     private static List<FolderSearch.Hit> found(Path root) {
         List<FolderSearch.Hit> hits = new ArrayList<>();
         search(root, "key", false, false, Map.of(), hits);

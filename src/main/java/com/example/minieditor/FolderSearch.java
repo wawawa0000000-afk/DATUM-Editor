@@ -2,7 +2,6 @@ package com.example.minieditor;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
@@ -89,7 +88,7 @@ final class FolderSearch {
                     continue;
                 }
                 String unsaved = open.get(file);
-                content = unsaved != null ? unsaved : Files.readString(file, StandardCharsets.UTF_8);
+                content = unsaved != null ? unsaved : new FileService().readText(file);
             } catch (IOException ex) {
                 continue;                   // 読めないファイルは飛ばして、ほかを探し続ける
             }

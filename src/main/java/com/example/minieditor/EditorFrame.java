@@ -20,7 +20,6 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -2474,13 +2473,19 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
                     + "そのタブを閉じてから保存するか、別の名前を付けてください。", "保存できません", JOptionPane.WARNING_MESSAGE);
             return false;
         }
+        // 書き方（文字コード・改行）は、今の文書の形式を初めから選んでおく
+        EncodingChoice current = pane.getPath() == null ? EncodingChoice.UTF8 : fileService.formatOf(pane.getPath());
+        EncodingChoice choice = chooseEncoding(current);
+        if (choice == null) {
+            return false;
+        }
         if (!path.equals(pane.getPath()) && !confirmOverwrite(path)) {
             return false;
         }
 
         boolean wasRaw = pane.isRawFile();
         pane.setRawFile(false);         // 自分で形式を選んだので、このアプリの形式で保存する
-        if (write(pane, path)) {
+        if (write(pane, path, true, choice)) {
             pane.setPath(path);
             updateStatus();
             if (sidebar != null) {
@@ -2490,6 +2495,28 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         }
         pane.setRawFile(wasRaw);
         return false;
+    }
+
+    /** 「名前を付けて保存」のあとに、文字コードと改行を選ぶ画面。キャンセルなら null。 */
+    private EncodingChoice chooseEncoding(EncodingChoice current) {
+        JComboBox<String> encodingBox = new JComboBox<>(new String[]{"UTF-8", "UTF-8（BOM 付き）", "Shift_JIS"});
+        encodingBox.setSelectedIndex(current.encodingIndex());
+        JComboBox<String> newlineBox = new JComboBox<>(EncodingChoice.NEWLINES.toArray(new String[0]));
+        newlineBox.setSelectedIndex(current.crlf() ? 1 : 0);
+
+        JPanel panel = new JPanel();
+        panel.add(new JLabel("文字コード:"));
+        panel.add(encodingBox);
+        panel.add(new JLabel("改行:"));
+        panel.add(newlineBox);
+
+        int result = JOptionPane.showConfirmDialog(this, panel, "書き方",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (result != JOptionPane.OK_OPTION) {
+            return null;
+        }
+        return EncodingChoice.ENCODINGS.get(encodingBox.getSelectedIndex())
+                .withCrlf(newlineBox.getSelectedIndex() == 1);
     }
 
     /** 今の文書を、PDF ファイルに書き出す。 */
@@ -2571,6 +2598,13 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
      * @param manual 利用者が保存した（false なら自動保存。履歴は 10 分に1回だけ残し、失敗してもダイアログは出さない）
      */
     private boolean write(EditorPane pane, Path path, boolean manual) {
+        return write(pane, path, manual, null);
+    }
+
+    /**
+     * @param choice 書き方（null なら、このファイルの今の書き方）
+     */
+    private boolean write(EditorPane pane, Path path, boolean manual, EncodingChoice choice) {
         String content = fileContent(pane, path);
         Path key = path.toAbsolutePath().normalize();
         if (fileService.changedOutside(path)) {
@@ -2591,7 +2625,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         }
         keepDiskVersion(path);
         try {
-            fileService.save(content, path);
+            fileService.save(content, path, choice != null ? choice : fileService.formatOf(path));
             changedOutsideWarned.remove(key);
             pane.setDirty(false);
             Instant previous = lastHistory.get(key);
@@ -2621,10 +2655,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         if (ex instanceof java.nio.file.AccessDeniedException denied) {
             return "書き込みが許されていません（読み取り専用のファイルか、ほかのアプリが使っています）\n" + denied.getFile();
         }
-        if (ex instanceof java.nio.charset.CharacterCodingException) {
-            return "UTF-8 で書けない文字が入っています";
-        }
-        return ex.getMessage();
+        return ex.getMessage();         // 書けない文字の知らせも、ここに入っている
     }
 
     /**
@@ -2636,9 +2667,9 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             return;
         }
         try {
-            history.record(path, Files.readString(path, StandardCharsets.UTF_8), appSettings.getInt(AppSettings.HISTORY_LIMIT, 50) + 1);
+            history.record(path, fileService.readText(path), appSettings.getInt(AppSettings.HISTORY_LIMIT, 50) + 1);
         } catch (IOException ex) {
-            // UTF-8 で読めないファイルなどは残せない（保存そのものは続ける）
+            // UTF-8 にも Shift_JIS にも読めないファイルなどは残せない（保存そのものは続ける）
         }
     }
 
