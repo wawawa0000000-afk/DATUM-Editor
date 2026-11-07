@@ -17,6 +17,8 @@ import java.awt.Toolkit;
 import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.ActionEvent;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
 import java.awt.event.InputEvent;
@@ -25,11 +27,16 @@ import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseWheelEvent;
+import java.awt.geom.Area;
+import java.awt.geom.Point2D;
+import java.awt.geom.RoundRectangle2D;
 import java.awt.image.BufferedImage;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -51,15 +58,25 @@ import javax.swing.SwingUtilities;
 /**
  * カードボード。付箋（カード）を並べ、グループの枠で囲み、矢印でつなぐ。
  * Miro や FigJam などのオンラインのボードにある機能を参考にしている。
+ * グループ枠の扱いと、マウスの手触りは、UE5 の Blueprint のコメント枠に合わせている。
  *
  * 操作：
- *   何もない所をダブルクリック … カードを追加
+ *   何もない所をダブルクリック … カードを追加（グループ枠の中でも同じ）
  *   カードをダブルクリック     … 文字を編集（Ctrl+Enter か、外をクリックで確定。Esc で取り消し）
- *   ドラッグ                   … 移動（グループ枠を動かすと、中のカードも一緒に動く）
- *   何もない所からドラッグ     … 囲んだカードをまとめて選択（Shift+クリックで追加）
+ *   ドラッグ                   … 移動（16 ずつの格子にそろう）
+ *   グループ枠の見出しをドラッグ … 枠ごと動かす（中のカードと、中の小さい枠も一緒に動く）
+ *   何もない所からドラッグ     … 囲んだカードと枠をまとめて選択（枠の中の空いた所からでもよい）
+ *   Shift+クリック／Ctrl+クリック … 選択に足す／選択を切り替える（範囲選択では Shift で足し、Ctrl で外す）
  *   ふちや角をドラッグ         … 大きさを変える（ふちに触れると、矢印の形が変わる）
- *   Ctrl+ホイール              … 拡大・縮小　／　中ボタンでドラッグ … 表示位置を動かす
+ *   Ctrl+ホイール              … 拡大・縮小　／　右ボタン・中ボタン（ホイール）でドラッグ … 表示位置を動かす
  *   右クリック                 … 色・投票・矢印・整列・グループ化など
+ *   C … 枠で囲む　Home … 全体を表示　Shift+W/A/S/D … 上・左・下・右にそろえる
+ *
+ * グループ枠は入れ子にできる。小さい枠ほど手前に描き、先にクリックが当たる。
+ * 枠の中にあるか（親子）は、そのつど位置から求める（中心が枠の内側にあり、枠より小さいもの）。
+ *
+ * ボードに端はない（UE5 のグラフと同じ）。カードはマイナスの位置にも置け、表示はどこまででも動かせる。
+ * Board の部品は、表示している所の周りだけ（canvas）を受け持ち、足りなくなったら四方へ広げ直す。
  */
 public class BoardPane extends EditorPane {
 
@@ -92,6 +109,12 @@ public class BoardPane extends EditorPane {
     private static final Color LINK_COLOR = new Color(0x9CDCFE);
     private static final int HANDLE = 18;       // 選んだカードの右下に出す、目印の三角の大きさ
     private static final int GAP = 24;          // 整列するときの、カードとカードのすき間
+    private static final int GRID = 16;         // ドラッグで動かすときに、そろえる格子の幅
+    // align で、そろえるふち
+    public static final int ALIGN_TOP = 0;
+    public static final int ALIGN_LEFT = 1;
+    public static final int ALIGN_BOTTOM = 2;
+    public static final int ALIGN_RIGHT = 3;
     private static final int UNDO_LIMIT = 100;
     private static final double MIN_SCALE = 0.2;
     private static final double MAX_SCALE = 3.0;
@@ -110,7 +133,10 @@ public class BoardPane extends EditorPane {
 
     private final Board board = new Board();
     private final JScrollPane scrollPane = new JScrollPane(board);
-    private final WheelScroll wheelScroll = new WheelScroll(scrollPane, false);
+    // Board の部品が受け持っている範囲（ボード上の座標）。部品の (0, 0) が、ボード上の (canvas.x, canvas.y)
+    private final Rectangle canvas = new Rectangle();
+    private boolean canvasReady;                // 一度でも表示して、canvas を決めたか
+    private final double[] wheelRest = new double[2];   // ホイールの、1ピクセルに満たない残り（[0] 縦、[1] 横）
     private JTextArea editor;                   // 文字を編集している間だけ出す入力欄
     private Card editingCard;
 
@@ -118,6 +144,15 @@ public class BoardPane extends EditorPane {
         scrollPane.setBorder(null);
         scrollPane.getViewport().setBackground(Theme.BG);
         scrollPane.setWheelScrollingEnabled(false);     // ホイールは Board 側で受け取る（拡大・縮小のため）
+        // 端のないボードなので、スクロールバーは出さない（ホイール・ドラッグで動かす）
+        scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_NEVER);
+        scrollPane.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        scrollPane.getViewport().addComponentListener(new ComponentAdapter() {
+            @Override
+            public void componentResized(ComponentEvent e) {
+                refreshCanvas();        // 初めて表示したとき・画面の大きさが変わったとき
+            }
+        });
         add(scrollPane, BorderLayout.CENTER);
     }
 
@@ -173,8 +208,8 @@ public class BoardPane extends EditorPane {
                 Map<String, Object> m = (Map<String, Object>) raw;
                 Card card = new Card();
                 card.id = Json.num(m, "id", nextId);
-                card.x = Math.max(0, Json.num(m, "x", 40));
-                card.y = Math.max(0, Json.num(m, "y", 40));
+                card.x = Json.num(m, "x", 40);
+                card.y = Json.num(m, "y", 40);
                 card.w = Math.max(60, Json.num(m, "w", 240));
                 card.h = Math.max(40, Json.num(m, "h", 140));
                 card.color = Math.floorMod(Json.num(m, "color", 0), PALETTE.length);
@@ -259,6 +294,7 @@ public class BoardPane extends EditorPane {
     }
 
     private void contentUpdated() {
+        refreshCanvas();                // カードが受け持ちの範囲の外へ出たら、広げる
         board.revalidate();
         board.repaint();
         if (!otherViews().isEmpty()) {
@@ -284,6 +320,7 @@ public class BoardPane extends EditorPane {
                 selection.add(card);
             }
         }
+        refreshCanvas();
         board.repaint();
     }
 
@@ -338,7 +375,10 @@ public class BoardPane extends EditorPane {
         return null;
     }
 
-    /** その点にあるカードを返す。ふつうのカードを先に調べ、なければグループ枠を調べる。 */
+    /**
+     * その点にあるカードを返す。ふつうのカードを先に調べ、なければグループ枠の見出しを調べる
+     * （小さい枠が先）。枠の中の空いた所は、何もない所として扱う（範囲選択やカードの追加ができる）。
+     */
     private Card cardAt(Point p) {
         for (int i = cards.size() - 1; i >= 0; i--) {
             Card card = cards.get(i);
@@ -346,13 +386,133 @@ public class BoardPane extends EditorPane {
                 return card;
             }
         }
-        for (int i = cards.size() - 1; i >= 0; i--) {
-            Card card = cards.get(i);
-            if (card.group && card.bounds().contains(p)) {
-                return card;
+        List<Card> groups = groupsBackToFront();
+        for (int i = groups.size() - 1; i >= 0; i--) {
+            if (titleBand(groups.get(i)).contains(p)) {
+                return groups.get(i);
             }
         }
         return null;
+    }
+
+    // ---------- グループ枠の入れ子 ----------
+
+    private static long area(Card card) {
+        return (long) card.w * card.h;
+    }
+
+    /** グループ枠の見出しの帯の高さ。この帯をつかむと、枠ごと動かせる。 */
+    private int titleHeight() {
+        return cardFont.getSize() * 2 + 12;
+    }
+
+    private Rectangle titleBand(Card group) {
+        return new Rectangle(group.x, group.y, group.w, Math.min(group.h, titleHeight()));
+    }
+
+    /** item が group の中に入っているか（中心が枠の内側にあり、枠より小さい）。 */
+    private static boolean inside(Card item, Card group) {
+        return item != group && group.group && area(item) < area(group)
+                && group.bounds().contains(item.x + item.w / 2, item.y + item.h / 2);
+    }
+
+    /** item を囲む、いちばん小さいグループ枠（親）。どの枠にも入っていなければ null。 */
+    private Card parentOf(Card item) {
+        Card parent = null;
+        for (Card group : cards) {
+            if (inside(item, group) && (parent == null || area(group) < area(parent))) {
+                parent = group;
+            }
+        }
+        return parent;
+    }
+
+    /** 親ごとの、すぐ下の子の一覧。どの枠にも入っていないものは、null をキーにする。 */
+    private Map<Card, List<Card>> childrenMap() {
+        Map<Card, List<Card>> children = new HashMap<>();
+        for (Card card : cards) {
+            children.computeIfAbsent(parentOf(card), key -> new ArrayList<>()).add(card);
+        }
+        return children;
+    }
+
+    /** グループ枠を、大きい順（奥から手前の順）に並べたもの。 */
+    private List<Card> groupsBackToFront() {
+        List<Card> groups = new ArrayList<>();
+        for (Card card : cards) {
+            if (card.group) {
+                groups.add(card);
+            }
+        }
+        groups.sort(Comparator.comparingLong(BoardPane::area).reversed());
+        return groups;
+    }
+
+    /** 枠の中に入っているものを、入れ子の奥まで全部返す。 */
+    private List<Card> descendants(Card group) {
+        List<Card> found = new ArrayList<>();
+        List<Card> queue = new ArrayList<>(List.of(group));
+        while (!queue.isEmpty()) {
+            Card outer = queue.remove(queue.size() - 1);
+            for (Card card : cards) {
+                if (inside(card, outer) && card != group && !found.contains(card)) {
+                    found.add(card);
+                    if (card.group) {
+                        queue.add(card);
+                    }
+                }
+            }
+        }
+        return found;
+    }
+
+    /** items から、ほかの item の枠の中に入っているものを除く（枠と一緒に動くので、二重に動かさない）。 */
+    private List<Card> topLevel(Collection<Card> items) {
+        List<Card> result = new ArrayList<>();
+        for (Card item : items) {
+            boolean nested = false;
+            for (Card parent = parentOf(item); parent != null; parent = parentOf(parent)) {
+                if (items.contains(parent)) {
+                    nested = true;
+                    break;
+                }
+            }
+            if (!nested) {
+                result.add(item);
+            }
+        }
+        return result;
+    }
+
+    /** item を動かす。グループ枠なら、中に入っているもの（children でわかる子と孫）も一緒に動かす。 */
+    private static void moveTree(Card item, int dx, int dy, Map<Card, List<Card>> children) {
+        item.x += dx;
+        item.y += dy;
+        if (item.group) {
+            for (Card child : children.getOrDefault(item, List.of())) {
+                moveTree(child, dx, dy, children);
+            }
+        }
+    }
+
+    /** 枠が、中に入っているもの全部を囲むように広げる（縮めはしない）。外側の枠も順に広げる。 */
+    private void growToFit(Card group, Map<Card, List<Card>> children, Map<Card, Card> parents) {
+        for (Card g = group; g != null; g = parents.get(g)) {
+            for (Card child : children.getOrDefault(g, List.of())) {
+                g.w = Math.max(g.w, child.x + child.w + GAP - g.x);
+                g.h = Math.max(g.h, child.y + child.h + GAP - g.y);
+            }
+        }
+    }
+
+    private Map<Card, Card> parentsMap(Map<Card, List<Card>> children) {
+        Map<Card, Card> parents = new HashMap<>();
+        for (Map.Entry<Card, List<Card>> entry : children.entrySet()) {
+            for (Card child : entry.getValue()) {
+                parents.put(child, entry.getKey());
+            }
+        }
+        return parents;
     }
 
     private void select(Card card) {
@@ -406,8 +566,8 @@ public class BoardPane extends EditorPane {
         card.group = group;
         card.w = group ? size * 22 : size * 10;
         card.h = group ? size * 14 : size * 6;
-        card.x = Math.max(8, x);
-        card.y = Math.max(8, y);
+        card.x = x;
+        card.y = y;
         card.color = group ? 2 : 0;
         card.text = group ? "グループ" : "";
         cards.add(group ? 0 : cards.size(), card);  // グループ枠は奥に、カードは手前に置く
@@ -418,8 +578,8 @@ public class BoardPane extends EditorPane {
         String before = snapshot();
         Card card = newCard(p.x, p.y, group);
         if (!group) {
-            card.x = Math.max(8, p.x - card.w / 2);
-            card.y = Math.max(8, p.y - card.h / 2);
+            card.x = p.x - card.w / 2;
+            card.y = p.y - card.h / 2;
         }
         select(card);
         commit(before);
@@ -490,15 +650,18 @@ public class BoardPane extends EditorPane {
         commit(before);
     }
 
-    /** 選んでいるカードを囲む、グループ枠を作る（オンラインのボードの「クラスタ」にあたる）。 */
+    /**
+     * 選んでいるカードと枠を囲む、グループ枠を作る（オンラインのボードの「クラスタ」にあたる）。
+     * 大きい枠の中で作れば、その中の小さい枠になる。枠を選んで囲めば、外側の大きい枠になる。
+     */
     public void groupSelected() {
-        List<Card> notes = selectedNotes();
-        if (editor != null || notes.isEmpty()) {
+        List<Card> items = topLevel(selection);
+        if (editor != null || items.isEmpty()) {
             return;
         }
         String before = snapshot();
-        Rectangle bounds = contentBounds(notes);
-        int titleHeight = cardFont.getSize() * 2 + 12;
+        Rectangle bounds = contentBounds(items);
+        int titleHeight = titleHeight();
         Card group = newCard(bounds.x - GAP, bounds.y - titleHeight, true);
         group.w = bounds.width + 2 * GAP;
         group.h = bounds.height + titleHeight + GAP;
@@ -507,62 +670,181 @@ public class BoardPane extends EditorPane {
         startEditing(group);            // そのまま、グループの名前を入力してもらう
     }
 
-    /** カードを、すき間をそろえて格子状に並べ直す。選んでいなければ、全部のカードが対象。 */
+    /**
+     * カードを、すき間をそろえて並べ直す。グループ枠の中のカードは、その枠の中で並べ、
+     * 枠は中身に合わせた大きさにして、ひとかたまりとして並べる（入れ子の枠も同じ）。
+     * 2つ以上選んでいれば（または枠を1つ選んでいれば）、選んだものだけを、それぞれの枠の中で並べる。
+     */
     public void tidy() {
-        List<Card> notes = selectedNotes().size() >= 2 ? selectedNotes() : allNotes();
-        if (editor != null || notes.size() < 2) {
+        if (editor != null || cards.isEmpty()) {
             return;
         }
+        Map<Card, List<Card>> children = childrenMap();
+        Map<Card, Card> parents = parentsMap(children);
+        List<Card> chosen = topLevel(selection);
         String before = snapshot();
-        Rectangle origin = contentBounds(notes);
-        int cellW = 0;
-        int cellH = 0;
-        for (Card card : notes) {
-            cellW = Math.max(cellW, card.w);
-            cellH = Math.max(cellH, card.h);
-        }
-        // 今の位置に近い順（上から下、左から右）に並べるので、並びが大きく入れ替わらない
-        int rowHeight = Math.max(1, cellH);
-        notes.sort(Comparator.comparingInt((Card card) -> card.y / rowHeight)
-                .thenComparingInt(card -> card.x));
-        int columns = (int) Math.ceil(Math.sqrt(notes.size()));
-        for (int i = 0; i < notes.size(); i++) {
-            notes.get(i).x = origin.x + (i % columns) * (cellW + GAP);
-            notes.get(i).y = origin.y + (i / columns) * (cellH + GAP);
+        if (chosen.size() == 1 && chosen.get(0).group) {
+            arrangeInside(chosen.get(0), children);
+            growToFit(parents.get(chosen.get(0)), children, parents);
+        } else if (chosen.size() >= 2) {
+            // 同じ枠に入っているものどうしで、その枠の中で並べる
+            for (Map.Entry<Card, List<Card>> part : partitionByParent(chosen, parents).entrySet()) {
+                Rectangle origin = contentBounds(part.getValue());
+                arrangeItems(part.getValue(), new Point(origin.x, origin.y), children);
+                growToFit(part.getKey(), children, parents);
+            }
+        } else {
+            List<Card> roots = children.getOrDefault(null, List.of());
+            Rectangle origin = contentBounds(roots);
+            arrangeItems(new ArrayList<>(roots), new Point(origin.x, origin.y), children);
         }
         commit(before);
     }
 
-    /** 同じ色のカードを、縦の列にまとめて並べる。 */
+    /** 枠の中身を並べ直し、枠を中身に合わせた大きさにする。中身がなければ何もしない。 */
+    private void arrangeInside(Card group, Map<Card, List<Card>> children) {
+        List<Card> kids = children.getOrDefault(group, List.of());
+        if (kids.isEmpty()) {
+            return;
+        }
+        Rectangle area = arrangeItems(new ArrayList<>(kids), new Point(group.x + GAP, group.y + titleHeight()), children);
+        FontMetrics fm = board.getFontMetrics(cardFont.deriveFont(Font.BOLD));
+        int titleWidth = fm.stringWidth(group.text.replace("\n", " ")) + 32;
+        group.w = Math.max(titleWidth, area.x + area.width + GAP - group.x);
+        group.h = area.y + area.height + GAP - group.y;
+    }
+
+    /**
+     * items を origin から、左から右へ、行を折り返して並べる。カードは同じ大きさのマスに入れ、
+     * 枠は中身を先に並べてから、その大きさのまま1つのかたまりとして置く。並べたあとの範囲を返す。
+     */
+    private Rectangle arrangeItems(List<Card> items, Point origin, Map<Card, List<Card>> children) {
+        for (Card item : items) {
+            if (item.group) {
+                arrangeInside(item, children);
+            }
+        }
+        int cellW = 0;
+        int cellH = 0;
+        int notes = 0;
+        for (Card item : items) {
+            if (!item.group) {
+                cellW = Math.max(cellW, item.w);
+                cellH = Math.max(cellH, item.h);
+                notes++;
+            }
+        }
+        // 今の位置に近い順（上から下、左から右）に並べるので、並びが大きく入れ替わらない
+        int rowHeight = Math.max(1, notes > 0 ? cellH : items.stream().mapToInt(item -> item.h).min().orElse(1));
+        items.sort(Comparator.comparingInt((Card card) -> card.y / rowHeight).thenComparingInt(card -> card.x));
+
+        // 折り返す幅：カードだけなら、今までどおり √枚数 の列。枠があれば、全体がおよそ正方形になる幅
+        double total = 0;
+        int widest = 0;
+        for (Card item : items) {
+            int w = item.group ? item.w : cellW;
+            int h = item.group ? item.h : cellH;
+            total += (double) (w + GAP) * (h + GAP);
+            widest = Math.max(widest, w);
+        }
+        int limit;
+        if (notes > 0) {
+            double aspect = (double) (cellW + GAP) / (cellH + GAP);
+            int columns = (int) Math.ceil(Math.sqrt(total * aspect) / (cellW + GAP) - 1e-9);
+            limit = Math.max(widest, columns * (cellW + GAP) - GAP);
+        } else {
+            limit = Math.max(widest, (int) Math.ceil(Math.sqrt(total)));
+        }
+
+        int x = origin.x;
+        int y = origin.y;
+        int lineHeight = 0;
+        for (Card item : items) {
+            int w = item.group ? item.w : cellW;
+            int h = item.group ? item.h : cellH;
+            if (x > origin.x && x - origin.x + w > limit) {
+                x = origin.x;
+                y += lineHeight + GAP;
+                lineHeight = 0;
+            }
+            moveTree(item, x - item.x, y - item.y, children);
+            x += w + GAP;
+            lineHeight = Math.max(lineHeight, h);
+        }
+        return contentBounds(items);
+    }
+
+    /** items を、入っている枠（親）ごとに分ける。並びは items の順を保つ。 */
+    private static Map<Card, List<Card>> partitionByParent(List<Card> items, Map<Card, Card> parents) {
+        Map<Card, List<Card>> parts = new LinkedHashMap<>();
+        for (Card item : items) {
+            parts.computeIfAbsent(parents.get(item), key -> new ArrayList<>()).add(item);
+        }
+        return parts;
+    }
+
+    /** 同じ色のカードを、縦の列にまとめて並べる。グループ枠の中のカードは、その枠の中で並べる。 */
     public void arrangeByColor() {
         List<Card> notes = selectedNotes().size() >= 2 ? selectedNotes() : allNotes();
         if (editor != null || notes.size() < 2) {
             return;
         }
         String before = snapshot();
-        Rectangle origin = contentBounds(notes);
-        int cellW = 0;
-        for (Card card : notes) {
-            cellW = Math.max(cellW, card.w);
-        }
-        int column = 0;
-        for (int color = 0; color < PALETTE.length; color++) {
-            int y = origin.y;
-            boolean used = false;
-            for (Card card : notes) {
-                if (card.color == color) {
-                    card.x = origin.x + column * (cellW + GAP);
-                    card.y = y;
-                    y += card.h + GAP;
-                    used = true;
+        Map<Card, List<Card>> children = childrenMap();
+        Map<Card, Card> parents = parentsMap(children);
+        for (Map.Entry<Card, List<Card>> part : partitionByParent(notes, parents).entrySet()) {
+            List<Card> members = part.getValue();
+            Rectangle origin = contentBounds(members);
+            if (part.getKey() != null) {
+                // 枠の中では、見出しの下から並べる
+                origin.x = Math.max(origin.x, part.getKey().x + GAP);
+                origin.y = Math.max(origin.y, part.getKey().y + titleHeight());
+            }
+            int cellW = 0;
+            for (Card card : members) {
+                cellW = Math.max(cellW, card.w);
+            }
+            int column = 0;
+            for (int color = 0; color < PALETTE.length; color++) {
+                int y = origin.y;
+                boolean used = false;
+                for (Card card : members) {
+                    if (card.color == color) {
+                        card.x = origin.x + column * (cellW + GAP);
+                        card.y = y;
+                        y += card.h + GAP;
+                        used = true;
+                    }
+                }
+                if (used) {
+                    column++;
                 }
             }
-            if (used) {
-                column++;
+            growToFit(part.getKey(), children, parents);
+        }
+        commit(before);
+    }
+
+    /** 選んでいるものの、上・左・下・右のふちをそろえる（UE5 の Shift+W/A/S/D にあたる）。枠は中身ごと動く。 */
+    public void align(int edge) {
+        List<Card> items = topLevel(selection);
+        if (editor != null || items.size() < 2) {
+            return;
+        }
+        String before = snapshot();
+        Map<Card, List<Card>> children = childrenMap();
+        Rectangle bounds = contentBounds(items);
+        for (Card item : items) {
+            switch (edge) {
+                case ALIGN_TOP -> moveTree(item, 0, bounds.y - item.y, children);
+                case ALIGN_BOTTOM -> moveTree(item, 0, bounds.y + bounds.height - (item.y + item.h), children);
+                case ALIGN_LEFT -> moveTree(item, bounds.x - item.x, 0, children);
+                default -> moveTree(item, bounds.x + bounds.width - (item.x + item.w), 0, children);
             }
         }
         commit(before);
     }
+
 
     /** 選んでいるカードの投票数を増減する（ドット投票）。 */
     public void vote(int delta) {
@@ -613,35 +895,89 @@ public class BoardPane extends EditorPane {
     // ---------- 拡大・縮小 ----------
 
     private Point toModel(Point view) {
-        return new Point((int) Math.round(view.x / scale), (int) Math.round(view.y / scale));
+        return new Point((int) Math.round(view.x / scale) + canvas.x, (int) Math.round(view.y / scale) + canvas.y);
+    }
+
+    /** ボード上の点を、Board の部品の上の点に直す（テストからも使う）。 */
+    Point toView(int x, int y) {
+        return new Point((int) Math.round((x - canvas.x) * scale), (int) Math.round((y - canvas.y) * scale));
     }
 
     private Rectangle visibleModelRect() {
         Rectangle v = board.getVisibleRect();
-        return new Rectangle((int) (v.x / scale), (int) (v.y / scale),
+        return new Rectangle((int) (v.x / scale) + canvas.x, (int) (v.y / scale) + canvas.y,
                 (int) (v.width / scale), (int) (v.height / scale));
     }
 
-    /** 倍率を変える。anchor（画面上の点）にある物が、動かないようにする。 */
+    /** 表示の左上が、ボード上のどこにあるか。 */
+    private Point2D.Double viewOrigin() {
+        Point p = scrollPane.getViewport().getViewPosition();
+        return new Point2D.Double(p.x / scale + canvas.x, p.y / scale + canvas.y);
+    }
+
+    /**
+     * 表示の左上を、ボード上の (left, top) に合わせる。ボードに端はないので、どこへでも動ける。
+     * 部品が受け持つ範囲（canvas）が足りなければ、そこを中心に四方へ広げ直す。
+     */
+    private void showFrom(double left, double top) {
+        JViewport viewport = scrollPane.getViewport();
+        Dimension extent = viewport.getExtentSize();
+        if (extent.width <= 0 || extent.height <= 0) {
+            return;                     // まだ表示されていない
+        }
+        double width = extent.width / scale;
+        double height = extent.height / scale;
+        Rectangle need = new Rectangle((int) Math.floor(left), (int) Math.floor(top),
+                (int) Math.ceil(width) + 2, (int) Math.ceil(height) + 2);
+        Rectangle content = contentBounds(cards);
+        if (content != null) {
+            need = need.union(content);
+        }
+        if (!canvasReady || !canvas.contains(need)) {
+            // どちらへも、1画面ぶん以上は続けて動けるだけの余白を取る
+            int margin = (int) Math.ceil(Math.max(600, Math.max(width, height)));
+            need.grow(margin, margin);
+            canvas.setBounds(need);
+            canvasReady = true;
+        }
+        Dimension size = board.getPreferredSize();
+        if (!board.getSize().equals(size)) {
+            board.setSize(size);        // すぐに大きさを変える（revalidate を待つと、位置がずれる）
+            board.revalidate();
+        }
+        if (editor != null) {
+            placeEditor();
+        }
+        viewport.setViewPosition(new Point((int) Math.round((left - canvas.x) * scale),
+                (int) Math.round((top - canvas.y) * scale)));
+        board.repaint();
+    }
+
+    /** 今の表示の位置のまま、受け持つ範囲を合わせ直す。初めてのときは、今までと同じく (0, 0) から見せる。 */
+    private void refreshCanvas() {
+        if (canvasReady) {
+            Point2D.Double origin = viewOrigin();
+            showFrom(origin.x, origin.y);
+        } else {
+            Rectangle content = contentBounds(cards);
+            showFrom(content == null ? 0 : Math.min(0, content.x - 40), content == null ? 0 : Math.min(0, content.y - 40));
+        }
+    }
+
+    /** 倍率を変える。anchor（Board の部品の上の点）にある物が、動かないようにする。 */
     private void setScale(double newScale, Point anchor) {
         newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, newScale));
         if (newScale == scale) {
             return;
         }
         stopEditing(true);
-        JViewport viewport = scrollPane.getViewport();
-        Point position = viewport.getViewPosition();
-        double modelX = anchor.x / scale;
-        double modelY = anchor.y / scale;
+        Point position = scrollPane.getViewport().getViewPosition();
+        double modelX = anchor.x / scale + canvas.x;
+        double modelY = anchor.y / scale + canvas.y;
         int offsetX = anchor.x - position.x;
         int offsetY = anchor.y - position.y;
         scale = newScale;
-        board.revalidate();
-        scrollPane.validate();
-        viewport.setViewPosition(new Point(
-                Math.max(0, (int) Math.round(modelX * scale) - offsetX),
-                Math.max(0, (int) Math.round(modelY * scale) - offsetY)));
-        board.repaint();
+        showFrom(modelX - offsetX / scale, modelY - offsetY / scale);
         fireStatusChanged();
     }
 
@@ -650,7 +986,7 @@ public class BoardPane extends EditorPane {
         setScale(scale * factor, new Point(v.x + v.width / 2, v.y + v.height / 2));
     }
 
-    /** すべてのカードが画面に入るように、倍率と位置を合わせる。 */
+    /** すべてのカードが画面に入るように、倍率と位置を合わせる（真ん中に出す）。 */
     public void fitAll() {
         Rectangle bounds = contentBounds(cards);
         Dimension extent = scrollPane.getViewport().getExtentSize();
@@ -661,12 +997,33 @@ public class BoardPane extends EditorPane {
         stopEditing(true);
         scale = Math.max(MIN_SCALE, Math.min(1.0,     // 100% より大きくはしない
                 Math.min(extent.width / (double) bounds.width, extent.height / (double) bounds.height)));
-        board.revalidate();
-        scrollPane.validate();
-        scrollPane.getViewport().setViewPosition(new Point(
-                Math.max(0, (int) (bounds.x * scale)), Math.max(0, (int) (bounds.y * scale))));
-        board.repaint();
+        showFrom(bounds.getCenterX() - extent.width / scale / 2, bounds.getCenterY() - extent.height / scale / 2);
         fireStatusChanged();
+    }
+
+    /** ホイールで、表示を縦（Shift なら横）に動かす。動く量は、ほかの画面（WheelScroll）と同じ。 */
+    private void scrollByWheel(MouseWheelEvent e) {
+        boolean horizontal = e.isShiftDown();
+        Dimension extent = scrollPane.getViewport().getExtentSize();
+        double amount;
+        if (e.getScrollType() == MouseWheelEvent.WHEEL_BLOCK_SCROLL) {
+            amount = e.getPreciseWheelRotation() * (horizontal ? extent.width : extent.height);
+        } else {
+            amount = e.getPreciseWheelRotation() * e.getScrollAmount() * WheelScroll.LINE * Theme.zoom() / 100.0;
+        }
+        int i = horizontal ? 1 : 0;
+        wheelRest[i] += amount;
+        int move = (int) wheelRest[i];
+        wheelRest[i] -= move;
+        if (move == 0) {
+            return;
+        }
+        Point2D.Double origin = viewOrigin();
+        if (horizontal) {
+            showFrom(origin.x + move / scale, origin.y);
+        } else {
+            showFrom(origin.x, origin.y + move / scale);
+        }
     }
 
     // ---------- 文字の編集 ----------
@@ -684,11 +1041,7 @@ public class BoardPane extends EditorPane {
         editor.setCaretColor(card.group ? Theme.FG_STRONG : Color.BLACK);
         int pad = (int) Math.round(8 * scale);
         editor.setBorder(BorderFactory.createEmptyBorder(pad, pad, pad, pad));
-        // 入力欄は拡大・縮小の外にあるので、位置と大きさに倍率を掛けて合わせる
-        Rectangle r = card.group
-                ? new Rectangle(card.x + 6, card.y + 6, card.w - 12, cardFont.getSize() * 2)
-                : card.bounds();
-        editor.setBounds((int) (r.x * scale), (int) (r.y * scale), (int) (r.width * scale), (int) (r.height * scale));
+        placeEditor();
 
         // Esc で取り消し、Ctrl+Enter で確定
         editor.getInputMap().put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "cancelEdit");
@@ -721,6 +1074,16 @@ public class BoardPane extends EditorPane {
         editor.requestFocusInWindow();
         editor.selectAll();
         board.repaint();
+    }
+
+    /** 入力欄は拡大・縮小の外にあるので、位置と大きさに倍率を掛けて、カードの上に合わせる。 */
+    private void placeEditor() {
+        Card card = editingCard;
+        Rectangle r = card.group
+                ? new Rectangle(card.x + 6, card.y + 6, card.w - 12, cardFont.getSize() * 2)
+                : card.bounds();
+        Point at = toView(r.x, r.y);
+        editor.setBounds(at.x, at.y, (int) (r.width * scale), (int) (r.height * scale));
     }
 
     private void stopEditing(boolean keep) {
@@ -845,9 +1208,16 @@ public class BoardPane extends EditorPane {
         private Card resizeCard;                // 大きさを変えているカード
         private boolean moved;
         private boolean panning;
-        private Point panStartPosition;
+        private Point2D.Double panStart;        // 表示を動かし始めたときの、表示の左上（ボード上の座標）
         private Rectangle startBounds;
         private Rectangle rubberBand;           // 範囲選択の四角
+        private boolean rubberRemoves;          // Ctrl を押して始めた範囲選択は、囲んだものを選択から外す
+        private boolean rightPending;           // 右ボタンを押している（動かせば表示を動かし、動かさずに離せばメニュー）
+        private Card menuCard;                  // 右ボタンを離したときに出すメニューの、対象と位置
+        private Point menuView;
+        private Point menuModel;
+        private Card dragAnchor;                // 格子にそろえる基準（つかんだカード）
+        private Point anchorStart;
         private final List<Card> dragMembers = new ArrayList<>();
         private final List<Point> dragStarts = new ArrayList<>();
 
@@ -869,7 +1239,7 @@ public class BoardPane extends EditorPane {
 
                 @Override
                 public void mouseReleased(MouseEvent e) {
-                    release();
+                    release(e);
                     updateCursor(e.getPoint());
                 }
 
@@ -911,6 +1281,19 @@ public class BoardPane extends EditorPane {
                         fireStatusChanged();
                     } else if (e.getKeyCode() == KeyEvent.VK_ENTER && single() != null) {
                         startEditing(single());
+                    } else if (e.getKeyCode() == KeyEvent.VK_HOME) {
+                        fitAll();
+                    } else if (e.isShiftDown()) {
+                        // UE5 と同じく、Shift+W/A/S/D で上・左・下・右にそろえる
+                        switch (e.getKeyCode()) {
+                            case KeyEvent.VK_W -> align(ALIGN_TOP);
+                            case KeyEvent.VK_A -> align(ALIGN_LEFT);
+                            case KeyEvent.VK_S -> align(ALIGN_BOTTOM);
+                            case KeyEvent.VK_D -> align(ALIGN_RIGHT);
+                            default -> { }
+                        }
+                    } else if (e.getKeyCode() == KeyEvent.VK_C) {
+                        groupSelected();        // UE5 の、C でコメント枠を作るのにあたる
                     }
                 }
             });
@@ -961,9 +1344,10 @@ public class BoardPane extends EditorPane {
                     return cards.get(i);
                 }
             }
-            for (int i = cards.size() - 1; i >= 0; i--) {
-                if (cards.get(i).group && edgesAt(cards.get(i), p) != 0) {
-                    return cards.get(i);
+            List<Card> groups = groupsBackToFront();
+            for (int i = groups.size() - 1; i >= 0; i--) {
+                if (edgesAt(groups.get(i), p) != 0) {
+                    return groups.get(i);           // 小さい（手前の）枠のふちを先につかむ
                 }
             }
             return null;
@@ -1003,13 +1387,13 @@ public class BoardPane extends EditorPane {
             int right = startBounds.x + startBounds.width;
             int bottom = startBounds.y + startBounds.height;
             if ((resizeEdges & WEST) != 0) {
-                left = Math.max(0, Math.min(left + dx, right - minWidth));
+                left = Math.min(left + dx, right - minWidth);
             }
             if ((resizeEdges & EAST) != 0) {
                 right = Math.max(right + dx, left + minWidth);
             }
             if ((resizeEdges & NORTH) != 0) {
-                top = Math.max(0, Math.min(top + dy, bottom - minHeight));
+                top = Math.min(top + dy, bottom - minHeight);
             }
             if ((resizeEdges & SOUTH) != 0) {
                 bottom = Math.max(bottom + dy, top + minHeight);
@@ -1027,7 +1411,7 @@ public class BoardPane extends EditorPane {
                 return;
             }
             // ふつうのホイールは縦、Shift を押していたら横にスクロールする
-            wheelScroll.scroll(e);
+            scrollByWheel(e);
         }
 
         private void press(MouseEvent e) {
@@ -1038,17 +1422,26 @@ public class BoardPane extends EditorPane {
             pressView = e.getPoint();
 
             if (SwingUtilities.isMiddleMouseButton(e)) {
-                panning = true;         // 中ボタン：表示位置を動かす
-                panStartPosition = scrollPane.getViewport().getViewPosition();
+                panning = true;         // 中ボタン（ホイールを押す）：表示位置を動かす
+                setCursor(Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR));
+                panStart = viewOrigin();
                 pressView = SwingUtilities.convertPoint(this, e.getPoint(), scrollPane);
                 return;
             }
-            if (e.isPopupTrigger() || SwingUtilities.isRightMouseButton(e)) {
+            if (SwingUtilities.isRightMouseButton(e)) {
+                // 右ボタン：ドラッグすれば表示位置を動かし、動かさずに離せばメニューを出す（UE5 と同じ）
                 if (card == null || !selection.contains(card)) {
                     select(card);       // 選択の外を右クリックしたら、そのカードだけを選び直す
                 }
+                rightPending = true;
+                panning = false;
+                menuCard = card;
+                menuView = e.getPoint();
+                menuModel = p;
+                panStart = viewOrigin();
+                pressView = SwingUtilities.convertPoint(this, e.getPoint(), scrollPane);
                 repaint();
-                showMenu(card, e.getPoint(), p);
+                fireStatusChanged();
                 return;
             }
 
@@ -1072,7 +1465,10 @@ public class BoardPane extends EditorPane {
             dragMembers.clear();
             dragStarts.clear();
 
-            Card edgeCard = e.isShiftDown() ? null : resizableAt(p);
+            boolean adding = e.isShiftDown();
+            boolean toggling = (e.getModifiersEx() & InputEvent.CTRL_DOWN_MASK) != 0;
+            dragAnchor = null;
+            Card edgeCard = adding || toggling ? null : resizableAt(p);
             if (edgeCard != null) {
                 // ふちをつかんだ：そのカードの大きさを変える
                 select(edgeCard);
@@ -1083,29 +1479,36 @@ public class BoardPane extends EditorPane {
                 dragMembers.add(edgeCard);
                 dragStarts.add(new Point(edgeCard.x, edgeCard.y));
             } else if (card == null) {
-                if (!e.isShiftDown()) {
+                // 何もない所（枠の中の空いた所も）から：範囲選択を始める
+                if (!adding && !toggling) {
                     selection.clear();
                 }
-                rubberBand = new Rectangle(p);          // 何もない所から：範囲選択を始める
+                rubberRemoves = toggling;
+                rubberBand = new Rectangle(p);
             } else {
-                if (e.isShiftDown()) {
-                    if (!selection.remove(card)) {       // Shift+クリック：選択に足す／外す
+                if (adding) {
+                    selection.add(card);                // Shift+クリック：選択に足す
+                } else if (toggling) {
+                    if (!selection.remove(card)) {       // Ctrl+クリック：選択に足す／外す
                         selection.add(card);
                     }
                 } else if (!selection.contains(card)) {
                     select(card);
                 }
-                dragMembers.addAll(selection);
-                // グループ枠を動かすときは、中に入っているカードも一緒に動かす
-                for (Card selected : selection) {
-                    if (selected.group) {
-                        for (Card other : cards) {
-                            if (!other.group && !dragMembers.contains(other)
-                                    && selected.bounds().contains(other.x + other.w / 2, other.y + other.h / 2)) {
-                                dragMembers.add(other);
+                if (selection.contains(card)) {
+                    dragMembers.addAll(selection);
+                    // グループ枠を動かすときは、中に入っているもの（小さい枠と、その中身も）を一緒に動かす
+                    for (Card selected : new ArrayList<>(selection)) {
+                        if (selected.group) {
+                            for (Card inner : descendants(selected)) {
+                                if (!dragMembers.contains(inner)) {
+                                    dragMembers.add(inner);
+                                }
                             }
                         }
                     }
+                    dragAnchor = card;
+                    anchorStart = new Point(card.x, card.y);
                 }
                 for (Card member : dragMembers) {
                     dragStarts.add(new Point(member.x, member.y));
@@ -1121,14 +1524,18 @@ public class BoardPane extends EditorPane {
         }
 
         private void drag(MouseEvent e) {
-            if (panning) {
+            if (rightPending && !panning) {
                 Point now = SwingUtilities.convertPoint(this, e.getPoint(), scrollPane);
-                Dimension extent = scrollPane.getViewport().getExtentSize();
-                int x = panStartPosition.x - (now.x - pressView.x);
-                int y = panStartPosition.y - (now.y - pressView.y);
-                scrollPane.getViewport().setViewPosition(new Point(
-                        Math.max(0, Math.min(x, getWidth() - extent.width)),
-                        Math.max(0, Math.min(y, getHeight() - extent.height))));
+                if (now.distance(pressView) < 5) {
+                    return;             // 手ぶれは、まだクリックとみなす
+                }
+                panning = true;
+                setCursor(Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR));
+            }
+            if (panning) {
+                // 押した所が、マウスについてくるように動かす（スクロール枠から見た位置で測る）
+                Point now = SwingUtilities.convertPoint(this, e.getPoint(), scrollPane);
+                showFrom(panStart.x - (now.x - pressView.x) / scale, panStart.y - (now.y - pressView.y) / scale);
                 return;
             }
             if (pressModel == null) {
@@ -1145,13 +1552,18 @@ public class BoardPane extends EditorPane {
             }
             int dx = p.x - pressModel.x;
             int dy = p.y - pressModel.y;
+            if (!resizing && dragAnchor != null) {
+                // つかんだカードの左上が、格子にそろうようにずらす（ほかのカードも同じだけ動く）
+                dx = Math.round((anchorStart.x + dx) / (float) GRID) * GRID - anchorStart.x;
+                dy = Math.round((anchorStart.y + dy) / (float) GRID) * GRID - anchorStart.y;
+            }
             if (resizing) {
                 resizeTo(dx, dy);
             } else {
                 for (int i = 0; i < dragMembers.size(); i++) {
                     Card member = dragMembers.get(i);
-                    member.x = Math.max(0, dragStarts.get(i).x + dx);
-                    member.y = Math.max(0, dragStarts.get(i).y + dy);
+                    member.x = dragStarts.get(i).x + dx;
+                    member.y = dragStarts.get(i).y + dy;
                 }
             }
             moved = true;
@@ -1159,12 +1571,28 @@ public class BoardPane extends EditorPane {
             repaint();
         }
 
-        private void release() {
+        private void release(MouseEvent e) {
+            if (rightPending) {
+                if (SwingUtilities.isRightMouseButton(e)) {
+                    rightPending = false;
+                    boolean wasPanning = panning;
+                    panning = false;
+                    if (!wasPanning) {
+                        showMenu(menuCard, menuView, menuModel);
+                    }
+                }
+                return;
+            }
             if (rubberBand != null) {
-                // 囲んだ四角に少しでも重なったカードを、選択に加える
+                // 囲んだ四角に少しでも重なったカードと、すっぽり入った枠を、選択に加える（Ctrl なら外す）
                 for (Card card : cards) {
-                    if (!card.group && rubberBand.intersects(card.bounds())) {
-                        selection.add(card);
+                    boolean hit = card.group ? rubberBand.contains(card.bounds()) : rubberBand.intersects(card.bounds());
+                    if (hit) {
+                        if (rubberRemoves) {
+                            selection.remove(card);
+                        } else {
+                            selection.add(card);
+                        }
                     }
                 }
                 rubberBand = null;
@@ -1178,6 +1606,7 @@ public class BoardPane extends EditorPane {
             pressModel = null;
             stateAtPress = null;
             moved = false;
+            dragAnchor = null;
         }
 
         private void showMenu(Card card, Point viewPoint, Point modelPoint) {
@@ -1225,11 +1654,14 @@ public class BoardPane extends EditorPane {
                     }));
                 }
                 menu.addSeparator();
-                if (!selectedNotes().isEmpty()) {
-                    menu.add(item("グループ枠で囲む", BoardPane.this::groupSelected));
+                menu.add(item("グループ枠で囲む", BoardPane.this::groupSelected));
+                if (only != null && only.group) {
+                    menu.add(item("枠の中を整列", BoardPane.this::tidy));
+                }
+                if (topLevel(selection).size() >= 2) {
+                    menu.add(item("選んだものを整列", BoardPane.this::tidy));
                 }
                 if (selectedNotes().size() >= 2) {
-                    menu.add(item("選んだカードを整列", BoardPane.this::tidy));
                     menu.add(item("選んだカードを色ごとに並べる", BoardPane.this::arrangeByColor));
                 }
                 menu.add(item("複製", BoardPane.this::duplicateSelected));
@@ -1246,19 +1678,24 @@ public class BoardPane extends EditorPane {
 
         @Override
         public Dimension getPreferredSize() {
-            Rectangle bounds = contentBounds(cards);
-            int width = bounds == null ? 0 : bounds.x + bounds.width;
-            int height = bounds == null ? 0 : bounds.y + bounds.height;
             Dimension viewport = scrollPane.getViewport().getExtentSize();
-            // カードの外側にも余白を取り、いつでも右や下へ広げられるようにする
-            return new Dimension(Math.max((int) ((width + 600) * scale), viewport.width),
-                    Math.max((int) ((height + 600) * scale), viewport.height));
+            if (!canvasReady) {
+                // まだ表示していない：(0, 0) からカードの右下までに、余白を足した大きさ
+                Rectangle bounds = contentBounds(cards);
+                int width = bounds == null ? 0 : bounds.x + bounds.width;
+                int height = bounds == null ? 0 : bounds.y + bounds.height;
+                return new Dimension(Math.max((int) ((width + 600) * scale), viewport.width),
+                        Math.max((int) ((height + 600) * scale), viewport.height));
+            }
+            return new Dimension(Math.max((int) Math.ceil(canvas.width * scale), viewport.width),
+                    Math.max((int) Math.ceil(canvas.height * scale), viewport.height));
         }
 
         @Override
         protected void paintComponent(Graphics g) {
             Graphics2D g2 = (Graphics2D) g.create();
-            g2.scale(scale, scale);     // ここから先は、ボード上の座標でそのまま描ける
+            g2.scale(scale, scale);
+            g2.translate(-canvas.x, -canvas.y);     // ここから先は、ボード上の座標でそのまま描ける
             paintBoard(g2, true);
             g2.dispose();
         }
@@ -1286,10 +1723,8 @@ public class BoardPane extends EditorPane {
             }
 
             // 奥から順に：グループ枠 → 矢印 → カード
-            for (Card card : cards) {
-                if (card.group) {
-                    paintGroup(g2, card, decorations);
-                }
+            for (Card group : groupsBackToFront()) {
+                paintGroup(g2, group, decorations);       // 大きい枠から描くので、小さい枠が手前に出る
             }
             for (Link link : links) {
                 Card from = find(link.from());
@@ -1317,6 +1752,11 @@ public class BoardPane extends EditorPane {
             Color base = PALETTE[card.color];
             g2.setColor(new Color(base.getRed(), base.getGreen(), base.getBlue(), 28));
             g2.fillRoundRect(card.x, card.y, card.w, card.h, 18, 18);
+            // 見出しの帯（ここをつかむと枠ごと動く）を、少し濃くする
+            Area band = new Area(new RoundRectangle2D.Float(card.x, card.y, card.w, card.h, 18, 18));
+            band.intersect(new Area(titleBand(card)));          // 角の丸みに合わせた、上の帯
+            g2.setColor(new Color(base.getRed(), base.getGreen(), base.getBlue(), 60));
+            g2.fill(band);
             g2.setStroke(new BasicStroke(selected ? 3f : 2f));
             g2.setColor(selected ? Theme.ACCENT : base);
             g2.drawRoundRect(card.x, card.y, card.w, card.h, 18, 18);

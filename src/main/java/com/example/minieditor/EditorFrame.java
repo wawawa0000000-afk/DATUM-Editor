@@ -493,9 +493,16 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         boardMenu.add(item("複製", key(KeyEvent.VK_D, CTRL), () -> withBoard(BoardPane::duplicateSelected)));
         boardMenu.add(item("削除", null, () -> withBoard(BoardPane::deleteSelected)));
         boardMenu.addSeparator();
-        boardMenu.add(item("選んだカードをグループ枠で囲む", key(KeyEvent.VK_G, CTRL), () -> withBoard(BoardPane::groupSelected)));
+        boardMenu.add(item("選んだものをグループ枠で囲む", key(KeyEvent.VK_G, CTRL), () -> withBoard(BoardPane::groupSelected)));
         boardMenu.add(item("整列", key(KeyEvent.VK_L, CTRL | SHIFT), () -> withBoard(BoardPane::tidy)));
         boardMenu.add(item("色ごとに並べる", null, () -> withBoard(BoardPane::arrangeByColor)));
+        // ボードの上では Shift+W/A/S/D でも使える（メニューの近道にすると、ほかの文書で文字が打てなくなるので付けない）
+        JMenu alignMenu = new JMenu("そろえる");
+        alignMenu.add(item("上にそろえる（Shift+W）", null, () -> withBoard(board -> board.align(BoardPane.ALIGN_TOP))));
+        alignMenu.add(item("左にそろえる（Shift+A）", null, () -> withBoard(board -> board.align(BoardPane.ALIGN_LEFT))));
+        alignMenu.add(item("下にそろえる（Shift+S）", null, () -> withBoard(board -> board.align(BoardPane.ALIGN_BOTTOM))));
+        alignMenu.add(item("右にそろえる（Shift+D）", null, () -> withBoard(board -> board.align(BoardPane.ALIGN_RIGHT))));
+        boardMenu.add(alignMenu);
         boardMenu.addSeparator();
         boardMenu.add(item("投票する（+1）", key(KeyEvent.VK_UP, CTRL | SHIFT), () -> withBoard(board -> board.vote(1))));
         boardMenu.add(item("投票を取り消す（−1）", key(KeyEvent.VK_DOWN, CTRL | SHIFT), () -> withBoard(board -> board.vote(-1))));
