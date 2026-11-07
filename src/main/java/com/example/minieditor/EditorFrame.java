@@ -503,6 +503,8 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         alignMenu.add(item("下にそろえる（Shift+S）", null, () -> withBoard(board -> board.align(BoardPane.ALIGN_BOTTOM))));
         alignMenu.add(item("右にそろえる（Shift+D）", null, () -> withBoard(board -> board.align(BoardPane.ALIGN_RIGHT))));
         boardMenu.add(alignMenu);
+        // ボードの上では L でも使える（メニューの近道にすると、ほかの文書で文字が打てなくなるので付けない）
+        boardMenu.add(item("選んだ順に矢印でつなぐ（L）", null, () -> withBoard(BoardPane::linkSelected)));
         boardMenu.addSeparator();
         boardMenu.add(item("投票する（+1）", key(KeyEvent.VK_UP, CTRL | SHIFT), () -> withBoard(board -> board.vote(1))));
         boardMenu.add(item("投票を取り消す（−1）", key(KeyEvent.VK_DOWN, CTRL | SHIFT), () -> withBoard(board -> board.vote(-1))));

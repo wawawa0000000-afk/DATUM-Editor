@@ -72,6 +72,11 @@ import javax.swing.SwingUtilities;
  *   右クリック                 … 色・投票・矢印・整列・グループ化など
  *   C … 枠で囲む　Home … 全体を表示　Shift+W/A/S/D … 上・左・下・右にそろえる
  *
+ * 矢印でつなぐ（どこから引いてもよい。決まった接続口は置かない）：
+ *   カードを長押ししてから引く … 糸が伸びる。相手のカードで離すとつながる。何もない所で離すと、新しいカードを作ってつなぐ
+ *   Alt を押しながらカードを引く … 長押しを待たずに、すぐ糸が伸びる（Alt を押している間は、引けるカードのふちが光る）
+ *   カードを選んだ順に L     … 1枚目 → 2枚目 → … と、順につなぐ
+ *
  * グループ枠は入れ子にできる。小さい枠ほど手前に描き、先にクリックが当たる。
  * 枠の中にあるか（親子）は、そのつど位置から求める（中心が枠の内側にあり、枠より小さいもの）。
  *
@@ -99,6 +104,10 @@ public class BoardPane extends EditorPane {
 
     /** カードからカードへの矢印。 */
     private record Link(int from, int to) {
+    }
+
+    /** つないだ直後に、矢印の上を一度だけ流れる光（向きを伝える）。 */
+    private record Flash(Card from, Card to, long start) {
     }
 
     private static final Color[] PALETTE = {
@@ -201,6 +210,7 @@ public class BoardPane extends EditorPane {
         links.clear();
         selection.clear();
         linkSource = null;
+        board.resetThread();
         nextId = 1;
         cardFont = cardFont.deriveFont((float) Theme.zoomed(Json.num(json, "fontSize", Theme.unzoomed(cardFont.getSize()))));
         for (Object o : Json.list(json, "cards")) {
@@ -601,19 +611,83 @@ public class BoardPane extends EditorPane {
     }
 
     private void connect(Card from, Card to) {
-        if (from == to || from.group || to.group) {
+        if (linkProblem(from, to) != null) {
             return;
-        }
-        for (Link link : links) {
-            boolean same = (link.from() == from.id && link.to() == to.id)
-                    || (link.from() == to.id && link.to() == from.id);
-            if (same) {
-                return;                 // もうつながっている
-            }
         }
         String before = snapshot();
         links.add(new Link(from.id, to.id));
         commit(before);
+        board.flash(from, to);
+    }
+
+    /** from から to へ矢印を引けない理由。引けるなら null。 */
+    private String linkProblem(Card from, Card to) {
+        if (to == from) {
+            return "同じカードにはつなげません";
+        }
+        if (from.group || to.group) {
+            return "グループ枠にはつなげません";
+        }
+        for (Link link : links) {
+            if ((link.from() == from.id && link.to() == to.id) || (link.from() == to.id && link.to() == from.id)) {
+                return "もうつながっています";
+            }
+        }
+        return null;
+    }
+
+    /** 選んだカードを、選んだ順に矢印でつなぐ（1枚目 → 2枚目 → …）。もうつながっている組は飛ばす。 */
+    public void linkSelected() {
+        List<Card> notes = selectedNotes();
+        if (editor != null || notes.size() < 2) {
+            return;
+        }
+        String before = snapshot();
+        List<Card[]> made = new ArrayList<>();
+        for (int i = 0; i + 1 < notes.size(); i++) {
+            if (linkProblem(notes.get(i), notes.get(i + 1)) == null) {
+                links.add(new Link(notes.get(i).id, notes.get(i + 1).id));
+                made.add(new Card[]{notes.get(i), notes.get(i + 1)});
+            }
+        }
+        if (made.isEmpty()) {
+            return;
+        }
+        commit(before);
+        for (Card[] pair : made) {
+            board.flash(pair[0], pair[1]);
+        }
+    }
+
+    /**
+     * 伸ばした糸を、end で離した。相手のカードがあればつなぎ、何もない所なら新しいカードを作ってつなぐ。
+     * つないだら true。つなげない相手のときは、何もせず false。
+     */
+    private boolean dropThread(Card source, Point end) {
+        if (!cards.contains(source)) {
+            return false;
+        }
+        Card target = cardAt(end);
+        String before = snapshot();
+        if (target == null) {
+            Card card = newCard(0, 0, false);
+            card.x = end.x - card.w / 2;
+            card.y = end.y - card.h / 2;
+            links.add(new Link(source.id, card.id));
+            select(card);
+            commit(before);
+            board.flash(source, card);
+            startEditing(card);         // そのまま、新しいカードの文字を打ってもらう
+            return true;
+        }
+        if (linkProblem(source, target) != null) {
+            return false;
+        }
+        links.add(new Link(source.id, target.id));
+        select(target);
+        commit(before);
+        board.flash(source, target);
+        return true;
     }
 
     /** 文字が全部見えるように、カードの高さを広げる。 */
@@ -1126,6 +1200,8 @@ public class BoardPane extends EditorPane {
         status += "    " + Math.round(scale * 100) + "%";
         if (linkSource != null) {
             status = "つなぐ相手のカードをクリックしてください（Esc で取り消し）    " + status;
+        } else if (board.threadSource != null) {
+            status = "つなぐ相手のカードで離してください。何もない所で離すと、新しいカードを作ってつなぎます（Esc でやめる）    " + status;
         }
         return status;
     }
@@ -1218,11 +1294,29 @@ public class BoardPane extends EditorPane {
         private Point menuModel;
         private Card dragAnchor;                // 格子にそろえる基準（つかんだカード）
         private Point anchorStart;
+
+        // 矢印を引く（糸）。長押しか Alt+ドラッグで、カードから糸が伸びる
+        private static final int HOLD_MS = 300;         // 長押しとみなすまでの時間
+        private static final int NEAR = 160;            // 糸の先がこれより近いカードは、ふちがにじんで光る（つながる先の予告）
+        private static final int FLASH_MS = 450;        // つないだ直後に、光が矢印を流れる時間
+        private static final int RETRACT_MS = 200;      // やめたときに、糸が縮んで消える時間
+        private Card threadSource;              // 糸を伸ばしているカード
+        private Point threadEnd;                // 糸の先（ボード上の座標）
+        private boolean altHeld;                // Alt を押している（引けるカードのふちを光らせる）
+        private Card holdCard;                  // 長押しを待っているカード
+        private Point lastModel;                // 最後にマウスがあった所（ボード上の座標）
+        private final javax.swing.Timer holdTimer = new javax.swing.Timer(HOLD_MS, e -> beginHoldThread());
+        private final javax.swing.Timer animation = new javax.swing.Timer(16, e -> animate());
+        private final List<Flash> flashes = new ArrayList<>();
+        private Card retractSource;             // 縮んで消えている途中の糸
+        private Point retractEnd;
+        private long retractStart;
         private final List<Card> dragMembers = new ArrayList<>();
         private final List<Point> dragStarts = new ArrayList<>();
 
         Board() {
             setLayout(null);            // 入力欄を、カードの位置にそのまま置くため
+            holdTimer.setRepeats(false);
             setFocusable(true);
             setOpaque(true);
 
@@ -1245,6 +1339,7 @@ public class BoardPane extends EditorPane {
 
                 @Override
                 public void mouseMoved(MouseEvent e) {
+                    setAltHeld(e.isAltDown());      // キーの離しを取りこぼしても、マウスを動かせば合う
                     updateCursor(e.getPoint());     // ふちに触れたら、矢印の形を変える
                 }
 
@@ -1269,6 +1364,14 @@ public class BoardPane extends EditorPane {
             addKeyListener(new KeyAdapter() {
                 @Override
                 public void keyPressed(KeyEvent e) {
+                    if (e.getKeyCode() == KeyEvent.VK_ALT) {
+                        setAltHeld(true);
+                        return;
+                    }
+                    if (e.getKeyCode() == KeyEvent.VK_ESCAPE && threadSource != null) {
+                        cancelThread();
+                        return;
+                    }
                     if (e.isControlDown() || e.isAltDown()) {
                         return;         // Ctrl+D などは、メニューのショートカットに任せる
                     }
@@ -1294,6 +1397,15 @@ public class BoardPane extends EditorPane {
                         }
                     } else if (e.getKeyCode() == KeyEvent.VK_C) {
                         groupSelected();        // UE5 の、C でコメント枠を作るのにあたる
+                    } else if (e.getKeyCode() == KeyEvent.VK_L) {
+                        linkSelected();         // 選んだ順に、矢印でつなぐ
+                    }
+                }
+
+                @Override
+                public void keyReleased(KeyEvent e) {
+                    if (e.getKeyCode() == KeyEvent.VK_ALT) {
+                        setAltHeld(false);
                     }
                 }
             });
@@ -1332,6 +1444,100 @@ public class BoardPane extends EditorPane {
             return edges;
         }
 
+        // ---------- 糸（矢印を引く操作） ----------
+
+        private void startThread(Card source, Point p) {
+            threadSource = source;      // 選択は変えない（ゆっくりクリックしただけのときに、選び直しにならないように）
+            threadEnd = p;
+            setCursor(Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR));
+            repaint();
+            fireStatusChanged();
+        }
+
+        /** 長押しの時間がたった：押していたカードから糸を伸ばす。少し動いていたら、元の位置に戻す。 */
+        private void beginHoldThread() {
+            Card source = holdCard;
+            holdCard = null;
+            if (source == null || pressModel == null || !cards.contains(source)) {
+                return;
+            }
+            for (int i = 0; i < dragMembers.size(); i++) {
+                dragMembers.get(i).x = dragStarts.get(i).x;
+                dragMembers.get(i).y = dragStarts.get(i).y;
+            }
+            dragMembers.clear();
+            dragStarts.clear();
+            moved = false;
+            dragAnchor = null;
+            startThread(source, lastModel);
+        }
+
+        private void finishThread() {
+            Card source = threadSource;
+            Point end = threadEnd;
+            threadSource = null;
+            threadEnd = null;
+            if (!dropThread(source, end)) {
+                retract(source, end);   // つなげなかった：糸が縮んで消える
+            }
+            setCursor(Cursor.getDefaultCursor());
+            repaint();
+            fireStatusChanged();
+        }
+
+        private void cancelThread() {
+            retract(threadSource, threadEnd);
+            threadSource = null;
+            threadEnd = null;
+            pressModel = null;
+            stateAtPress = null;
+            setCursor(Cursor.getDefaultCursor());
+            repaint();
+            fireStatusChanged();
+        }
+
+        /** 文書を読み直したとき：引いている途中の糸と、動いている光を捨てる（古いカードを指しているため）。 */
+        void resetThread() {
+            holdTimer.stop();
+            holdCard = null;
+            threadSource = null;
+            threadEnd = null;
+            retractSource = null;
+            flashes.clear();
+        }
+
+        private void retract(Card source, Point end) {
+            retractSource = source;
+            retractEnd = end;
+            retractStart = System.currentTimeMillis();
+            animation.start();
+        }
+
+        /** つないだ直後に、矢印の上を光が一度だけ流れるようにする。 */
+        void flash(Card from, Card to) {
+            flashes.add(new Flash(from, to, System.currentTimeMillis()));
+            animation.start();
+        }
+
+        private void animate() {
+            long now = System.currentTimeMillis();
+            flashes.removeIf(f -> now - f.start() > FLASH_MS);
+            if (retractSource != null && now - retractStart > RETRACT_MS) {
+                retractSource = null;
+            }
+            if (flashes.isEmpty() && retractSource == null) {
+                animation.stop();
+            }
+            repaint();
+        }
+
+        private void setAltHeld(boolean held) {
+            if (altHeld != held) {
+                altHeld = held;
+                repaint();
+            }
+        }
+
         /** 点 p でふちをつかめるカードを探す。なければ null。 */
         private Card resizableAt(Point p) {
             // 手前のカードの内側にいるときは、下に隠れたカードのふちはつかませない
@@ -1356,7 +1562,10 @@ public class BoardPane extends EditorPane {
         /** ふちの向きに合った、矢印の形にする（ウィンドウのふちと同じ）。 */
         private void updateCursor(Point viewPoint) {
             int type = Cursor.DEFAULT_CURSOR;
-            if (editor == null && linkSource == null) {
+            Card under = cardAt(toModel(viewPoint));
+            if (threadSource != null || (altHeld && editor == null && under != null && !under.group)) {
+                type = Cursor.CROSSHAIR_CURSOR;     // Alt を押している間は、カードの上で「引ける」形にする
+            } else if (editor == null && linkSource == null) {
                 Point p = toModel(viewPoint);
                 Card card = resizableAt(p);
                 if (card != null) {
@@ -1458,6 +1667,7 @@ public class BoardPane extends EditorPane {
             }
 
             pressModel = p;
+            lastModel = p;
             stateAtPress = snapshot();
             moved = false;
             resizing = false;
@@ -1465,10 +1675,21 @@ public class BoardPane extends EditorPane {
             dragMembers.clear();
             dragStarts.clear();
 
+            Card note = card != null && !card.group ? card : null;
+            if (note != null && e.isAltDown()) {
+                startThread(note, p);   // Alt+ドラッグ：長押しを待たずに、すぐ糸を伸ばす
+                return;
+            }
+
             boolean adding = e.isShiftDown();
             boolean toggling = (e.getModifiersEx() & InputEvent.CTRL_DOWN_MASK) != 0;
             dragAnchor = null;
             Card edgeCard = adding || toggling ? null : resizableAt(p);
+            // カードの中を押したら、長押しを待つ（そのまま動かさずにいると、糸を伸ばす操作になる）
+            holdCard = edgeCard == null && note != null && !adding && !toggling ? note : null;
+            if (holdCard != null) {
+                holdTimer.restart();
+            }
             if (edgeCard != null) {
                 // ふちをつかんだ：そのカードの大きさを変える
                 select(edgeCard);
@@ -1542,6 +1763,16 @@ public class BoardPane extends EditorPane {
                 return;
             }
             Point p = toModel(e.getPoint());
+            lastModel = p;
+            if (holdCard != null && e.getPoint().distance(pressView) > 4) {
+                holdTimer.stop();       // 長押しの前に動かした：ふつうの移動
+                holdCard = null;
+            }
+            if (threadSource != null) {
+                threadEnd = p;
+                repaint();
+                return;
+            }
             if (rubberBand != null) {
                 rubberBand.setFrameFromDiagonal(pressModel, p);
                 repaint();
@@ -1581,6 +1812,16 @@ public class BoardPane extends EditorPane {
                         showMenu(menuCard, menuView, menuModel);
                     }
                 }
+                return;
+            }
+            holdTimer.stop();
+            holdCard = null;
+            if (threadSource != null) {
+                finishThread();
+                pressModel = null;
+                stateAtPress = null;
+                moved = false;
+                dragAnchor = null;
                 return;
             }
             if (rubberBand != null) {
@@ -1662,6 +1903,7 @@ public class BoardPane extends EditorPane {
                     menu.add(item("選んだものを整列", BoardPane.this::tidy));
                 }
                 if (selectedNotes().size() >= 2) {
+                    menu.add(item("選んだ順に矢印でつなぐ（L）", BoardPane.this::linkSelected));
                     menu.add(item("選んだカードを色ごとに並べる", BoardPane.this::arrangeByColor));
                 }
                 menu.add(item("複製", BoardPane.this::duplicateSelected));
@@ -1720,23 +1962,28 @@ public class BoardPane extends EditorPane {
                 g2.setFont(Theme.ui());
                 g2.setColor(Theme.FG_DIM);
                 g2.drawString("ダブルクリックでカードを追加　／　右クリックでメニュー　／　Ctrl+V で一括追加", 40, 60);
+                g2.drawString("カードを長押し（または Alt を押しながら）して引くと、矢印でつなげます", 40, 60 + g2.getFontMetrics().getHeight() + 8);
             }
 
             // 奥から順に：グループ枠 → 矢印 → カード
             for (Card group : groupsBackToFront()) {
                 paintGroup(g2, group, decorations);       // 大きい枠から描くので、小さい枠が手前に出る
             }
+            boolean threading = decorations && threadSource != null;
             for (Link link : links) {
                 Card from = find(link.from());
                 Card to = find(link.to());
                 if (from != null && to != null) {
-                    paintArrow(g2, from, to);
+                    paintArrow(g2, from, to, threading ? 90 : 255);     // 糸を引いている間は、ほかの矢印を控えめに
                 }
             }
             for (Card card : cards) {
                 if (!card.group && card != editingCard) {
                     paintCard(g2, card, decorations);
                 }
+            }
+            if (decorations) {
+                paintThread(g2);
             }
             if (rubberBand != null && decorations) {
                 g2.setColor(new Color(0, 122, 204, 50));
@@ -1775,6 +2022,10 @@ public class BoardPane extends EditorPane {
         }
 
         private void paintCard(Graphics2D g2, Card card, boolean decorations) {
+            if (decorations && card == threadSource) {
+                g2.setColor(new Color(0, 0, 0, 70));               // 糸を引いている間は、持ち上がって見える大きな影
+                g2.fillRoundRect(card.x + 8, card.y + 14, card.w, card.h, 14, 14);
+            }
             g2.setColor(new Color(0, 0, 0, 90));                   // 影
             g2.fillRoundRect(card.x + 3, card.y + 5, card.w, card.h, 12, 12);
             g2.setColor(PALETTE[card.color]);
@@ -1818,35 +2069,190 @@ public class BoardPane extends EditorPane {
         }
 
         /** from から to へ、カードのふちで止まる矢印を描く。 */
-        private void paintArrow(Graphics2D g2, Card from, Card to) {
-            double fromX = from.x + from.w / 2.0;
-            double fromY = from.y + from.h / 2.0;
-            double toX = to.x + to.w / 2.0;
-            double toY = to.y + to.h / 2.0;
-            double dx = toX - fromX;
-            double dy = toY - fromY;
+        private void paintArrow(Graphics2D g2, Card from, Card to, int alpha) {
+            Point2D.Double tip = borderPoint(to, from.x + from.w / 2.0, from.y + from.h / 2.0);
+            Color color = new Color(LINK_COLOR.getRed(), LINK_COLOR.getGreen(), LINK_COLOR.getBlue(), alpha);
+            drawArrow(g2, from.x + from.w / 2.0, from.y + from.h / 2.0, tip.x, tip.y, color, false, true);
+        }
+
+        /** カード c の少し外のふちの上で、c の中心から (x, y) へ向かう線が通る点。 */
+        private Point2D.Double borderPoint(Card c, double x, double y) {
+            double cx = c.x + c.w / 2.0;
+            double cy = c.y + c.h / 2.0;
+            double dx = x - cx;
+            double dy = y - cy;
+            double tx = Math.abs(dx) < 1e-6 ? Double.MAX_VALUE : (c.w / 2.0 + 6) / Math.abs(dx);
+            double ty = Math.abs(dy) < 1e-6 ? Double.MAX_VALUE : (c.h / 2.0 + 6) / Math.abs(dy);
+            double t = Math.min(1, Math.min(tx, ty));
+            return new Point2D.Double(cx + dx * t, cy + dy * t);
+        }
+
+        /** (x1, y1) から (x2, y2) へ線を引く。dashed なら点線、head なら先に矢じりを付ける。 */
+        private void drawArrow(Graphics2D g2, double x1, double y1, double x2, double y2,
+                Color color, boolean dashed, boolean head) {
+            double dx = x2 - x1;
+            double dy = y2 - y1;
             double length = Math.hypot(dx, dy);
             if (length < 1) {
                 return;
             }
-            // 相手のカードの中心から、どれだけ手前がふちになるかを求める
-            double tx = Math.abs(dx) < 1e-6 ? Double.MAX_VALUE : (to.w / 2.0 + 6) / Math.abs(dx);
-            double ty = Math.abs(dy) < 1e-6 ? Double.MAX_VALUE : (to.h / 2.0 + 6) / Math.abs(dy);
-            double t = Math.min(1, Math.min(tx, ty));
-            double tipX = toX - dx * t;
-            double tipY = toY - dy * t;
+            g2.setStroke(dashed
+                    ? new BasicStroke(3f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND, 1f, new float[]{8f, 8f}, 0f)
+                    : new BasicStroke(3f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            g2.setColor(color);
+            g2.drawLine((int) x1, (int) y1, (int) x2, (int) y2);
+            if (head) {
+                // 矢じり（進む向きの単位ベクトル ux,uy と、それに直角な向きを使う）
+                double ux = dx / length;
+                double uy = dy / length;
+                int size = 16;
+                int[] xs = {(int) x2, (int) (x2 - ux * size - uy * size * 0.5), (int) (x2 - ux * size + uy * size * 0.5)};
+                int[] ys = {(int) y2, (int) (y2 - uy * size + ux * size * 0.5), (int) (y2 - uy * size - ux * size * 0.5)};
+                g2.fillPolygon(xs, ys, 3);
+            }
+        }
 
-            g2.setStroke(new BasicStroke(3f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-            g2.setColor(LINK_COLOR);
-            g2.drawLine((int) fromX, (int) fromY, (int) tipX, (int) tipY);
+        /** カードのふちを、にじむように光らせる（alpha が大きいほど強く）。 */
+        private void paintGlow(Graphics2D g2, Card card, Color color, int alpha) {
+            for (int i = 3; i >= 1; i--) {
+                g2.setStroke(new BasicStroke(i * 3f));
+                g2.setColor(new Color(color.getRed(), color.getGreen(), color.getBlue(), Math.max(0, Math.min(255, alpha / i))));
+                g2.drawRoundRect(card.x - 2, card.y - 2, card.w + 4, card.h + 4, 14, 14);
+            }
+        }
 
-            // 矢じり（進む向きの単位ベクトル ux,uy と、それに直角な向きを使う）
-            double ux = dx / length;
-            double uy = dy / length;
-            int size = 16;
-            int[] xs = {(int) tipX, (int) (tipX - ux * size - uy * size * 0.5), (int) (tipX - ux * size + uy * size * 0.5)};
-            int[] ys = {(int) tipY, (int) (tipY - uy * size + ux * size * 0.5), (int) (tipY - uy * size - ux * size * 0.5)};
-            g2.fillPolygon(xs, ys, 3);
+        /**
+         * 糸まわりの見せ方。
+         *   Alt を押している間 … 引けるカードのふちを淡く光らせる（どこからでも引けることを示す）
+         *   糸を引いている間   … 元のカードを光らせ、近いカードほどふちをにじませる（つながる先の予告）。
+         *                        つなげる相手の上では、糸が相手のふちに吸い付いて実線になり、相手が少し大きくなる。
+         *                        つなげない相手の上では、点線のまま相手を暗くし、理由をカーソルの横に出す。
+         *                        何もない所では、新しいカードの影を出す
+         *   そのあと           … つないだら光が矢印を流れ、やめたら糸が縮んで消える
+         */
+        private void paintThread(Graphics2D g2) {
+            if (altHeld && threadSource == null && editor == null) {
+                for (Card card : cards) {
+                    if (!card.group) {
+                        paintGlow(g2, card, LINK_COLOR, 70);
+                    }
+                }
+            }
+            long now = System.currentTimeMillis();
+            if (retractSource != null && retractEnd != null && cards.contains(retractSource)) {
+                double t = Math.min(1, (now - retractStart) / (double) RETRACT_MS);
+                double cx = retractSource.x + retractSource.w / 2.0;
+                double cy = retractSource.y + retractSource.h / 2.0;
+                double ex = retractEnd.x + (cx - retractEnd.x) * t;
+                double ey = retractEnd.y + (cy - retractEnd.y) * t;
+                Point2D.Double start = borderPoint(retractSource, ex, ey);
+                if (!retractSource.bounds().contains(ex, ey)) {
+                    drawArrow(g2, start.x, start.y, ex, ey, new Color(0x9A9A9A, false), true, false);
+                }
+            }
+            for (Flash f : flashes) {
+                if (!cards.contains(f.from()) || !cards.contains(f.to())) {
+                    continue;
+                }
+                double t = Math.min(1, (now - f.start()) / (double) FLASH_MS);
+                Point2D.Double a = borderPoint(f.from(), f.to().x + f.to().w / 2.0, f.to().y + f.to().h / 2.0);
+                Point2D.Double b = borderPoint(f.to(), f.from().x + f.from().w / 2.0, f.from().y + f.from().h / 2.0);
+                double x = a.x + (b.x - a.x) * t;
+                double y = a.y + (b.y - a.y) * t;
+                g2.setColor(new Color(LINK_COLOR.getRed(), LINK_COLOR.getGreen(), LINK_COLOR.getBlue(), 110));
+                g2.fill(new java.awt.geom.Ellipse2D.Double(x - 11, y - 11, 22, 22));
+                g2.setColor(Color.WHITE);
+                g2.fill(new java.awt.geom.Ellipse2D.Double(x - 5, y - 5, 10, 10));
+            }
+            if (threadSource == null || threadEnd == null) {
+                return;
+            }
+
+            Card source = threadSource;
+            Card target = cardAt(threadEnd);
+            String problem = target == null ? null : linkProblem(source, target);
+            if (target == source) {
+                target = null;          // 自分の上：まだ引き出していないだけなので、何も言わない
+                problem = "";
+            }
+            // 近いカードほど、ふちをにじませる
+            for (Card card : cards) {
+                if (card.group || card == source || card == target || linkProblem(source, card) != null) {
+                    continue;
+                }
+                Rectangle r = card.bounds();
+                double ddx = Math.max(0, Math.max(r.x - threadEnd.x, threadEnd.x - (r.x + r.width)));
+                double ddy = Math.max(0, Math.max(r.y - threadEnd.y, threadEnd.y - (r.y + r.height)));
+                double distance = Math.hypot(ddx, ddy);
+                if (distance < NEAR) {
+                    paintGlow(g2, card, LINK_COLOR, (int) (150 * (1 - distance / NEAR)));
+                }
+            }
+            paintGlow(g2, source, Theme.ACCENT, 220);           // 元のカード
+
+            double sx = source.x + source.w / 2.0;
+            double sy = source.y + source.h / 2.0;
+            if (target != null && problem == null) {
+                // つなげる：糸が相手のふちに吸い付いて実線になり、相手が少し大きくなって受け止める
+                Graphics2D lifted = (Graphics2D) g2.create();
+                double cx = target.x + target.w / 2.0;
+                double cy = target.y + target.h / 2.0;
+                lifted.translate(cx, cy);
+                lifted.scale(1.04, 1.04);
+                lifted.translate(-cx, -cy);
+                paintCard(lifted, target, false);
+                paintGlow(lifted, target, LINK_COLOR, 255);
+                lifted.dispose();
+                Point2D.Double tip = borderPoint(target, sx, sy);
+                Point2D.Double start = borderPoint(source, tip.x, tip.y);
+                drawArrow(g2, start.x, start.y, tip.x, tip.y, LINK_COLOR, false, true);
+            } else if (target != null) {
+                // つなげない：相手を暗くし、点線のまま。理由をカーソルの横に出す
+                g2.setColor(new Color(0, 0, 0, 120));
+                g2.fillRoundRect(target.x, target.y, target.w, target.h, 12, 12);
+                Point2D.Double stop = borderPoint(target, sx, sy);        // 糸は相手のふちで止める（中には入らない）
+                Point2D.Double start = borderPoint(source, stop.x, stop.y);
+                drawArrow(g2, start.x, start.y, stop.x, stop.y, new Color(0x9A9A9A), true, false);
+                paintTip(g2, problem, threadEnd);
+            } else if (problem == null) {
+                // 何もない所：離すと、ここに新しいカードができる
+                int size = cardFont.getSize();
+                int w = size * 10;
+                int h = size * 6;
+                int gx = threadEnd.x - w / 2;
+                int gy = threadEnd.y - h / 2;
+                g2.setColor(new Color(255, 255, 255, 22));
+                g2.fillRoundRect(gx, gy, w, h, 12, 12);
+                g2.setStroke(new BasicStroke(2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND, 1f, new float[]{6f, 6f}, 0f));
+                g2.setColor(new Color(LINK_COLOR.getRed(), LINK_COLOR.getGreen(), LINK_COLOR.getBlue(), 160));
+                g2.drawRoundRect(gx, gy, w, h, 12, 12);
+                g2.setFont(cardFont.deriveFont(Font.BOLD, cardFont.getSize() * 1.6f));
+                FontMetrics fm = g2.getFontMetrics();
+                g2.drawString("＋", threadEnd.x - fm.stringWidth("＋") / 2, threadEnd.y + fm.getAscent() / 2 - 2);
+                Point2D.Double tip = new Point2D.Double(gx, threadEnd.y);
+                if (Math.abs(threadEnd.x - sx) < Math.abs(threadEnd.y - sy)) {
+                    tip = new Point2D.Double(threadEnd.x, threadEnd.y > sy ? gy : gy + h);
+                } else if (threadEnd.x < sx) {
+                    tip = new Point2D.Double(gx + w, threadEnd.y);
+                }
+                Point2D.Double start = borderPoint(source, tip.x, tip.y);
+                drawArrow(g2, start.x, start.y, tip.x, tip.y,
+                        new Color(LINK_COLOR.getRed(), LINK_COLOR.getGreen(), LINK_COLOR.getBlue(), 200), true, true);
+            }
+        }
+
+        /** カーソルの横に、短い説明を出す。 */
+        private void paintTip(Graphics2D g2, String text, Point at) {
+            g2.setFont(Theme.small());
+            FontMetrics fm = g2.getFontMetrics();
+            int x = at.x + 18;
+            int y = at.y + 18;
+            int w = fm.stringWidth(text) + 16;
+            int h = fm.getHeight() + 8;
+            g2.setColor(new Color(20, 20, 20, 220));
+            g2.fillRoundRect(x, y, w, h, 8, 8);
+            g2.setColor(Color.WHITE);
+            g2.drawString(text, x + 8, y + 4 + fm.getAscent());
         }
 
         /** 右下に、大きさを変えられることを示す目印（三角）を描く。実際は、どのふちでもつかめる。 */

@@ -8,6 +8,7 @@ import java.awt.event.KeyEvent;
 import java.awt.event.KeyListener;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -25,6 +26,7 @@ import javax.swing.SwingUtilities;
  *   java -cp target/classes:target/test-classes com.example.minieditor.BoardTest
  * 1つでも失敗したら、終了コード 1 で終わる。
  */
+@SuppressWarnings("unchecked")
 public class BoardTest {
 
     private static int failures;
@@ -46,7 +48,12 @@ public class BoardTest {
             groupAroundGroup();
             alignKeys();
             unbounded();
+            altLink();
+            altLinkToEmpty();
+            linkRefused();
+            linkInOrder();
         });
+        longPressLink();        // 長押しは時間を待つので、画面の処理の外で動かす
         System.out.println(failures == 0 ? "すべて通りました" : failures + " 件、失敗しました");
         System.exit(failures == 0 ? 0 : 1);
     }
@@ -333,6 +340,114 @@ public class BoardTest {
         // マイナスの位置も保存して、読み戻せる
         BoardPane copy = BoardPane.fromJson(pane.toJson());
         check(rects(copy).get("d").equals(r.get("d")), "マイナスの位置も保存して、読み戻せる");
+    }
+
+    /** 矢印の一覧を「元の文字→先の文字」の形で返す。 */
+    @SuppressWarnings("unchecked")
+    private static List<String> links(BoardPane pane) {
+        Map<String, Object> json = pane.toJson();
+        Map<Integer, String> names = new HashMap<>();
+        for (Object o : (List<Object>) json.get("cards")) {
+            Map<String, Object> m = (Map<String, Object>) o;
+            names.put(((Number) m.get("id")).intValue(), (String) m.get("text"));
+        }
+        List<String> result = new ArrayList<>();
+        for (Object o : (List<Object>) json.get("links")) {
+            Map<String, Object> m = (Map<String, Object>) o;
+            result.add(names.get(((Number) m.get("from")).intValue()) + "→" + names.get(((Number) m.get("to")).intValue()));
+        }
+        return result;
+    }
+
+    /** Alt を押しながらカードからドラッグする。途中の動きも送る。 */
+    private static void altDrag(JComponent board, int fromX, int fromY, int toX, int toY) {
+        mouse(board, MouseEvent.MOUSE_PRESSED, fromX, fromY, MouseEvent.BUTTON1, InputEvent.ALT_DOWN_MASK);
+        mouse(board, MouseEvent.MOUSE_DRAGGED, (fromX + toX) / 2, (fromY + toY) / 2, MouseEvent.BUTTON1, InputEvent.ALT_DOWN_MASK);
+        mouse(board, MouseEvent.MOUSE_DRAGGED, toX, toY, MouseEvent.BUTTON1, InputEvent.ALT_DOWN_MASK);
+        mouse(board, MouseEvent.MOUSE_RELEASED, toX, toY, MouseEvent.BUTTON1, 0);
+    }
+
+    /** Alt+ドラッグで、カードから相手のカードへ矢印を引く。カードは動かない。 */
+    private static void altLink() {
+        BoardPane pane = nestedBoard();
+        JComponent board = boardOf(pane);
+        Map<String, Rectangle> before = rects(pane);
+        altDrag(board, 1250, 140, 1350, 540);   // d → e
+        check(links(pane).equals(List.of("d→e")), "Alt+ドラッグで、離したカードとつながる（" + links(pane) + "）");
+        check(rects(pane).equals(before), "つなぐ操作では、カードは動かない");
+        altDrag(board, 1250, 140, 1350, 540);   // もう一度
+        altDrag(board, 1350, 540, 1250, 140);   // 逆向き
+        check(links(pane).size() == 1, "もうつながっている組は、もう一度つながない（逆向きも）");
+    }
+
+    /** 何もない所で離すと、そこに新しいカードができてつながる。元に戻す1回で、両方とも消える。 */
+    private static void altLinkToEmpty() {
+        BoardPane pane = nestedBoard();
+        JComponent board = boardOf(pane);
+        int count = rects(pane).size();
+        altDrag(board, 1250, 140, 1500, 300);
+        Map<String, Rectangle> r = rects(pane);
+        check(r.size() == count + 1 && links(pane).equals(List.of("d→")), "何もない所で離すと、新しいカードを作ってつなぐ（" + links(pane) + "）");
+        Rectangle made = null;
+        for (Map.Entry<String, Rectangle> entry : r.entrySet()) {
+            if (entry.getKey().isEmpty()) {
+                made = entry.getValue();
+            }
+        }
+        check(made != null && made.contains(1500, 300), "新しいカードは、離した所にできる");
+        click(board, 1500, 900, 0);             // 新しいカードの文字の入力を閉じる
+        pane.undo();
+        check(rects(pane).size() == count && links(pane).isEmpty(), "元に戻す1回で、新しいカードと矢印が両方とも消える");
+    }
+
+    /** 自分自身・グループ枠では、つながらない。 */
+    private static void linkRefused() {
+        BoardPane pane = nestedBoard();
+        JComponent board = boardOf(pane);
+        int count = rects(pane).size();
+        altDrag(board, 1250, 140, 1260, 150);   // 自分の上で離す
+        altDrag(board, 1250, 140, 600, 50);     // 「大」の見出しで離す
+        check(links(pane).isEmpty() && rects(pane).size() == count, "自分自身やグループ枠の上で離しても、つながらず、カードも増えない");
+    }
+
+    /** 選んだ順に L でつなぐ。 */
+    private static void linkInOrder() {
+        BoardPane pane = nestedBoard();
+        JComponent board = boardOf(pane);
+        click(board, 1310, 510, 0);                                 // e
+        click(board, 1210, 110, InputEvent.SHIFT_DOWN_MASK);        // d
+        click(board, 710, 310, InputEvent.SHIFT_DOWN_MASK);         // c
+        key(board, KeyEvent.VK_L, 0);
+        check(links(pane).equals(List.of("e→d", "d→c")), "L で、選んだ順につながる（" + links(pane) + "）");
+        key(board, KeyEvent.VK_L, 0);
+        check(links(pane).size() == 2, "もう一度 L を押しても、同じ矢印は増えない");
+    }
+
+    /** 長押ししてから引くと、矢印を引ける。すぐに引けば、今までどおり移動になる。 */
+    private static void longPressLink() throws Exception {
+        BoardPane[] holder = new BoardPane[1];
+        JComponent[] boardHolder = new JComponent[1];
+        Map<String, Rectangle>[] before = new Map[1];
+        SwingUtilities.invokeAndWait(() -> {
+            holder[0] = nestedBoard();
+            boardHolder[0] = boardOf(holder[0]);
+            before[0] = rects(holder[0]);
+            mouse(boardHolder[0], MouseEvent.MOUSE_PRESSED, 1250, 140, MouseEvent.BUTTON1, 0);
+        });
+        Thread.sleep(600);                      // 長押し（300 ミリ秒）より長く待つ
+        SwingUtilities.invokeAndWait(() -> {
+            mouse(boardHolder[0], MouseEvent.MOUSE_DRAGGED, 1300, 340, MouseEvent.BUTTON1, 0);
+            mouse(boardHolder[0], MouseEvent.MOUSE_DRAGGED, 1350, 540, MouseEvent.BUTTON1, 0);
+            mouse(boardHolder[0], MouseEvent.MOUSE_RELEASED, 1350, 540, MouseEvent.BUTTON1, 0);
+            check(links(holder[0]).equals(List.of("d→e")), "長押ししてから引くと、離したカードとつながる（" + links(holder[0]) + "）");
+            check(rects(holder[0]).equals(before[0]), "長押しで引いたときは、カードは動かない");
+
+            BoardPane pane = nestedBoard();
+            JComponent board = boardOf(pane);
+            Map<String, Rectangle> start = rects(pane);
+            dragTo(board, 1250, 140, 1250 + 64, 140 + 64);
+            check(links(pane).isEmpty() && rects(pane).get("d").x != start.get("d").x, "すぐに引けば、今までどおりカードが動く");
+        });
     }
 
     /** Shift+クリックで2枚選び、Shift+W で上にそろえる。 */

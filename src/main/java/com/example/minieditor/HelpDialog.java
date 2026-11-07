@@ -136,6 +136,8 @@ final class HelpDialog {
             {"[[B]]選択に足す / 選択を切り替える", "Shift+クリック / Ctrl+クリック"},
             {"[[B]]グループ枠で囲む / 全体を表示（ボードの上で）", "C / Home"},
             {"[[B]]上・左・下・右にそろえる（ボードの上で）", "Shift+W / A / S / D"},
+            {"[[B]]矢印でつなぐ（相手のカードで離す）", "カードを長押ししてから引く / Alt+ドラッグ"},
+            {"[[B]]選んだ順に矢印でつなぐ（ボードの上で）", "L"},
         };
         for (String[] row : extra) {
             if (row[0].startsWith("[[A]]") && !Edition.has(Edition.AI) || row[0].startsWith("[[B]]") && !Edition.has(Edition.BOARD)) {
