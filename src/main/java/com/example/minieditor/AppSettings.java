@@ -47,6 +47,9 @@ public final class AppSettings {
     public static final String RUBY_ABOVE = "rubyAbove";            // 横書きで、ルビを親文字の上に小さく出すか（既定は切）
     public static final String SHEET_CHARS = "sheetChars";          // 原稿用紙の字数（1行の字数。既定は 20）
     public static final String SHEET_LINES = "sheetLines";          // 原稿用紙の行数（1枚の列の数。既定は 20）
+    public static final String SPACING_LINE = "spacingLine";        // 縦の行間の段階（0 狭い・1 標準・2 広い。既定は 1）
+    public static final String SPACING_CHAR = "spacingChar";        // 縦の字間の段階（既定は 1）
+    public static final String SPACING_MARGIN = "spacingMargin";    // 余白の段階（既定は 1）
 
     private final Map<String, Object> data;
 

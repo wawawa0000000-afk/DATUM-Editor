@@ -318,6 +318,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     private JMenuBar createMenuBar() {
         JMenuBar menuBar = new JMenuBar();
         SheetSize.load(appSettings);    // 原稿用紙の字数・行数（前回の設定。メニューの項目と、縦書きの表示に使う）
+        Spacing.load(appSettings);      // 行間・字間・余白（前回の設定。メニューの項目と、画面の描き方に使う）
 
         JMenu file = new JMenu("ファイル");
         file.add(item("新規（テキスト）", key(KeyEvent.VK_N, CTRL), () -> newDocument(EditorPane.Mode.TEXT)));
@@ -422,6 +423,12 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         sheetMenu.add(sheetSizeMenu("字数", true));
         sheetMenu.add(sheetSizeMenu("行数", false));
         view.add(sheetMenu);
+        // 行間・字間・余白（縦書きは3つとも、横書きは余白だけ。選ぶと、開いている文書にすぐ反映する）
+        JMenu spacingRoot = new JMenu("行間・字間・余白");
+        spacingRoot.add(spacingMenu("縦の行間", 0));
+        spacingRoot.add(spacingMenu("縦の字間", 1));
+        spacingRoot.add(spacingMenu("余白", 2));
+        view.add(spacingRoot);
         JCheckBoxMenuItem stripeItem = new JCheckBoxMenuItem("行の縞模様", Theme.stripes);
         stripeItem.addActionListener(e -> {
             Theme.stripes = stripeItem.isSelected();
@@ -570,6 +577,45 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             menu.add(sizeItem);
         }
         return menu;
+    }
+
+    /** 行間・字間・余白の段階（狭い・標準・広い）を選ぶサブメニュー。kind は 0 縦の行間・1 縦の字間・2 余白。今の段階にチェックが付く。 */
+    private JMenu spacingMenu(String title, int kind) {
+        JMenu menu = new JMenu(title);
+        javax.swing.ButtonGroup group = new javax.swing.ButtonGroup();
+        int current = kind == 0 ? Spacing.line() : kind == 1 ? Spacing.chars() : Spacing.margin();
+        for (int level = 0; level < Spacing.NAMES.length; level++) {
+            int value = level;
+            javax.swing.JRadioButtonMenuItem levelItem = new javax.swing.JRadioButtonMenuItem(
+                    Spacing.NAMES[level], level == current);
+            levelItem.addActionListener(e -> setSpacing(kind, value));
+            group.add(levelItem);
+            menu.add(levelItem);
+        }
+        return menu;
+    }
+
+    /** 行間・字間・余白の段階を変えて覚える。開いている文書（すべて）の並べ方と余白を、すぐ描き直す。 */
+    private void setSpacing(int kind, int level) {
+        if (kind == 0) {
+            Spacing.setLine(level);
+        } else if (kind == 1) {
+            Spacing.setChars(level);
+        } else {
+            Spacing.setMargin(level);
+        }
+        Spacing.save(appSettings);
+        appSettings.save();
+        for (EditorPane pane : documentPanes()) {
+            forEachView(pane, view -> {
+                if (view instanceof VerticalTextPane vertical) {
+                    vertical.refreshLayout();
+                } else if (view instanceof TextEditorPane horizontal) {
+                    horizontal.applyMargin();
+                }
+            });
+        }
+        updateStatus();
     }
 
     /** 原稿用紙の字数または行数を変えて覚える。開いている縦書きの文書（すべて）を描き直し、枚数の表示も直す。 */

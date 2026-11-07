@@ -103,6 +103,7 @@ public class TextEditorPane extends EditorPane implements Searchable {
 
     private TextEditorPane(Font font, Shared from) {
         area.setFont(font);
+        area.setMargin(normalMargin());
         if (from != null) {
             area.setDocument(from.document);
             shared = from;
@@ -225,13 +226,27 @@ public class TextEditorPane extends EditorPane implements Searchable {
         } else {
             setWrap(wrapBeforeFocus);
             scrollPane.setRowHeaderView(gutter);
-            area.setMargin(new Insets(4, 12, 4, 12));
+            area.setMargin(normalMargin());
             area.revalidate();
         }
     }
 
     public boolean isFocusMode() {
         return focusMode;
+    }
+
+    /** ふつうの余白（上下 4、左右 12 に、設定の余白の倍率を掛ける）。 */
+    private static Insets normalMargin() {
+        float f = Spacing.marginFactor();
+        return new Insets(Math.round(4 * f), Math.round(12 * f), Math.round(4 * f), Math.round(12 * f));
+    }
+
+    /** 余白の設定を、画面に反映する（集中モードのあいだは、集中モードの余白を使う）。 */
+    public void applyMargin() {
+        if (!focusMode) {
+            area.setMargin(normalMargin());
+            area.revalidate();
+        }
     }
 
     private void applyFocusLayout() {

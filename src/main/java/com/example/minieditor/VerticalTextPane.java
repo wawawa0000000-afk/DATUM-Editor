@@ -641,7 +641,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
 
     /** 1文字ぶんの高さ（下へ進む量）。 */
     private int cellHeight() {
-        return manuscript ? sheetCell() : Math.round(fontSize() * 1.12f);
+        return manuscript ? sheetCell() : Math.round(fontSize() * Spacing.charFactor());
     }
 
     /** 文字を置くマスの幅。 */
@@ -656,11 +656,11 @@ public class VerticalTextPane extends EditorPane implements Searchable {
 
     /** 1列ぶんの幅（左へ進む量）。行間やルビ欄を含む。 */
     private int columnWidth() {
-        return manuscript ? sheetCell() + rubyStrip() : Math.round(fontSize() * 1.85f);
+        return manuscript ? sheetCell() + rubyStrip() : Math.round(fontSize() * Spacing.lineFactor());
     }
 
     private int margin() {
-        return manuscript ? 34 : Math.max(16, view.getFont().getSize() / 2);
+        return manuscript ? 34 : Math.max(16, Math.round(view.getFont().getSize() / 2 * Spacing.marginFactor()));
     }
 
     /** 原稿用紙の中央（10行目と11行目のあいだ）に空ける幅。 */
@@ -723,6 +723,14 @@ public class VerticalTextPane extends EditorPane implements Searchable {
 
     public boolean isManuscript() {
         return manuscript;
+    }
+
+    /** 行間・字間・余白の設定を、画面に反映する（並べ方を計算し直して描く）。 */
+    public void refreshLayout() {
+        layoutDirty = true;
+        view.revalidate();
+        view.repaint();
+        fireStatusChanged();
     }
 
     /** 原稿用紙の表示と、ふつうの表示を切り替える。 */
