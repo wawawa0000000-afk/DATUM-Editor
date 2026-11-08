@@ -112,10 +112,16 @@ public final class FolderSidebar extends JPanel {
         tree.setRootVisible(false);
         tree.setShowsRootHandles(true);
         tree.setBackground(Theme.PANEL);
+        tree.setForeground(Theme.FG_DIM);   // 開閉の印（＞ ∨）の色
         tree.setFont(Theme.small());
         tree.setRowHeight(0);
         tree.setToggleClickCount(1);
         tree.setCellRenderer(new Renderer());
+        // 開閉の印を、見やすい太めの ＞（閉じている）と ∨（開いている）にする
+        if (tree.getUI() instanceof javax.swing.plaf.basic.BasicTreeUI ui) {
+            ui.setCollapsedIcon(new Chevron(false));
+            ui.setExpandedIcon(new Chevron(true));
+        }
         // フォルダを開いたときに、はじめて中身を読む（大きなフォルダでも待たされないように）
         tree.addTreeWillExpandListener(new TreeWillExpandListener() {
             @Override
@@ -600,6 +606,43 @@ public final class FolderSidebar extends JPanel {
                 setForeground(Theme.FG_DIM);
             }
             return this;
+        }
+    }
+
+    /** 木の開閉の印：＞ を閉じている時、それを下へ回した ∨ を開いている時に描く。色は木の文字色に合わせる。 */
+    private static final class Chevron implements javax.swing.Icon {
+        private final boolean open;
+
+        Chevron(boolean open) {
+            this.open = open;
+        }
+
+        @Override
+        public void paintIcon(Component c, java.awt.Graphics g, int x, int y) {
+            java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
+            try {
+                g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setRenderingHint(java.awt.RenderingHints.KEY_STROKE_CONTROL, java.awt.RenderingHints.VALUE_STROKE_PURE);
+                g2.setColor(c.getForeground());
+                g2.setStroke(new java.awt.BasicStroke(2f, java.awt.BasicStroke.CAP_ROUND, java.awt.BasicStroke.JOIN_ROUND));
+                if (open) {
+                    g2.drawPolyline(new int[]{x + 3, x + 8, x + 13}, new int[]{y + 6, y + 11, y + 6}, 3);
+                } else {
+                    g2.drawPolyline(new int[]{x + 6, x + 11, x + 6}, new int[]{y + 3, y + 8, y + 13}, 3);
+                }
+            } finally {
+                g2.dispose();
+            }
+        }
+
+        @Override
+        public int getIconWidth() {
+            return 16;
+        }
+
+        @Override
+        public int getIconHeight() {
+            return 16;
         }
     }
 }
