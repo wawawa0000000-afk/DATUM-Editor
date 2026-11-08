@@ -16,6 +16,7 @@ import java.awt.event.InputMethodListener;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.awt.geom.Rectangle2D;
+import java.nio.file.Path;
 import java.text.AttributedCharacterIterator;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -67,7 +68,21 @@ public class TextEditorPane extends EditorPane implements Searchable {
     /** 文章の中のルビの場所。文章が変わったら空にして、次に描くときに探し直す。 */
     private List<RubySpans.Span> rubySpans;
 
-    private final StripedTextArea area = new StripedTextArea() {
+    /** 文章の中の Markdown の読み取り結果。文章が変わったら空にして、次に描くときに読み直す。 */
+    private Markdown.Result markdown;
+
+    /** ふつうのテキストエリアに、ルビの表示と Markdown の装飾を足したもの。 */
+    private final class MarkdownArea extends StripedTextArea implements MarkdownTextAreaUI.Host {
+        @Override
+        public void updateUI() {
+            setUI(new MarkdownTextAreaUI());    // 文字を描く部分だけを差し替える（幅は変えない）
+        }
+
+        @Override
+        protected void paintBackdrop(Graphics g) {
+            MarkdownTextAreaUI.paintBackdrop(g, this, markdown());
+        }
+
         @Override
         protected void paintComponent(Graphics g) {
             super.paintComponent(g);            // 文字や選択を描いたあとに、ルビの記法を覆って、ふりがなを重ねる
@@ -75,17 +90,26 @@ public class TextEditorPane extends EditorPane implements Searchable {
                 paintRuby(g);
             }
         }
-    };
+
+        @Override
+        public Markdown.Result markdown() {
+            return TextEditorPane.this.markdown();
+        }
+    }
+
+    private final StripedTextArea area = new MarkdownArea();
     private final Shared shared;
     private final List<Object> highlightTags = new ArrayList<>();
     private final DocumentListener documentListener = new DocumentListener() {
         public void insertUpdate(DocumentEvent e) {
             rubySpans = null;
+            markdown = null;
             changed();
         }
 
         public void removeUpdate(DocumentEvent e) {
             rubySpans = null;
+            markdown = null;
             changed();
         }
 
@@ -196,6 +220,28 @@ public class TextEditorPane extends EditorPane implements Searchable {
         if (!shared.loading) {
             fireContentChanged();
         }
+    }
+
+    /** 拡張子が .md の文書か（Markdown の装飾をするか）。 */
+    private boolean isMarkdown() {
+        return isMarkdownFile(getPath());
+    }
+
+    /** 装飾に使う、今の文書の Markdown の読み取り結果（.md でないときは null）。 */
+    private Markdown.Result markdown() {
+        if (!isMarkdown()) {
+            return null;
+        }
+        if (markdown == null) {
+            markdown = Markdown.analyze(area.getText());
+        }
+        return markdown;
+    }
+
+    @Override
+    protected void pathChanged() {
+        markdown = null;                // 名前を付けて保存で、拡張子が変わったとき
+        area.repaint();
     }
 
     /** ファイルの中身を入れる。未保存マークは付けず、「元に戻す」の履歴も空にする。 */

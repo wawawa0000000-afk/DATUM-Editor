@@ -29,7 +29,12 @@ public class StripedTextArea extends JTextArea {
     @Override
     protected void paintComponent(Graphics g) {
         paintBackground(g);
+        paintBackdrop(g);
         super.paintComponent(g);                // 背景の上に、文字やハイライトを描かせる
+    }
+
+    /** 縞やカーソル行の上、文字の下に、何か描きたいときに上書きする（Markdown のコードの地など）。ふだんは何もしない。 */
+    protected void paintBackdrop(Graphics g) {
     }
 
     private void paintBackground(Graphics g) {

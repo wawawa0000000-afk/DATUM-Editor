@@ -49,6 +49,25 @@ public abstract class EditorPane extends JPanel {
         }
     }
 
+    /** 拡張子が .md（.markdown）のファイルか。 */
+    static boolean isMarkdownFile(Path path) {
+        if (path == null || path.getFileName() == null) {
+            return false;
+        }
+        String name = path.getFileName().toString().toLowerCase();
+        return name.endsWith(".md") || name.endsWith(".markdown");
+    }
+
+    /** 名前の前に出す印。横書きのテキストが Markdown のファイルなら、「文」の代わりに「MD」。 */
+    static String badgeFor(Path path, Mode mode) {
+        return mode == Mode.TEXT && isMarkdownFile(path) ? "MD" : mode.badge;
+    }
+
+    /** badgeFor の印の色（16進）。タブ・サイドバー・メニューで同じ色にする。 */
+    static String badgeHexFor(Path path, Mode mode, String[] modeHex) {
+        return mode == Mode.TEXT && isMarkdownFile(path) ? "#E5C07B" : modeHex[mode.ordinal()];
+    }
+
     /** 色を付ける範囲（検索結果の表示に使う）。 */
     public record Highlight(int start, int end, Color color) {
     }
@@ -100,10 +119,15 @@ public abstract class EditorPane extends JPanel {
     public void setPath(Path path) {
         for (EditorPane view : views) {
             view.path = path;
+            view.pathChanged();
             if (view.listener != null) {
                 view.listener.titleChanged(view);
             }
         }
+    }
+
+    /** 保存先が変わったときに呼ばれる（拡張子で見た目を変える子クラスが、上書きする）。 */
+    protected void pathChanged() {
     }
 
     public boolean isDirty() {
