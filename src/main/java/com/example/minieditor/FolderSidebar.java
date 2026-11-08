@@ -183,8 +183,8 @@ public final class FolderSidebar extends JPanel {
             showEmpty();
             return;
         }
-        title.setText(root.getFileName() == null ? root.toString() : root.getFileName().toString());
-        title.setToolTipText(root.toString());
+        // フォルダの名前は、木の最上段（根）に出す。上の見出しは「フォルダ」のまま
+        tree.setRootVisible(true);
         Set<Path> expanded = new HashSet<>();
         Enumeration<TreePath> open = tree.getExpandedDescendants(new TreePath(model.getRoot()));
         while (open != null && open.hasMoreElements()) {
@@ -196,6 +196,7 @@ public final class FolderSidebar extends JPanel {
         DefaultMutableTreeNode top = new DefaultMutableTreeNode(root);
         loadChildren(top);
         model.setRoot(top);
+        tree.expandPath(new TreePath(top));
         reopen(top, expanded);
     }
 
@@ -211,7 +212,7 @@ public final class FolderSidebar extends JPanel {
     }
 
     private void showEmpty() {
-        title.setText("フォルダ");
+        tree.setRootVisible(false);
         DefaultMutableTreeNode top = new DefaultMutableTreeNode();
         top.add(new DefaultMutableTreeNode("（「開く…」でフォルダを選んでください）"));
         model.setRoot(top);
@@ -384,7 +385,7 @@ public final class FolderSidebar extends JPanel {
             menu.add(menuItem("新しいカードボード（KJ法風のアイデア整理）…", () -> createBoard(folder)));
         }
         menu.add(menuItem("新しいフォルダ…", () -> createFolder(folder)));
-        if (target != null) {
+        if (target != null && !target.equals(root)) {      // 最上段のフォルダ自身は、名前を変えない・捨てない
             menu.addSeparator();
             menu.add(menuItem("名前を変える…", () -> rename(target)));
             menu.add(menuItem("ごみ箱へ移す", () -> trash(target)));
