@@ -881,6 +881,17 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         if (sidebar == null) {
             sidebar = new FolderSidebar(new FolderSidebar.Host() {
                 @Override
+                public EditorPane.Mode openMode(Path file) {
+                    Path target = file.toAbsolutePath().normalize();
+                    for (EditorPane pane : allPanes()) {
+                        if (pane.getPath() != null && pane.getPath().toAbsolutePath().normalize().equals(target)) {
+                            return pane.getMode();
+                        }
+                    }
+                    return null;
+                }
+
+                @Override
                 public void openFromSidebar(Path file) {
                     openSidebarFile(file);
                 }
@@ -2355,6 +2366,9 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
 
     @Override
     public void paneSelected(EditorGroup group, EditorPane pane) {
+        if (sidebar != null) {
+            sidebar.repaintTree();      // 縦書き・横書きの切り替えを、木の印にも合わせる
+        }
         if (group == activeGroup) {
             currentPaneChanged();
         }

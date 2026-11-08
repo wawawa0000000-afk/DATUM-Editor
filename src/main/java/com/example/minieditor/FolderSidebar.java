@@ -64,6 +64,9 @@ public final class FolderSidebar extends JPanel {
         void folderChanged(Path folder);
 
         void message(String text);
+
+        /** いま開いているタブの種類（縦書きなど）。開いていなければ null。 */
+        EditorPane.Mode openMode(Path file);
     }
 
     private static final String TRASH = ".datum-trash";
@@ -544,6 +547,11 @@ public final class FolderSidebar extends JPanel {
         host.openCombined(folder.getFileName() + "（" + count + " ファイルをまとめたもの）", sb.toString());
     }
 
+    /** タブの種類が変わったとき、木の印を描き直す。 */
+    public void repaintTree() {
+        tree.repaint();
+    }
+
     private static final String[] BADGE_HEX = {"#4FC1FF", "#CE9178", "#4EC9B0"};     // タブの印と同じ色
     private static final java.util.Map<Path, Object[]> KINDS = new java.util.HashMap<>();   // ファイル → {更新時刻, 種類}
 
@@ -572,7 +580,7 @@ public final class FolderSidebar extends JPanel {
     }
 
     /** 木の1行の見た目：フォルダは ▸、テキストはそのまま、開けないファイルは薄く。 */
-    private static final class Renderer extends DefaultTreeCellRenderer {
+    private final class Renderer extends DefaultTreeCellRenderer {
         Renderer() {
             setBackgroundNonSelectionColor(Theme.PANEL);
             setBackgroundSelectionColor(Theme.MENU_SELECTION);
@@ -592,7 +600,9 @@ public final class FolderSidebar extends JPanel {
                     : String.valueOf(user);
             EditorPane.Mode mode = user instanceof Path p && Files.isRegularFile(p) ? kindOf(p) : null;
             if (mode == null && user instanceof Path p && Files.isRegularFile(p) && isText(p)) {
-                mode = EditorPane.Mode.TEXT;    // ふつうのテキストファイル（.txt など）も「文」の印を付ける
+                // ふつうのテキストファイル（.txt など）は「文」。縦書きで開いているときは、タブと同じ「縦」
+                EditorPane.Mode open = host.openMode(p);
+                mode = open != null && open != EditorPane.Mode.BOARD ? open : EditorPane.Mode.TEXT;
             }
             if (mode != null) {
                 // タブと同じ印（文・縦・板）を名前の前に付けて、種類がわかるようにする
