@@ -55,6 +55,9 @@ import javax.swing.JViewport;
 import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 
+import com.example.minieditor.apple.AppleTheme;
+import com.example.minieditor.apple.BoardLook;
+
 /**
  * カードボード。付箋（カード）を並べ、グループの枠で囲み、矢印でつなぐ。
  * Miro や FigJam などのオンラインのボードにある機能を参考にしている。
@@ -62,7 +65,7 @@ import javax.swing.SwingUtilities;
  *
  * 操作：
  *   何もない所をダブルクリック … カードを追加（グループ枠の中でも同じ）
- *   カードをダブルクリック     … 文字を編集（Ctrl+Enter か、外をクリックで確定。Esc で取り消し）
+ *   カードをダブルクリック・F2・Enter … 文字を編集（Enter か外をクリックで確定、改行は Shift+Enter。Esc で取り消し）
  *   ドラッグ                   … 移動（16 ずつの格子にそろう）
  *   グループ枠の見出しをドラッグ … 枠ごと動かす（中のカードと、中の小さい枠も一緒に動く）
  *   何もない所からドラッグ     … 囲んだカードと枠をまとめて選択（枠の中の空いた所からでもよい）
@@ -71,6 +74,9 @@ import javax.swing.SwingUtilities;
  *   Ctrl+ホイール              … 拡大・縮小　／　右ボタン・中ボタン（ホイール）でドラッグ … 表示位置を動かす
  *   右クリック                 … 色・投票・矢印・整列・グループ化など
  *   C … 枠で囲む　Home … 全体を表示　Shift+W/A/S/D … 上・左・下・右にそろえる
+ *   矢印キー … 選んだものを 8 動かす（Shift で 32）　Tab／Shift+Tab … 次／前のカードを選ぶ（端まで来たらボードの外へ）
+ *
+ * 見た目の値（色・角丸・影・線の太さ）は apple.AppleTheme と apple.BoardLook に集めている。
  *
  * 矢印でつなぐ（どこから引いてもよい。決まった接続口は置かない）：
  *   カードを長押ししてから引く … 糸が伸びる。相手のカードで離すとつながる。何もない所で離すと、新しいカードを作ってつなぐ
@@ -110,12 +116,16 @@ public class BoardPane extends EditorPane {
     private record Flash(Card from, Card to, long start) {
     }
 
+    // 色・形の値は apple.BoardLook / AppleTheme に集めている（ここには書かない）
     private static final Color[] PALETTE = {
-        new Color(0xF9E79F), new Color(0xABEBC6), new Color(0xAED6F1),
-        new Color(0xF5B7B1), new Color(0xD7BDE2), new Color(0xD5D8DC)
+        BoardLook.fill(0), BoardLook.fill(1), BoardLook.fill(2),
+        BoardLook.fill(3), BoardLook.fill(4), BoardLook.fill(5)
     };
     private static final String[] PALETTE_NAMES = {"黄", "緑", "青", "赤", "紫", "灰"};
-    private static final Color LINK_COLOR = new Color(0x9CDCFE);
+    /** 今の配色（地が暗いか明るいか）に合う、Apple的デザインの値。 */
+    private static AppleTheme look() {
+        return BoardLook.themeFor(Theme.BG);
+    }
     private static final int HANDLE = 18;       // 選んだカードの右下に出す、目印の三角の大きさ
     private static final int GAP = 24;          // 整列するときの、カードとカードのすき間
     private static final int GRID = 16;         // ドラッグで動かすときに、そろえる格子の幅
@@ -127,6 +137,7 @@ public class BoardPane extends EditorPane {
     private static final int UNDO_LIMIT = 100;
     private static final double MIN_SCALE = 0.2;
     private static final double MAX_SCALE = 3.0;
+    private static final double MAX_IMAGE_PIXELS = 64_000_000;  // 書き出す画像の画素数の上限（8000×8000、約 256MB。これを超えると細かさを下げる）
 
     private final List<Card> cards = new ArrayList<>();
     private final List<Link> links = new ArrayList<>();
@@ -258,15 +269,19 @@ public class BoardPane extends EditorPane {
         return renderImage(1.0);
     }
 
-    /** zoom 倍の細かさで、ボード全体を画像にする（PDF では、拡大しても粗くならないように 2 倍にする）。 */
+    /**
+     * zoom 倍の細かさで、ボード全体を画像にする（PDF では、拡大しても粗くならないように 2 倍にする）。
+     * カードが遠く離れていて画像が大きくなりすぎるときは、細かさを下げる（メモリが足りずに書き出しが落ちないように）。
+     */
     private BufferedImage renderImage(double zoom) {
         Rectangle bounds = contentBounds(cards);
         if (bounds == null) {
             return null;
         }
         bounds.grow(40, 40);
-        BufferedImage image = new BufferedImage((int) Math.ceil(bounds.width * zoom),
-                (int) Math.ceil(bounds.height * zoom), BufferedImage.TYPE_INT_RGB);
+        zoom = Math.min(zoom, Math.sqrt(MAX_IMAGE_PIXELS / ((double) bounds.width * bounds.height)));
+        BufferedImage image = new BufferedImage(Math.max(1, (int) Math.ceil(bounds.width * zoom)),
+                Math.max(1, (int) Math.ceil(bounds.height * zoom)), BufferedImage.TYPE_INT_RGB);
         Graphics2D g2 = image.createGraphics();
         g2.scale(zoom, zoom);
         g2.translate(-bounds.x, -bounds.y);
@@ -283,14 +298,18 @@ public class BoardPane extends EditorPane {
         if (image == null) {
             throw new java.io.IOException("カードがないので、書き出すものがありません");
         }
-        // 画面の 1 ピクセルを 0.75 ポイント（= 1/96 インチ）として、紙の大きさを決める
-        writer.addPage(image, image.getWidth() / 2.0 * 0.75, image.getHeight() / 2.0 * 0.75);
+        // 画面の 1 ピクセルを 0.75 ポイント（= 1/96 インチ）として、紙の大きさを決める。
+        // 画像の細かさは大きいボードでは下がるので、紙の大きさは画像ではなくボードの広さから求める
+        Rectangle bounds = contentBounds(cards);
+        bounds.grow(40, 40);
+        writer.addPage(image, bounds.width * 0.75, bounds.height * 0.75);
     }
 
     // ---------- 変更と「元に戻す」 ----------
 
+    /** 今のボード全体を、1行の JSON にする（字下げを入れないぶん、「元に戻す」の 100 回ぶんの控えが 4 割ほど小さくなる）。 */
     private String snapshot() {
-        return Json.write(toJson());
+        return Json.writeCompact(toJson());
     }
 
     /** 変更する前の状態を覚えてから、変更があったことを知らせる。 */
@@ -569,6 +588,63 @@ public class BoardPane extends EditorPane {
 
     // ---------- カードの操作 ----------
 
+    /** カードの内側の余白（左右・上下）。カードの字の大きさに合わせる（15px の字で 14・12）。 */
+    private int padX() {
+        return Math.round(cardFont.getSize() * AppleTheme.CARD_PAD_X / AppleTheme.CARD_FONT);
+    }
+
+    private int padY() {
+        return Math.round(cardFont.getSize() * AppleTheme.CARD_PAD_Y / AppleTheme.CARD_FONT);
+    }
+
+    /** 矢印の大きさの倍率（カードの字の大きさに合わせる。字を大きくすると、矢印も同じだけ大きくなる）。 */
+    private double arrowScale() {
+        return BoardLook.arrowScale(cardFont.getSize2D());
+    }
+
+    private static double lineHeight(FontMetrics fm) {
+        return fm.getHeight() * 1.1;
+    }
+
+    /** 選んでいるもの（枠は中身ごと）を、dx・dy だけ動かす（矢印キー）。 */
+    public void nudge(int dx, int dy) {
+        List<Card> items = topLevel(selection);
+        if (items.isEmpty()) {
+            return;
+        }
+        String before = snapshot();
+        Map<Card, List<Card>> children = childrenMap();
+        for (Card item : items) {
+            moveTree(item, dx, dy, children);
+        }
+        commit(before);
+        board.repaint();
+    }
+
+    /**
+     * Tab：次のカードを選ぶ（Shift+Tab は前）。端まで来たら選択を外し、焦点をボードの外へ渡す
+     * （キーボードだけで使う人が、ボードから出られなくならないように）。
+     */
+    void step(int dir) {
+        List<Card> notes = allNotes();
+        Card current = single();
+        int i = current == null || !notes.contains(current) ? (dir > 0 ? -1 : notes.size()) : notes.indexOf(current);
+        int n = i + dir;
+        if (n < 0 || n >= notes.size()) {
+            selection.clear();
+            board.repaint();
+            fireStatusChanged();
+            if (dir > 0) {
+                board.transferFocus();
+            } else {
+                board.transferFocusBackward();
+            }
+            return;
+        }
+        select(notes.get(n));
+        board.repaint();
+    }
+
     private Card newCard(int x, int y, boolean group) {
         int size = cardFont.getSize();
         Card card = new Card();
@@ -606,12 +682,16 @@ public class BoardPane extends EditorPane {
             links.removeIf(link -> link.from() == card.id || link.to() == card.id);
         }
         cards.removeAll(selection);
+        if (linkSource != null && selection.contains(linkSource)) {
+            linkSource = null;          // 「矢印でつなぐ…」の元のカードを消したら、つなぐのもやめる
+        }
         selection.clear();
         commit(before);
     }
 
     private void connect(Card from, Card to) {
-        if (linkProblem(from, to) != null) {
+        // 消えたカードからは引かない（ないカードを指す矢印が残り、矢印の数もずれるため）
+        if (!cards.contains(from) || !cards.contains(to) || linkProblem(from, to) != null) {
             return;
         }
         String before = snapshot();
@@ -695,8 +775,9 @@ public class BoardPane extends EditorPane {
         if (card.group) {
             return;
         }
-        FontMetrics fm = board.getFontMetrics(cardFont);
-        int needed = wrap(card.text, fm, card.w - 20).size() * fm.getHeight() + 20 + voteHeight(card);
+        FontMetrics fm = board.getFontMetrics(cardFont.deriveFont(Font.BOLD));
+        int needed = (int) Math.ceil(wrap(card.text, fm, card.w - padX() * 2).size() * lineHeight(fm))
+                + padY() * 2 + voteHeight(card);
         card.h = Math.max(card.h, needed);
     }
 
@@ -809,8 +890,9 @@ public class BoardPane extends EditorPane {
             }
         }
         // 今の位置に近い順（上から下、左から右）に並べるので、並びが大きく入れ替わらない
+        // （マイナスの位置でも同じ行に分けるよう、0 に向けて切り捨てる / ではなく floorDiv で割る）
         int rowHeight = Math.max(1, notes > 0 ? cellH : items.stream().mapToInt(item -> item.h).min().orElse(1));
-        items.sort(Comparator.comparingInt((Card card) -> card.y / rowHeight).thenComparingInt(card -> card.x));
+        items.sort(Comparator.comparingInt((Card card) -> Math.floorDiv(card.y, rowHeight)).thenComparingInt(card -> card.x));
 
         // 折り返す幅：カードだけなら、今までどおり √枚数 の列。枠があれば、全体がおよそ正方形になる幅
         double total = 0;
@@ -1106,18 +1188,19 @@ public class BoardPane extends EditorPane {
         stopEditing(true);
         editingCard = card;
         editor = new JTextArea(card.text);
-        Font base = card.group ? cardFont.deriveFont(Font.BOLD) : cardFont;
+        Font base = cardFont.deriveFont(Font.BOLD);
         editor.setFont(base.deriveFont((float) (base.getSize() * scale)));
         editor.setLineWrap(true);
         editor.setWrapStyleWord(true);
         editor.setBackground(card.group ? Theme.INPUT : PALETTE[card.color]);
-        editor.setForeground(card.group ? Theme.FG_STRONG : new Color(0x1E1E1E));
-        editor.setCaretColor(card.group ? Theme.FG_STRONG : Color.BLACK);
-        int pad = (int) Math.round(8 * scale);
-        editor.setBorder(BorderFactory.createEmptyBorder(pad, pad, pad, pad));
+        editor.setForeground(card.group ? Theme.FG_STRONG : BoardLook.text(card.color));
+        editor.setCaretColor(card.group ? Theme.FG_STRONG : BoardLook.text(card.color));
+        int padX = (int) Math.round(padX() * scale);
+        int padY = (int) Math.round(padY() * scale);
+        editor.setBorder(BorderFactory.createEmptyBorder(padY, padX, padY, padX));
         placeEditor();
 
-        // Esc で取り消し、Ctrl+Enter で確定
+        // Esc で取り消し、Enter（と Ctrl+Enter）で確定。改行は Shift+Enter
         editor.getInputMap().put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "cancelEdit");
         editor.getActionMap().put("cancelEdit", new AbstractAction() {
             @Override
@@ -1127,6 +1210,8 @@ public class BoardPane extends EditorPane {
             }
         });
         editor.getInputMap().put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.CTRL_DOWN_MASK), "commitEdit");
+        editor.getInputMap().put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "commitEdit");
+        editor.getInputMap().put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.SHIFT_DOWN_MASK), "insert-break");
         editor.getActionMap().put("commitEdit", new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
@@ -1300,6 +1385,7 @@ public class BoardPane extends EditorPane {
         private static final int NEAR = 160;            // 糸の先がこれより近いカードは、ふちがにじんで光る（つながる先の予告）
         private static final int FLASH_MS = 450;        // つないだ直後に、光が矢印を流れる時間
         private static final int RETRACT_MS = 200;      // やめたときに、糸が縮んで消える時間
+        private static final int PAINT_MARGIN = 48;     // 描く範囲の外でも、これだけ近ければ描く（持ち上げた影・曲線の矢印のふくらみ・矢じりのはみ出し）
         private Card threadSource;              // 糸を伸ばしているカード
         private Point threadEnd;                // 糸の先（ボード上の座標）
         private boolean altHeld;                // Alt を押している（引けるカードのふちを光らせる）
@@ -1318,6 +1404,7 @@ public class BoardPane extends EditorPane {
             setLayout(null);            // 入力欄を、カードの位置にそのまま置くため
             holdTimer.setRepeats(false);
             setFocusable(true);
+            setFocusTraversalKeysEnabled(false);    // Tab はカードを順に選ぶのに使う（端まで来たら外へ出す）
             setOpaque(true);
 
             MouseAdapter mouse = new MouseAdapter() {
@@ -1375,7 +1462,20 @@ public class BoardPane extends EditorPane {
                     if (e.isControlDown() || e.isAltDown()) {
                         return;         // Ctrl+D などは、メニューのショートカットに任せる
                     }
-                    if (e.getKeyCode() == KeyEvent.VK_DELETE) {
+                    int step = e.isShiftDown() ? 32 : 8;     // 矢印キーで 8、Shift で 32 動かす
+                    if (e.getKeyCode() == KeyEvent.VK_TAB) {
+                        step(e.isShiftDown() ? -1 : 1);
+                    } else if (e.getKeyCode() == KeyEvent.VK_LEFT) {
+                        nudge(-step, 0);
+                    } else if (e.getKeyCode() == KeyEvent.VK_RIGHT) {
+                        nudge(step, 0);
+                    } else if (e.getKeyCode() == KeyEvent.VK_UP) {
+                        nudge(0, -step);
+                    } else if (e.getKeyCode() == KeyEvent.VK_DOWN) {
+                        nudge(0, step);
+                    } else if (e.getKeyCode() == KeyEvent.VK_F2 && single() != null) {
+                        startEditing(single());
+                    } else if (e.getKeyCode() == KeyEvent.VK_DELETE) {
                         deleteSelected();
                     } else if (e.getKeyCode() == KeyEvent.VK_ESCAPE) {
                         linkSource = null;
@@ -1496,7 +1596,11 @@ public class BoardPane extends EditorPane {
             fireStatusChanged();
         }
 
-        /** 文書を読み直したとき：引いている途中の糸と、動いている光を捨てる（古いカードを指しているため）。 */
+        /**
+         * 文書を読み直したとき：引いている途中の糸と、動いている光を捨てる（古いカードを指しているため）。
+         * ドラッグの途中（マウスを押したまま Ctrl+Z など）なら、そのドラッグもやめる。続けると、古いカードを動かし、
+         * 離したときに押す前の状態を「元に戻す」に積んでしまう（次の Ctrl+Z が、やり直しのように働く）。
+         */
         void resetThread() {
             holdTimer.stop();
             holdCard = null;
@@ -1504,6 +1608,15 @@ public class BoardPane extends EditorPane {
             threadEnd = null;
             retractSource = null;
             flashes.clear();
+            pressModel = null;
+            stateAtPress = null;
+            moved = false;
+            resizing = false;
+            resizeCard = null;
+            rubberBand = null;
+            dragAnchor = null;
+            dragMembers.clear();
+            dragStarts.clear();
         }
 
         private void retract(Card source, Point end) {
@@ -1944,16 +2057,17 @@ public class BoardPane extends EditorPane {
 
         /** ボードを描く。decorations が false のときは、選択の枠などを描かない（画像の書き出し用）。 */
         void paintBoard(Graphics2D g2, boolean decorations) {
-            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            AppleTheme.quality(g2);
             g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
             Rectangle clip = g2.getClipBounds();
             g2.setColor(Theme.BG);
             g2.fillRect(clip.x, clip.y, clip.width, clip.height);
 
-            // 背景の点（位置の目安）
-            g2.setColor(Theme.BOARD_DOT);
-            for (int x = clip.x - Math.floorMod(clip.x, 32); x < clip.x + clip.width; x += 32) {
-                for (int y = clip.y - Math.floorMod(clip.y, 32); y < clip.y + clip.height; y += 32) {
+            // 背景の点（位置の目安。控えめに）
+            int dot = AppleTheme.DOT_STEP;
+            g2.setColor(look().dot);
+            for (int x = clip.x - Math.floorMod(clip.x, dot); x < clip.x + clip.width; x += dot) {
+                for (int y = clip.y - Math.floorMod(clip.y, dot); y < clip.y + clip.height; y += dot) {
                     g2.fillRect(x, y, 2, 2);
                 }
             }
@@ -1965,20 +2079,31 @@ public class BoardPane extends EditorPane {
                 g2.drawString("カードを長押し（または Alt を押しながら）して引くと、矢印でつなげます", 40, 60 + g2.getFontMetrics().getHeight() + 8);
             }
 
+            // 描く範囲（clip）の外にあるものは飛ばす。カードが数百枚あると、見えない物の折り返しや塗りで、
+            // ドラッグのたびの描き直しが重くなるため。影・枠の線・矢じりがはみ出すぶん、少し広く見る
+            Rectangle near = new Rectangle(clip);
+            near.grow(PAINT_MARGIN, PAINT_MARGIN);
+
             // 奥から順に：グループ枠 → 矢印 → カード
             for (Card group : groupsBackToFront()) {
-                paintGroup(g2, group, decorations);       // 大きい枠から描くので、小さい枠が手前に出る
+                if (near.intersects(group.bounds())) {
+                    paintGroup(g2, group, decorations);   // 大きい枠から描くので、小さい枠が手前に出る
+                }
             }
             boolean threading = decorations && threadSource != null;
+            Map<Integer, Card> byId = new HashMap<>();
+            for (Card card : cards) {
+                byId.putIfAbsent(card.id, card);         // find と同じく、同じ番号なら先のカード
+            }
             for (Link link : links) {
-                Card from = find(link.from());
-                Card to = find(link.to());
-                if (from != null && to != null) {
+                Card from = byId.get(link.from());
+                Card to = byId.get(link.to());
+                if (from != null && to != null && near.intersects(BoardLook.arrowBounds(from.bounds(), to.bounds(), arrowScale()))) {
                     paintArrow(g2, from, to, threading ? 90 : 255);     // 糸を引いている間は、ほかの矢印を控えめに
                 }
             }
             for (Card card : cards) {
-                if (!card.group && card != editingCard) {
+                if (!card.group && card != editingCard && near.intersects(card.bounds())) {
                     paintCard(g2, card, decorations);
                 }
             }
@@ -1986,34 +2111,30 @@ public class BoardPane extends EditorPane {
                 paintThread(g2);
             }
             if (rubberBand != null && decorations) {
-                g2.setColor(new Color(0, 122, 204, 50));
+                g2.setColor(BoardLook.withAlpha(look().accent, 40));
                 g2.fill(rubberBand);
-                g2.setStroke(new BasicStroke(1.5f));
-                g2.setColor(Theme.ACCENT);
+                g2.setStroke(new BasicStroke(1f));
+                g2.setColor(look().accent);
                 g2.draw(rubberBand);
             }
         }
 
         private void paintGroup(Graphics2D g2, Card card, boolean decorations) {
             boolean selected = decorations && selection.contains(card);
-            Color base = PALETTE[card.color];
-            g2.setColor(new Color(base.getRed(), base.getGreen(), base.getBlue(), 28));
-            g2.fillRoundRect(card.x, card.y, card.w, card.h, 18, 18);
-            // 見出しの帯（ここをつかむと枠ごと動く）を、少し濃くする
-            Area band = new Area(new RoundRectangle2D.Float(card.x, card.y, card.w, card.h, 18, 18));
-            band.intersect(new Area(titleBand(card)));          // 角の丸みに合わせた、上の帯
-            g2.setColor(new Color(base.getRed(), base.getGreen(), base.getBlue(), 60));
-            g2.fill(band);
-            g2.setStroke(new BasicStroke(selected ? 3f : 2f));
-            g2.setColor(selected ? Theme.ACCENT : base);
-            g2.drawRoundRect(card.x, card.y, card.w, card.h, 18, 18);
+            boolean nested = parentOf(card) != null;
+            AppleTheme t = look();
+            // 薄い地と 1px の線。見出しの帯（ここをつかむと枠ごと動く）だけ、少し濃くする
+            BoardLook.paintGroup(g2, t, card.x, card.y, card.w, card.h, card.color, nested, titleHeight());
+            if (selected) {
+                BoardLook.paintRing(g2, t, card.x, card.y, card.w, card.h, BoardLook.groupRadius(nested));
+            }
             if (card != editingCard) {
                 g2.setFont(cardFont.deriveFont(Font.BOLD));
-                g2.setColor(base);
+                g2.setColor(BoardLook.groupTitle(t));
                 FontMetrics fm = g2.getFontMetrics();
                 Shape oldClip = g2.getClip();
                 g2.clipRect(card.x, card.y, card.w, card.h);
-                g2.drawString(card.text.replace("\n", " "), card.x + 16, card.y + 12 + fm.getAscent());
+                g2.drawString(card.text.replace("\n", " "), card.x + padX() + 2, card.y + padY() + fm.getAscent());
                 g2.setClip(oldClip);
             }
             if (selected) {
@@ -2021,33 +2142,51 @@ public class BoardPane extends EditorPane {
             }
         }
 
-        private void paintCard(Graphics2D g2, Card card, boolean decorations) {
-            if (decorations && card == threadSource) {
-                g2.setColor(new Color(0, 0, 0, 70));               // 糸を引いている間は、持ち上がって見える大きな影
-                g2.fillRoundRect(card.x + 8, card.y + 14, card.w, card.h, 14, 14);
+        private void paintCard(Graphics2D g0, Card card, boolean decorations) {
+            // 引きずっている間と、糸の元のカードは、少し大きくして影を深くする（持ち上げて見せる）
+            boolean lifted = decorations && (card == threadSource || (moved && dragMembers.contains(card)));
+            Graphics2D g2 = (Graphics2D) g0.create();
+            if (lifted) {
+                double cx = card.x + card.w / 2.0;
+                double cy = card.y + card.h / 2.0;
+                g2.translate(cx, cy);
+                g2.scale(AppleTheme.LIFT_SCALE, AppleTheme.LIFT_SCALE);
+                g2.translate(-cx, -cy);
             }
-            g2.setColor(new Color(0, 0, 0, 90));                   // 影
-            g2.fillRoundRect(card.x + 3, card.y + 5, card.w, card.h, 12, 12);
-            g2.setColor(PALETTE[card.color]);
-            g2.fillRoundRect(card.x, card.y, card.w, card.h, 12, 12);
+            BoardLook.paintCard(g2, card.x, card.y, card.w, card.h, card.color, lifted);
             boolean selected = decorations && selection.contains(card);
             if (selected || (decorations && card == linkSource)) {
-                g2.setStroke(new BasicStroke(3f));
-                g2.setColor(card == linkSource ? LINK_COLOR : Theme.ACCENT);
-                g2.drawRoundRect(card.x, card.y, card.w, card.h, 12, 12);
+                BoardLook.paintRing(g2, look(), card.x, card.y, card.w, card.h, AppleTheme.RADIUS_CARD);
             }
 
-            g2.setFont(cardFont);
-            g2.setColor(new Color(0x1E1E1E));
+            g2.setFont(cardFont.deriveFont(Font.BOLD));
             FontMetrics fm = g2.getFontMetrics();
-            Shape oldClip = g2.getClip();
-            g2.clipRect(card.x + 6, card.y + 4, card.w - 12, card.h - 8);
-            int y = card.y + 8 + fm.getAscent();
-            for (String line : wrap(card.text, fm, card.w - 20)) {
-                g2.drawString(line, card.x + 10, y);
-                y += fm.getHeight();
+            int x = card.x + padX();
+            double y = card.y + padY();
+            if (card.text.isEmpty()) {
+                g2.setColor(BoardLook.placeholder(card.color));         // 空のカードは「無題」と薄く
+                g2.drawString("無題", x, (float) (y + fm.getAscent()));
+            } else {
+                // 入りきらない行は出さず、最後の行の末尾を「…」にする
+                g2.setColor(BoardLook.text(card.color));
+                List<String> lines = wrap(card.text, fm, card.w - padX() * 2);
+                int room = (int) Math.max(1, (card.h - padY() * 2 - voteHeight(card)) / lineHeight(fm) + 0.01);
+                if (lines.size() > room) {
+                    lines = new ArrayList<>(lines.subList(0, room));
+                    String last = lines.get(room - 1);
+                    while (!last.isEmpty() && fm.stringWidth(last + "…") > card.w - padX() * 2) {
+                        last = last.substring(0, last.length() - 1);
+                    }
+                    lines.set(room - 1, last + "…");
+                }
+                Shape oldClip = g2.getClip();
+                g2.clipRect(card.x, card.y, card.w, card.h);
+                for (String line : lines) {
+                    g2.drawString(line, x, (float) (y + fm.getAscent()));
+                    y += lineHeight(fm);
+                }
+                g2.setClip(oldClip);
             }
-            g2.setClip(oldClip);
 
             // 投票の点（多いときは、点1つと数字で表す）
             if (card.votes > 0) {
@@ -2055,24 +2194,23 @@ public class BoardPane extends EditorPane {
                 int dotY = card.y + card.h - 20;
                 if (card.votes <= 8) {
                     for (int i = 0; i < card.votes; i++) {
-                        g2.fillOval(card.x + 10 + i * 18, dotY, 13, 13);
+                        g2.fillOval(x + i * 18, dotY, 13, 13);
                     }
                 } else {
-                    g2.fillOval(card.x + 10, dotY, 13, 13);
+                    g2.fillOval(x, dotY, 13, 13);
                     g2.setFont(Theme.small().deriveFont(Font.BOLD, 15f));
-                    g2.drawString("× " + card.votes, card.x + 30, dotY + 12);
+                    g2.drawString("× " + card.votes, x + 20, dotY + 12);
                 }
             }
             if (selected && single() == card) {
                 paintHandle(g2, card);
             }
+            g2.dispose();
         }
 
-        /** from から to へ、カードのふちで止まる矢印を描く。 */
+        /** from から to へ矢印を描く（横に並べば左右の辺の中央、重なれば上下の辺の中央を、曲線で結ぶ）。 */
         private void paintArrow(Graphics2D g2, Card from, Card to, int alpha) {
-            Point2D.Double tip = borderPoint(to, from.x + from.w / 2.0, from.y + from.h / 2.0);
-            Color color = new Color(LINK_COLOR.getRed(), LINK_COLOR.getGreen(), LINK_COLOR.getBlue(), alpha);
-            drawArrow(g2, from.x + from.w / 2.0, from.y + from.h / 2.0, tip.x, tip.y, color, false, true);
+            BoardLook.paintArrow(g2, look(), from.bounds(), to.bounds(), alpha, arrowScale());
         }
 
         /** カード c の少し外のふちの上で、c の中心から (x, y) へ向かう線が通る点。 */
@@ -2090,26 +2228,7 @@ public class BoardPane extends EditorPane {
         /** (x1, y1) から (x2, y2) へ線を引く。dashed なら点線、head なら先に矢じりを付ける。 */
         private void drawArrow(Graphics2D g2, double x1, double y1, double x2, double y2,
                 Color color, boolean dashed, boolean head) {
-            double dx = x2 - x1;
-            double dy = y2 - y1;
-            double length = Math.hypot(dx, dy);
-            if (length < 1) {
-                return;
-            }
-            g2.setStroke(dashed
-                    ? new BasicStroke(3f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND, 1f, new float[]{8f, 8f}, 0f)
-                    : new BasicStroke(3f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-            g2.setColor(color);
-            g2.drawLine((int) x1, (int) y1, (int) x2, (int) y2);
-            if (head) {
-                // 矢じり（進む向きの単位ベクトル ux,uy と、それに直角な向きを使う）
-                double ux = dx / length;
-                double uy = dy / length;
-                int size = 16;
-                int[] xs = {(int) x2, (int) (x2 - ux * size - uy * size * 0.5), (int) (x2 - ux * size + uy * size * 0.5)};
-                int[] ys = {(int) y2, (int) (y2 - uy * size + ux * size * 0.5), (int) (y2 - uy * size - ux * size * 0.5)};
-                g2.fillPolygon(xs, ys, 3);
-            }
+            BoardLook.paintLine(g2, color, x1, y1, x2, y2, dashed, head, arrowScale());
         }
 
         /** カードのふちを、にじむように光らせる（alpha が大きいほど強く）。 */
@@ -2117,7 +2236,8 @@ public class BoardPane extends EditorPane {
             for (int i = 3; i >= 1; i--) {
                 g2.setStroke(new BasicStroke(i * 3f));
                 g2.setColor(new Color(color.getRed(), color.getGreen(), color.getBlue(), Math.max(0, Math.min(255, alpha / i))));
-                g2.drawRoundRect(card.x - 2, card.y - 2, card.w + 4, card.h + 4, 14, 14);
+                int r = AppleTheme.RADIUS_CARD + 4;
+                g2.drawRoundRect(card.x - 2, card.y - 2, card.w + 4, card.h + 4, r, r);
             }
         }
 
@@ -2134,7 +2254,7 @@ public class BoardPane extends EditorPane {
             if (altHeld && threadSource == null && editor == null) {
                 for (Card card : cards) {
                     if (!card.group) {
-                        paintGlow(g2, card, LINK_COLOR, 70);
+                        paintGlow(g2, card, look().arrow, 70);
                     }
                 }
             }
@@ -2159,7 +2279,7 @@ public class BoardPane extends EditorPane {
                 Point2D.Double b = borderPoint(f.to(), f.from().x + f.from().w / 2.0, f.from().y + f.from().h / 2.0);
                 double x = a.x + (b.x - a.x) * t;
                 double y = a.y + (b.y - a.y) * t;
-                g2.setColor(new Color(LINK_COLOR.getRed(), LINK_COLOR.getGreen(), LINK_COLOR.getBlue(), 110));
+                g2.setColor(new Color(look().arrow.getRed(), look().arrow.getGreen(), look().arrow.getBlue(), 110));
                 g2.fill(new java.awt.geom.Ellipse2D.Double(x - 11, y - 11, 22, 22));
                 g2.setColor(Color.WHITE);
                 g2.fill(new java.awt.geom.Ellipse2D.Double(x - 5, y - 5, 10, 10));
@@ -2185,7 +2305,7 @@ public class BoardPane extends EditorPane {
                 double ddy = Math.max(0, Math.max(r.y - threadEnd.y, threadEnd.y - (r.y + r.height)));
                 double distance = Math.hypot(ddx, ddy);
                 if (distance < NEAR) {
-                    paintGlow(g2, card, LINK_COLOR, (int) (150 * (1 - distance / NEAR)));
+                    paintGlow(g2, card, look().arrow, (int) (150 * (1 - distance / NEAR)));
                 }
             }
             paintGlow(g2, source, Theme.ACCENT, 220);           // 元のカード
@@ -2201,15 +2321,15 @@ public class BoardPane extends EditorPane {
                 lifted.scale(1.04, 1.04);
                 lifted.translate(-cx, -cy);
                 paintCard(lifted, target, false);
-                paintGlow(lifted, target, LINK_COLOR, 255);
+                paintGlow(lifted, target, look().arrow, 255);
                 lifted.dispose();
                 Point2D.Double tip = borderPoint(target, sx, sy);
                 Point2D.Double start = borderPoint(source, tip.x, tip.y);
-                drawArrow(g2, start.x, start.y, tip.x, tip.y, LINK_COLOR, false, true);
+                drawArrow(g2, start.x, start.y, tip.x, tip.y, look().arrow, false, true);
             } else if (target != null) {
                 // つなげない：相手を暗くし、点線のまま。理由をカーソルの横に出す
                 g2.setColor(new Color(0, 0, 0, 120));
-                g2.fillRoundRect(target.x, target.y, target.w, target.h, 12, 12);
+                g2.fillRoundRect(target.x, target.y, target.w, target.h, AppleTheme.RADIUS_CARD, AppleTheme.RADIUS_CARD);
                 Point2D.Double stop = borderPoint(target, sx, sy);        // 糸は相手のふちで止める（中には入らない）
                 Point2D.Double start = borderPoint(source, stop.x, stop.y);
                 drawArrow(g2, start.x, start.y, stop.x, stop.y, new Color(0x9A9A9A), true, false);
@@ -2222,10 +2342,10 @@ public class BoardPane extends EditorPane {
                 int gx = threadEnd.x - w / 2;
                 int gy = threadEnd.y - h / 2;
                 g2.setColor(new Color(255, 255, 255, 22));
-                g2.fillRoundRect(gx, gy, w, h, 12, 12);
+                g2.fillRoundRect(gx, gy, w, h, AppleTheme.RADIUS_CARD, AppleTheme.RADIUS_CARD);
                 g2.setStroke(new BasicStroke(2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND, 1f, new float[]{6f, 6f}, 0f));
-                g2.setColor(new Color(LINK_COLOR.getRed(), LINK_COLOR.getGreen(), LINK_COLOR.getBlue(), 160));
-                g2.drawRoundRect(gx, gy, w, h, 12, 12);
+                g2.setColor(new Color(look().arrow.getRed(), look().arrow.getGreen(), look().arrow.getBlue(), 160));
+                g2.drawRoundRect(gx, gy, w, h, AppleTheme.RADIUS_CARD, AppleTheme.RADIUS_CARD);
                 g2.setFont(cardFont.deriveFont(Font.BOLD, cardFont.getSize() * 1.6f));
                 FontMetrics fm = g2.getFontMetrics();
                 g2.drawString("＋", threadEnd.x - fm.stringWidth("＋") / 2, threadEnd.y + fm.getAscent() / 2 - 2);
@@ -2237,7 +2357,7 @@ public class BoardPane extends EditorPane {
                 }
                 Point2D.Double start = borderPoint(source, tip.x, tip.y);
                 drawArrow(g2, start.x, start.y, tip.x, tip.y,
-                        new Color(LINK_COLOR.getRed(), LINK_COLOR.getGreen(), LINK_COLOR.getBlue(), 200), true, true);
+                        new Color(look().arrow.getRed(), look().arrow.getGreen(), look().arrow.getBlue(), 200), true, true);
             }
         }
 

@@ -1,6 +1,10 @@
 package com.example.minieditor;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
+
+import javax.swing.SwingUtilities;
 
 import com.example.minieditor.Proofreader.Category;
 import com.example.minieditor.Proofreader.Issue;
@@ -24,10 +28,11 @@ public class ProofreaderTest {
         }
     }
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
         periods();
         hyphens();
         existingRules();
+        panelInBackground();
         System.out.println(failures == 0 ? "すべて通りました" : failures + " 件、失敗しました");
         System.exit(failures == 0 ? 0 : 1);
     }
@@ -94,5 +99,84 @@ public class ProofreaderTest {
         found = symbols("待って…");
         check(found.size() == 1 && "……".equals(found.get(0).fix()),
                 "「待って…」は既存の規則の1件だけ");
+    }
+
+    /**
+     * 校正の欄（ProofreadPanel）：打ったあとの調べ直しは裏のスレッドで行い、結果は、その場で調べたとき（refresh）と同じになる。
+     * 調べている間に文章が変わったら、古い結果は出さない。
+     */
+    private static void panelInBackground() throws Exception {
+        Path dir = Files.createTempDirectory("proofread-test");    // 校正辞書.txt を置く所（空のまま。終わったら消す）
+        try {
+            String first = "見れる。。食べれる。頭痛が痛い。";
+            String[] text = {first};
+            Searchable doc = new Searchable() {
+                @Override public String getText() { return text[0]; }
+                @Override public int getSelectionStart() { return 0; }
+                @Override public int getSelectionEnd() { return 0; }
+                @Override public void setHighlights(List<EditorPane.Highlight> highlights) { }
+                @Override public void reveal(int offset) { }
+                @Override public void select(int start, int end) { }
+                @Override public void replaceRange(String replacement, int start, int end) { }
+                @Override public void replaceRanges(List<Replacement> replacements) { }
+            };
+            AppSettings settings = AppSettings.load();          // 読むだけ（項目の入り切りを、両方の欄で同じにするため）
+            ProofreadPanel[] panels = new ProofreadPanel[2];
+            SwingUtilities.invokeAndWait(() -> {
+                panels[0] = new ProofreadPanel(() -> doc, () -> { }, settings, () -> dir, () -> { });
+                panels[1] = new ProofreadPanel(() -> doc, () -> { }, settings, () -> dir, () -> { });
+                panels[1].refresh();                            // その場で調べた結果（比べる相手）
+                refreshLater(panels[0]);
+            });
+            waitFor(() -> !panels[0].issues().isEmpty());
+            List<Issue>[] got = issuesOf(panels);
+            check(!got[1].isEmpty() && got[0].equals(got[1]), "裏で調べた結果は、その場で調べた結果と同じ（" + got[0].size() + " 件）");
+
+            // 調べている間に文章が変わったら、古い結果は出さない
+            SwingUtilities.invokeAndWait(() -> {
+                panels[0] = new ProofreadPanel(() -> doc, () -> { }, settings, () -> dir, () -> { });
+                text[0] = first;
+                refreshLater(panels[0]);
+                text[0] = "何もない文章です。";                // 結果が届く前に書き換える
+            });
+            Thread.sleep(1000);
+            SwingUtilities.invokeAndWait(() -> { });
+            check(issuesOf(panels)[0].isEmpty(), "調べている間に文章が変わったら、古い結果は一覧に出さない");
+        } finally {
+            Files.deleteIfExists(dir.resolve(ProofreadDictionary.FILE_NAME));
+            Files.deleteIfExists(dir);
+        }
+    }
+
+    private static void refreshLater(ProofreadPanel panel) {
+        try {
+            java.lang.reflect.Method method = ProofreadPanel.class.getDeclaredMethod("refreshLater");
+            method.setAccessible(true);
+            method.invoke(panel);
+        } catch (ReflectiveOperationException ex) {
+            throw new IllegalStateException(ex);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Issue>[] issuesOf(ProofreadPanel[] panels) throws Exception {
+        List<Issue>[] result = new List[panels.length];
+        SwingUtilities.invokeAndWait(() -> {
+            for (int i = 0; i < panels.length; i++) {
+                result[i] = panels[i].issues();
+            }
+        });
+        return result;
+    }
+
+    /** 画面のスレッドで確かめて、成り立つまで待つ（5 秒まで）。 */
+    private static void waitFor(java.util.function.BooleanSupplier condition) throws Exception {
+        boolean[] ok = {false};
+        for (int i = 0; i < 100 && !ok[0]; i++) {
+            SwingUtilities.invokeAndWait(() -> ok[0] = condition.getAsBoolean());
+            if (!ok[0]) {
+                Thread.sleep(50);
+            }
+        }
     }
 }

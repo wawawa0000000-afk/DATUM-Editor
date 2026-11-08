@@ -3,6 +3,9 @@ package com.example.minieditor;
 import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.FlowLayout;
+import java.awt.Graphics;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.io.IOException;
@@ -74,6 +77,16 @@ public final class FolderSidebar extends JPanel {
     private final DefaultTreeModel model = new DefaultTreeModel(new DefaultMutableTreeNode());
     private final JTree tree = new JTree(model);
     private Path root;
+    /** 見出しの操作ボタン。ポインタが乗っているか、サイドバーに焦点があるときだけ見せる。 */
+    private final JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0)) {
+        @Override
+        protected void paintChildren(Graphics g) {
+            if (buttonsShown) {
+                super.paintChildren(g);
+            }
+        }
+    };
+    private boolean buttonsShown;
 
     public FolderSidebar(Host host, Runnable onClose) {
         super(new BorderLayout());
@@ -97,10 +110,10 @@ public final class FolderSidebar extends JPanel {
         JButton close = Theme.flatButton("×");
         close.setToolTipText("サイドバーを隠す");
         close.addActionListener(e -> onClose.run());
-        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
         buttons.setOpaque(false);
         for (JButton button : new JButton[]{open, reload, close}) {
             button.setFocusable(false);
+            button.setEnabled(false);   // 隠れている間は押せない（場所は取っておき、出し入れで見出しが動かないようにする）
             buttons.add(button);
         }
         JPanel header = new JPanel(new BorderLayout());
@@ -163,7 +176,63 @@ public final class FolderSidebar extends JPanel {
 
         add(header, BorderLayout.NORTH);
         add(scroll, BorderLayout.CENTER);
+        watchHover(this);
+        updateButtons();
+        tree.addFocusListener(new FocusAdapter() {
+            @Override
+            public void focusGained(FocusEvent e) {
+                updateButtons();
+            }
+
+            @Override
+            public void focusLost(FocusEvent e) {
+                updateButtons();
+            }
+        });
         showEmpty();
+    }
+
+    /** 中の部品がマウスの出入りを受け取るので、全部に同じ見張りを付ける。 */
+    private void watchHover(Component c) {
+        c.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseEntered(MouseEvent e) {
+                updateButtons();
+            }
+
+            @Override
+            public void mouseExited(MouseEvent e) {
+                // 子の部品へ移っただけのときもあるので、出入りが落ち着いてから確かめる
+                SwingUtilities.invokeLater(FolderSidebar.this::updateButtons);
+            }
+        });
+        if (c instanceof java.awt.Container container) {
+            for (Component child : container.getComponents()) {
+                watchHover(child);
+            }
+        }
+    }
+
+    /**
+     * 操作ボタンを見せるかどうかを、ポインタの位置と焦点から決め直す。
+     * フォルダを選ぶ前は、案内の「開く…」が見つかるように、いつも見せる。
+     */
+    void updateButtons() {
+        boolean hover = !java.awt.GraphicsEnvironment.isHeadless() && getMousePosition(true) != null;
+        boolean show = root == null || hover || tree.isFocusOwner();
+        if (show == buttonsShown) {
+            return;
+        }
+        buttonsShown = show;
+        for (Component button : buttons.getComponents()) {
+            button.setEnabled(show);
+        }
+        buttons.repaint();
+    }
+
+    /** テスト用：操作ボタンが見えているか。 */
+    boolean buttonsShown() {
+        return buttonsShown;
     }
 
     public Path getRoot() {
@@ -181,8 +250,10 @@ public final class FolderSidebar extends JPanel {
         if (root == null || !Files.isDirectory(root)) {
             root = null;
             showEmpty();
+            updateButtons();
             return;
         }
+        updateButtons();
         title.setText(root.getFileName() == null ? root.toString() : root.getFileName().toString());
         title.setToolTipText(root.toString());
         Set<Path> expanded = new HashSet<>();

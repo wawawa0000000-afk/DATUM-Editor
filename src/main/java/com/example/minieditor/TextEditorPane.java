@@ -30,6 +30,7 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.text.BadLocationException;
 import javax.swing.text.DefaultHighlighter;
+import javax.swing.text.Highlighter;
 import javax.swing.undo.CompoundEdit;
 import javax.swing.undo.UndoManager;
 
@@ -283,6 +284,7 @@ public class TextEditorPane extends EditorPane implements Searchable {
      * ルビを上に表示するとき：ルビの記法（｜《》など）を行の背景色で覆い、親文字の上にふりがなを小さく描く。
      * 描くのは見えている範囲のルビだけ。位置は描くたびに画面の座標から求め直すので、スクロールや折り返しに追従する。
      * 覆うのは見た目だけで、文書の中身・カーソル・選択は変えない。
+     * カーソルの点滅のたびにも描くので、画面の位置（modelToView2D）を求めるのは、1つのルビにつき記法の切れ目の数回だけにする。
      */
     private void paintRuby(Graphics g) {
         if (rubySpans == null) {
@@ -291,9 +293,17 @@ public class TextEditorPane extends EditorPane implements Searchable {
         if (rubySpans.isEmpty()) {
             return;
         }
-        Rectangle visible = area.getVisibleRect();
-        int first = area.viewToModel2D(new Point(visible.x, visible.y));
-        int last = area.viewToModel2D(new Point(visible.x, visible.y + visible.height));
+        // 描き直す範囲（カーソルの点滅では、カーソルの周りだけ）に掛かるルビだけを描く。
+        // ふりがなは親文字より左右にはみ出し、1つ上の行に描くので、範囲を左右に数字ぶん・下に1行ぶん広げて探す
+        Rectangle clip = g.getClipBounds();
+        Rectangle visible = clip != null ? clip : area.getVisibleRect();
+        if (visible.isEmpty()) {
+            return;
+        }
+        int rowHeight = area.getFontMetrics(area.getFont()).getHeight();
+        int side = rowHeight * 4;
+        int first = area.viewToModel2D(new Point(visible.x - side, visible.y));
+        int last = area.viewToModel2D(new Point(visible.x + visible.width + side, visible.y + visible.height + rowHeight));
         Font rubyFont = area.getFont().deriveFont(Math.max(9f, area.getFont().getSize2D() / 2));
         FontMetrics metrics = g.getFontMetrics(rubyFont);
         int caret = area.getCaretPosition();
@@ -305,29 +315,35 @@ public class TextEditorPane extends EditorPane implements Searchable {
             // カーソル位置は必ず文書の中にあるので、通常は起きない
         }
         boolean caretCovered = false;           // カーソルが覆った記法の中にあるか（覆ったあと、カーソルを描き直す）
-        for (RubySpans.Span span : rubySpans) {
-            if (span.markupEnd() < first || span.markupStart() > last) {
-                continue;                       // 画面の外のルビは描かない
+        // 選択・検索の色は、覆った上から塗り直す（記法の上でも色が消えないように）。描く範囲に掛かるものだけを集めておく
+        List<Highlighter.Highlight> marks = new ArrayList<>();
+        for (Highlighter.Highlight h : area.getHighlighter().getHighlights()) {
+            if (h.getEndOffset() > first && h.getStartOffset() <= last && h.getEndOffset() > h.getStartOffset()) {
+                marks.add(h);
+            }
+        }
+        for (int i = firstSpanEndingAtOrAfter(first); i < rubySpans.size(); i++) {
+            RubySpans.Span span = rubySpans.get(i);
+            if (span.markupStart() > last) {
+                break;                          // ここから先は画面の外（ルビは先頭から順に並んでいる）
             }
             try {
-                for (int p = span.markupStart(); p < span.markupEnd(); p++) {
-                    Rectangle2D r = area.modelToView2D(p);
-                    boolean current = noSelection && (int) r.getY() == caretY;
-                    g.setColor(current ? Theme.CURRENT_LINE : rowBackground((int) r.getY()));
-                    g.fillRect((int) r.getX(), (int) r.getY(), (int) Math.ceil(r.getWidth()), (int) Math.ceil(r.getHeight()));
+                Rectangle2D markupStart = area.modelToView2D(span.markupStart());
+                Rectangle2D head = span.baseStart() == span.markupStart() ? markupStart : area.modelToView2D(span.baseStart());
+                Rectangle2D baseEnd = area.modelToView2D(span.baseEnd());
+                Rectangle2D markupEnd = area.modelToView2D(span.markupEnd());
+                // 記法（親文字の前の ｜ と、後ろの 《ルビ》）だけを覆う。親文字は見せたまま
+                cover(g, span.markupStart(), markupStart, span.baseStart(), head, null, noSelection, caretY);
+                cover(g, span.baseEnd(), baseEnd, span.markupEnd(), markupEnd, null, noSelection, caretY);
+                for (Highlighter.Highlight h : marks) {
+                    repaintMark(g, h, span.markupStart(), span.baseStart(), noSelection, caretY);
+                    repaintMark(g, h, span.baseEnd(), span.markupEnd(), noSelection, caretY);
                 }
-                if (noSelection && caret >= span.markupStart() && caret < span.markupEnd()) {
+                if (noSelection && caret >= span.markupStart() && caret <= span.markupEnd()) {
                     caretCovered = true;
                 }
                 // ふりがなは、親文字の1行目の左端と右端の真ん中にそろえ、その行の上に描く
-                Rectangle2D head = area.modelToView2D(span.baseStart());
-                double right = head.getMaxX();
-                for (int p = span.baseStart() + 1; p < span.baseEnd(); p++) {
-                    Rectangle2D r = area.modelToView2D(p);
-                    if (r.getY() == head.getY()) {
-                        right = Math.max(right, r.getMaxX());
-                    }
-                }
+                double right = baseEnd.getY() == head.getY() ? baseEnd.getX() : rightOfRow(span.baseStart(), span.baseEnd(), head);
                 int x = (int) Math.round((head.getX() + right) / 2 - metrics.stringWidth(span.reading()) / 2.0);
                 int y = (int) head.getY() - metrics.getDescent() - 1;
                 g.setFont(rubyFont);
@@ -340,6 +356,78 @@ public class TextEditorPane extends EditorPane implements Searchable {
         if (caretCovered) {
             area.getCaret().paint(g);           // 覆った上から、カーソルを描き直す（文字の上のカーソルが隠れないように）
         }
+    }
+
+    /** 記法の終わりが offset 以降にある、最初のルビの番号（ルビは先頭から順に並び、重ならないので、二分探索で探せる）。 */
+    private int firstSpanEndingAtOrAfter(int offset) {
+        int low = 0;
+        int high = rubySpans.size();
+        while (low < high) {
+            int mid = (low + high) >>> 1;
+            if (rubySpans.get(mid).markupEnd() < offset) {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+        return low;
+    }
+
+    /**
+     * start〜end の字を、color（null なら行の背景色）で覆う。startRect・endRect は start・end の画面の位置（字の左端）。
+     * 同じ行に収まっていれば1つの四角で覆い、折り返しをまたぐときだけ、1字ずつ覆う。
+     */
+    private void cover(Graphics g, int start, Rectangle2D startRect, int end, Rectangle2D endRect, Color color,
+            boolean noSelection, int caretY) throws BadLocationException {
+        if (start >= end) {
+            return;
+        }
+        if (startRect.getY() == endRect.getY()) {
+            fillRow(g, startRect, endRect.getX() - startRect.getX(), color, noSelection, caretY);
+            return;
+        }
+        for (int p = start; p < end; p++) {
+            Rectangle2D r = area.modelToView2D(p);
+            Rectangle2D next = area.modelToView2D(p + 1);
+            fillRow(g, r, next.getY() == r.getY() ? next.getX() - r.getX() : charWidth(p), color, noSelection, caretY);
+        }
+    }
+
+    /** 選択・検索の色 h のうち、覆った start〜end に重なる所を、その色で塗り直す（字は描かないので、記法は見えないまま）。 */
+    private void repaintMark(Graphics g, Highlighter.Highlight h, int start, int end, boolean noSelection, int caretY)
+            throws BadLocationException {
+        int from = Math.max(start, h.getStartOffset());
+        int to = Math.min(end, h.getEndOffset());
+        if (from >= to) {
+            return;
+        }
+        Color color = h.getPainter() instanceof DefaultHighlighter.DefaultHighlightPainter painter && painter.getColor() != null
+                ? painter.getColor() : area.getSelectionColor();     // 色の無い塗り方は、範囲選択（選択の色で塗る）
+        cover(g, from, area.modelToView2D(from), to, area.modelToView2D(to), color, noSelection, caretY);
+    }
+
+    /** color（null なら行の背景色。カーソルの行は強調の色）で、r の左端から width だけ覆う。 */
+    private void fillRow(Graphics g, Rectangle2D r, double width, Color color, boolean noSelection, int caretY) {
+        boolean current = noSelection && (int) r.getY() == caretY;
+        g.setColor(color != null ? color : current ? Theme.CURRENT_LINE : rowBackground((int) r.getY()));
+        g.fillRect((int) r.getX(), (int) r.getY(), (int) Math.ceil(width), (int) Math.ceil(r.getHeight()));
+    }
+
+    /** 親文字が折り返しをまたぐとき、1行目（head の行）の最後の字の右端。 */
+    private double rightOfRow(int baseStart, int baseEnd, Rectangle2D head) throws BadLocationException {
+        double right = head.getX() + charWidth(baseStart);
+        for (int p = baseStart + 1; p < baseEnd; p++) {
+            Rectangle2D r = area.modelToView2D(p);
+            if (r.getY() == head.getY()) {
+                right = Math.max(right, r.getX() + charWidth(p));
+            }
+        }
+        return right;
+    }
+
+    /** p の字の幅（行の終わりの字のように、次の字の位置から求められないとき）。 */
+    private int charWidth(int p) throws BadLocationException {
+        return area.getFontMetrics(area.getFont()).stringWidth(area.getText(p, 1));
     }
 
     /** 画面の行の背景色（縞模様は StripedTextArea と同じ決め方）。 */

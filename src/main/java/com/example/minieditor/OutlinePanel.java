@@ -104,13 +104,17 @@ final class OutlinePanel extends JPanel {
     /** 今の文書から見出しを探し直して、一覧を作り直す。文書が無ければ、その旨を出して一覧は空にする。 */
     void refresh() {
         int selected = list.getSelectedIndex();     // 文字を打つたびに呼ばれるので、選んでいた行は残す
-        model.clear();
         Searchable doc = target.get();
         if (doc == null) {
+            model.clear();
             setSummary("この文書では使えません", Theme.ERROR);
             return;
         }
         List<OutlineScanner.Heading> headings = OutlineScanner.scan(doc.getText());
+        if (updateInPlace(headings)) {
+            return;
+        }
+        model.clear();
         model.addAll(headings);
         if (headings.isEmpty()) {
             setSummary("見出しが見つかりません", Theme.FG_DIM);
@@ -118,6 +122,25 @@ final class OutlinePanel extends JPanel {
             setSummary(headings.size() + " 件", Theme.FG_DIM);
             list.setSelectedIndex(selected >= 0 && selected < headings.size() ? selected : 0);
         }
+    }
+
+    /**
+     * 見出しの数が同じなら、変わった行だけを入れ替えて true（打つたびに一覧を空にして作り直さないため。選んでいる行もそのまま）。
+     * 見出しの後ろで打っているときは、何も変わらない。数が変わったとき・一覧が空のときは false（作り直す）。
+     */
+    private boolean updateInPlace(List<OutlineScanner.Heading> headings) {
+        if (headings.isEmpty() || headings.size() != model.size()) {
+            return false;
+        }
+        for (int i = 0; i < headings.size(); i++) {
+            if (!headings.get(i).equals(model.get(i))) {
+                model.set(i, headings.get(i));
+            }
+        }
+        if (list.getSelectedIndex() < 0) {
+            list.setSelectedIndex(0);           // 作り直すときと同じく、選んでいなければ先頭を選ぶ
+        }
+        return true;
     }
 
     /** 欄へ移って、一覧にキーボードの焦点を置く（Enter で移れるように）。 */

@@ -122,6 +122,12 @@ public final class Theme {
         };
     }
 
+    /** 配色の見本に使う3色（地・文字・アクセントの青）。メニューの「配色」で、選ぶ前に色が見えるようにする。 */
+    static Color[] preview(Scheme s) {
+        int[] c = palette(s);
+        return new Color[]{new Color(c[0]), new Color(c[9]), new Color(c[12])};
+    }
+
     /** 配色を入れ替える（色の値だけ。すでにある部品に反映するには switchTo を使う）。 */
     public static void use(Scheme s) {
         scheme = s;

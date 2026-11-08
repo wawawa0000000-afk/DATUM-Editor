@@ -7,6 +7,7 @@ import java.util.Random;
  * 縦書きの配置（VerticalLayout）のテスト。
  * 段落が列の一番下までちょうど埋まったときに、空の列ができないこと。
  * それ以外の原稿では、置き場所も列の数（＝原稿用紙の枚数）も、直す前と変わらないこと。
+ * 前の配置を使い回して並べ直した結果が、全部を並べ直した結果と同じこと。
  *
  * 動かし方（Windows では : を ; に）：
  *   mvn -q test-compile
@@ -28,6 +29,7 @@ public class LayoutTest {
         fullColumn();
         unchanged();
         clusters();
+        incremental();
         System.out.println(failures == 0 ? "すべて通りました" : failures + " 件、失敗しました");
         System.exit(failures == 0 ? 0 : 1);
     }
@@ -83,6 +85,77 @@ public class LayoutTest {
         check(d.col[3] == 0 && d.row[3] == 2 && d.col[4] == 1 && d.row[4] == 0, "列の一番下の字に付いた結合文字は、次の列へ行かない");
         VerticalLayout e = layout("12\u20E3", 20);
         check(e.isDrawn(0) && e.isDrawn(1) && e.row[1] == 1 && e.row[2] == 1, "結合文字の付いた数字は、縦中横にしない");
+    }
+
+    /**
+     * 前の配置を渡して、変わった段落だけを並べ直したときに、全部を並べ直したときと同じになるか。
+     * 書き足し・消す・置き換えを、続けて何度もしたあとで比べる（禁則処理・縦中横・結合文字・改行を混ぜる）。
+     */
+    private static void incremental() {
+        Random random = new Random(20261108);
+        String pieces = "あいう漢字、。」）「（12!?\n\n\u3099ー";
+        boolean ok = true;
+        int compared = 0;
+        for (int trial = 0; trial < 300 && ok; trial++) {
+            int rows = 2 + random.nextInt(7);
+            String text = randomText(random, pieces, random.nextInt(200));
+            VerticalLayout chained = layout(text, rows);
+            for (int step = 0; step < 30 && ok; step++) {
+                int start = random.nextInt(text.length() + 1);
+                int end = Math.min(text.length(), start + (random.nextInt(3) == 0 ? random.nextInt(8) : 0));
+                text = text.substring(0, start) + randomText(random, pieces, random.nextInt(4)) + text.substring(end);
+                if (random.nextInt(15) == 0) {
+                    rows = 2 + random.nextInt(7);       // 1列の文字数が変わったときは、全部を並べ直す
+                }
+                chained = new VerticalLayout(text, rows, List.of(), chained);
+                ok = sameLayout(chained, layout(text, rows), text);
+                compared++;
+            }
+        }
+        check(ok, "変わった段落だけ並べ直しても、全部を並べ直したときと同じ（" + compared + " 回の書き換えで比べた）");
+
+        // 長い原稿の真ん中で1文字打つ：前後の段落は写し、後ろの段落は列がずれる
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 2000; i++) {
+            sb.append("あ".repeat(i % 37)).append("「12」、。\n");
+        }
+        String before = sb.toString();
+        VerticalLayout a = layout(before, 20);
+        int middle = before.length() / 2;
+        String after = before.substring(0, middle) + "\n" + before.substring(middle);
+        check(sameLayout(new VerticalLayout(after, 20, List.of(), a), layout(after, 20), after),
+                "長い原稿の真ん中で改行を足しても、全部を並べ直したときと同じ");
+        String removed = before.substring(0, middle) + before.substring(middle + 30);
+        check(sameLayout(new VerticalLayout(removed, 20, List.of(), a), layout(removed, 20), removed),
+                "長い原稿の真ん中で、段落をまたいで消しても同じ");
+    }
+
+    private static String randomText(Random random, String pieces, int length) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < length; i++) {
+            sb.append(pieces.charAt(random.nextInt(pieces.length())));
+        }
+        return sb.toString();
+    }
+
+    /** 2つの配置が、置き場所・列の数・描き方（縦中横・句読点を一緒に入れたマス）まで同じか。 */
+    private static boolean sameLayout(VerticalLayout a, VerticalLayout b, String text) {
+        if (a.totalColumns != b.totalColumns || a.usedColumns() != b.usedColumns()
+                || !java.util.Arrays.equals(a.col, b.col) || !java.util.Arrays.equals(a.row, b.row)) {
+            return false;
+        }
+        try {
+            for (String name : new String[] {"pairHead", "pairTail", "tucked", "hasTucked"}) {
+                java.lang.reflect.Field field = VerticalLayout.class.getDeclaredField(name);
+                field.setAccessible(true);
+                if (!java.util.Objects.deepEquals(field.get(a), field.get(b))) {
+                    return false;
+                }
+            }
+        } catch (ReflectiveOperationException ex) {
+            return false;
+        }
+        return true;
     }
 
     /**

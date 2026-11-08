@@ -1,6 +1,13 @@
 package com.example.minieditor;
 
+import java.util.ArrayList;
 import java.util.List;
+
+import javax.swing.JList;
+import javax.swing.ListModel;
+import javax.swing.SwingUtilities;
+import javax.swing.event.ListDataEvent;
+import javax.swing.event.ListDataListener;
 
 /**
  * 見出しの判定（OutlineScanner）のテスト。
@@ -21,7 +28,7 @@ public class OutlineScannerTest {
         }
     }
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
         hits();
         misses();
         positions();
@@ -29,6 +36,7 @@ public class OutlineScannerTest {
         carriageReturn();
         longTitle();
         empty();
+        SwingUtilities.invokeAndWait(OutlineScannerTest::panel);     // 画面の部品は、画面のスレッドで動かす
         System.out.println(failures == 0 ? "すべて通りました" : failures + " 件、失敗しました");
         System.exit(failures == 0 ? 0 : 1);
     }
@@ -101,5 +109,70 @@ public class OutlineScannerTest {
 
     private static void empty() {
         check(OutlineScanner.scan("").isEmpty(), "空の本文は空の一覧");
+    }
+
+    /**
+     * 見出し一覧の欄（OutlinePanel.refresh）。打つたびに呼ばれるので、見出しの数が変わらなければ一覧を作り直さず、
+     * 変わった行だけを入れ替える。どちらの道でも、一覧の中身は OutlineScanner.scan と同じで、選んでいる行は残る。
+     */
+    private static void panel() {
+        try {
+            String[] text = {"第一話　はじまり\n本文\n第二話\n本文\n第三話\n"};
+            Searchable doc = new Searchable() {
+                @Override public String getText() { return text[0]; }
+                @Override public int getSelectionStart() { return 0; }
+                @Override public int getSelectionEnd() { return 0; }
+                @Override public void setHighlights(List<EditorPane.Highlight> highlights) { }
+                @Override public void reveal(int offset) { }
+                @Override public void select(int start, int end) { }
+                @Override public void replaceRange(String replacement, int start, int end) { }
+                @Override public void replaceRanges(List<Replacement> replacements) { }
+            };
+            OutlinePanel panel = new OutlinePanel(() -> doc, () -> { }, () -> { });
+            java.lang.reflect.Field field = OutlinePanel.class.getDeclaredField("list");
+            field.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            JList<OutlineScanner.Heading> list = (JList<OutlineScanner.Heading>) field.get(panel);
+            panel.refresh();
+            check(shown(list).equals(OutlineScanner.scan(text[0])), "欄の一覧は、scan の結果と同じ");
+            list.setSelectedIndex(2);
+
+            List<String> events = new ArrayList<>();
+            list.getModel().addListDataListener(new ListDataListener() {
+                @Override public void intervalAdded(ListDataEvent e) { events.add("足す"); }
+                @Override public void intervalRemoved(ListDataEvent e) { events.add("消す"); }
+                @Override public void contentsChanged(ListDataEvent e) { events.add("変える " + e.getIndex0()); }
+            });
+            text[0] = text[0] + "続きを打つ";           // 最後の見出しの後ろで打つ
+            panel.refresh();
+            check(events.isEmpty(), "見出しの後ろで打っても、一覧は触らない（知らせ " + events + "）");
+            check(list.getSelectedIndex() == 2, "選んでいる行は、そのまま");
+
+            text[0] = "前に足した字\n" + text[0];      // 見出しの前で打つ：行と位置がずれる
+            panel.refresh();
+            check(shown(list).equals(OutlineScanner.scan(text[0])), "見出しの前で打つと、行と位置が新しくなる");
+            check(!events.contains("消す") && !events.contains("足す"), "見出しの数が同じなら、一覧を空にせず入れ替えるだけ（知らせ " + events + "）");
+            check(list.getSelectedIndex() == 2, "入れ替えても、選んでいる行はそのまま");
+
+            text[0] = text[0] + "\n第四話";             // 見出しが増えた
+            panel.refresh();
+            check(shown(list).equals(OutlineScanner.scan(text[0])) && list.getModel().getSize() == 4, "見出しが増えたら、作り直して 4 件");
+            check(list.getSelectedIndex() == 2, "作り直しても、選んでいた行は残る");
+
+            text[0] = "見出しのない文章";
+            panel.refresh();
+            check(list.getModel().getSize() == 0, "見出しがなくなったら、一覧は空");
+        } catch (ReflectiveOperationException ex) {
+            check(false, "欄の一覧を取り出せませんでした: " + ex);
+        }
+    }
+
+    private static List<OutlineScanner.Heading> shown(JList<OutlineScanner.Heading> list) {
+        ListModel<OutlineScanner.Heading> model = list.getModel();
+        List<OutlineScanner.Heading> all = new ArrayList<>();
+        for (int i = 0; i < model.getSize(); i++) {
+            all.add(model.getElementAt(i));
+        }
+        return all;
     }
 }

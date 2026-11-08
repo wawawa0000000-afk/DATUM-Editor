@@ -99,14 +99,7 @@ public final class WritingStats {
     /** 字数（改行は数えない）。カードボードは数えない。 */
     public static int count(EditorPane pane) {
         if (pane instanceof Searchable s) {
-            String text = s.getText();
-            int n = text.codePointCount(0, text.length());
-            for (int i = 0; i < text.length(); i++) {
-                if (text.charAt(i) == '\n') {
-                    n--;
-                }
-            }
-            return n;
+            return countChars(s.getText(), CountMode.BODY, false);     // 改行を除いたコードポイントの数（打つたびに呼ばれるので、1回たどるだけ）
         }
         return 0;
     }
@@ -143,18 +136,25 @@ public final class WritingStats {
      */
     public static int countChars(String text, CountMode mode, boolean rubyNotation) {
         String body = mode == CountMode.BODY && rubyNotation ? NarouRuby.strip(text) : text;
+        // 打つたび・カーソルが動くたびに呼ばれるので、数え方ごとに必要なことだけを調べる
+        if (mode == CountMode.ALL) {
+            return body.codePointCount(0, body.length());
+        }
         int n = 0;
-        for (int i = 0; i < body.length(); ) {
-            int c = body.codePointAt(i);
-            i += Character.charCount(c);
-            boolean space = Character.isWhitespace(c) || Character.isSpaceChar(c);
-            if (mode == CountMode.ALL
-                    || mode == CountMode.NO_SPACE && !space
-                    || mode == CountMode.BODY && c != '\n') {
+        for (int i = 0; i < body.length(); i++) {
+            char c = body.charAt(i);
+            if (Character.isLowSurrogate(c) && i > 0 && Character.isHighSurrogate(body.charAt(i - 1))) {
+                continue;               // サロゲートペアの後ろ半分（前半で1字と数えた）
+            }
+            if (mode == CountMode.BODY ? c != '\n' : !isSpace(Character.isHighSurrogate(c) ? body.codePointAt(i) : c)) {
                 n++;
             }
         }
         return n;
+    }
+
+    private static boolean isSpace(int c) {
+        return Character.isWhitespace(c) || Character.isSpaceChar(c);
     }
 
     /**
@@ -162,12 +162,22 @@ public final class WritingStats {
      * 選んだ範囲の字数も、同じ数え方で数える。
      */
     public static String charCountText(Searchable pane, CountMode mode, boolean rubyNotation) {
-        String text = pane.getText();
-        String status = String.format("%,d", countChars(text, mode, rubyNotation)) + " 字（" + mode.label + "）";
-        int start = Math.min(pane.getSelectionStart(), text.length());
-        int end = Math.min(pane.getSelectionEnd(), text.length());
-        if (end > start) {
-            status += "    選択 " + String.format("%,d", countChars(text.substring(start, end), mode, rubyNotation)) + " 字";
+        return charCountText(pane, mode, rubyNotation, countChars(pane.getText(), mode, rubyNotation));
+    }
+
+    /**
+     * 全体の字数（total）を数え終えているときの charCountText。全文は、選んでいるときだけ読む
+     * （カーソルが動くたびに、全文を写して数え直さないため。EditorFrame が、文章が変わるまで total を覚えておく）。
+     */
+    public static String charCountText(Searchable pane, CountMode mode, boolean rubyNotation, int total) {
+        String status = String.format("%,d", total) + " 字（" + mode.label + "）";
+        if (pane.getSelectionEnd() > pane.getSelectionStart()) {
+            String text = pane.getText();
+            int start = Math.min(pane.getSelectionStart(), text.length());
+            int end = Math.min(pane.getSelectionEnd(), text.length());
+            if (end > start) {
+                status += "    選択 " + String.format("%,d", countChars(text.substring(start, end), mode, rubyNotation)) + " 字";
+            }
         }
         return status;
     }

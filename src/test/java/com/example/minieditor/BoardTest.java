@@ -39,6 +39,10 @@ public class BoardTest {
     }
 
     public static void main(String[] args) throws Exception {
+        // 矢印は曲線なので、描く範囲で切ると、Java の描き方（Marlin が範囲の外の線を先に切り落とす）で
+        // ふちのぼかしが少し（色の成分で 1〜13）変わる。目に見えない差なので、clippedPaint が見たい
+        // 「描き忘れがないか」だけを比べられるように、その切り落としを止める（描くより前に決める必要がある）
+        System.setProperty("sun.java2d.renderer.clip", "false");
         SwingUtilities.invokeAndWait(() -> {
             nestedClick();
             nestedDrag();
@@ -52,6 +56,12 @@ public class BoardTest {
             altLinkToEmpty();
             linkRefused();
             linkInOrder();
+            linkSourceDeleted();
+            tidyNegative();
+            undoDuringDrag();
+            clippedPaint();
+            clippedPaintCurved();
+            hugeExport();
         });
         longPressLink();        // 長押しは時間を待つので、画面の処理の外で動かす
         System.out.println(failures == 0 ? "すべて通りました" : failures + " 件、失敗しました");
@@ -421,6 +431,204 @@ public class BoardTest {
         check(links(pane).equals(List.of("e→d", "d→c")), "L で、選んだ順につながる（" + links(pane) + "）");
         key(board, KeyEvent.VK_L, 0);
         check(links(pane).size() == 2, "もう一度 L を押しても、同じ矢印は増えない");
+    }
+
+    /** 「矢印でつなぐ…」の元のカードを消してから相手をクリックしても、ないカードからの矢印はできない。 */
+    private static void linkSourceDeleted() {
+        BoardPane pane = nestedBoard();
+        JComponent board = boardOf(pane);
+        click(board, 1210, 110, 0);             // d を選ぶ
+        try {
+            // 右クリックのメニューは画面がないと出せないので、「矢印でつなぐ…」を選んだのと同じ状態を直接作る
+            java.lang.reflect.Field source = BoardPane.class.getDeclaredField("linkSource");
+            java.lang.reflect.Method find = BoardPane.class.getDeclaredMethod("find", int.class);
+            source.setAccessible(true);
+            find.setAccessible(true);
+            source.set(pane, find.invoke(pane, 6));
+        } catch (ReflectiveOperationException ex) {
+            check(false, "linkSource を設定できない: " + ex);
+            return;
+        }
+        key(board, KeyEvent.VK_DELETE, 0);      // つなぐ相手を選ぶ前に、元の d を消す
+        click(board, 1310, 510, 0);             // e をクリック
+        check(((List<Object>) pane.toJson().get("links")).isEmpty() && pane.statusText().contains("矢印 0"),
+                "つなぐ元のカードを消したあとは、相手をクリックしても矢印ができない（" + pane.toJson().get("links") + "）");
+    }
+
+    /** 整列の並びは、ボードの上での位置（マイナスかどうか）によらない。 */
+    private static void tidyNegative() {
+        List<String> order = null;
+        for (int dy : new int[]{0, -1000, -5000}) {
+            List<Object> cards = new ArrayList<>();
+            cards.add(card(1, "A", 400, 900 + dy, 160, 100, false));
+            cards.add(card(2, "B", 100, 960 + dy, 160, 100, false));
+            cards.add(card(3, "C", 700, 1010 + dy, 160, 100, false));
+            cards.add(card(4, "D", 250, 1080 + dy, 160, 100, false));
+            Map<String, Object> json = new LinkedHashMap<>();
+            json.put("mode", "board");
+            json.put("fontSize", 16);
+            json.put("cards", cards);
+            json.put("links", new ArrayList<>());
+            BoardPane pane = BoardPane.fromJson(json);
+            pane.tidy();
+            List<Map.Entry<String, Rectangle>> placed = new ArrayList<>(rects(pane).entrySet());
+            placed.sort((a, b) -> a.getValue().y != b.getValue().y ? a.getValue().y - b.getValue().y : a.getValue().x - b.getValue().x);
+            List<String> now = new ArrayList<>();
+            for (Map.Entry<String, Rectangle> entry : placed) {
+                now.add(entry.getKey());
+            }
+            if (order == null) {
+                order = now;
+            } else {
+                check(now.equals(order), "上へ " + (-dy) + " ずらしたボードでも、整列の並びが同じ（" + order + " と " + now + "）");
+            }
+        }
+    }
+
+    /** マウスを押したまま Ctrl+Z を押しても、「元に戻す」の順番が狂わない。 */
+    private static void undoDuringDrag() {
+        BoardPane pane = nestedBoard();
+        JComponent board = boardOf(pane);
+        click(board, 1310, 510, 0);             // e を選んで消す
+        pane.deleteSelected();
+        mouse(board, MouseEvent.MOUSE_PRESSED, 1210, 110, MouseEvent.BUTTON1, 0);     // d を押したまま
+        pane.undo();                            // Ctrl+Z（メニューのショートカット）で e が戻る
+        mouse(board, MouseEvent.MOUSE_DRAGGED, 1300, 200, MouseEvent.BUTTON1, 0);
+        mouse(board, MouseEvent.MOUSE_RELEASED, 1300, 200, MouseEvent.BUTTON1, 0);
+        check(rects(pane).containsKey("e"), "押したまま Ctrl+Z を押すと、消したカードが戻る");
+        pane.undo();
+        check(rects(pane).containsKey("e"), "そのあと、もう一度 Ctrl+Z を押しても、戻したカードがまた消えない");
+        pane.redo();
+        check(!rects(pane).containsKey("e"), "Ctrl+Y で、消す操作をやり直せる");
+    }
+
+    /** 一部だけ描き直しても、全体を描いたときと同じ絵になる（見えない物を飛ばす処理で、端が欠けない）。 */
+    private static void clippedPaint() {
+        List<Object> cards = new ArrayList<>();
+        List<Object> links = new ArrayList<>();
+        java.util.Random random = new java.util.Random(7);
+        cards.add(card(1, "枠", 60, 60, 900, 700, true));
+        for (int id = 2; id <= 80; id++) {
+            cards.add(card(id, "カード " + id + " の文字", random.nextInt(1500), random.nextInt(900), 160, 100, false));
+            if (id > 2) {
+                Map<String, Object> link = new LinkedHashMap<>();
+                link.put("from", id - 1);
+                link.put("to", id);
+                links.add(link);
+            }
+        }
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("mode", "board");
+        json.put("fontSize", 16);
+        json.put("cards", cards);
+        json.put("links", links);
+        BoardPane pane = BoardPane.fromJson(json);
+        pane.setSize(1600, 1000);
+        layoutAll(pane);
+        JComponent board = boardOf(pane);
+        java.awt.Point origin = pane.toView(0, 0);
+        java.awt.image.BufferedImage full = paintBoard(board, origin, new Rectangle(0, 0, 1600, 1000));
+        int different = 0;
+        for (int k = 0; k < 30; k++) {
+            int x = random.nextInt(1500);
+            int y = random.nextInt(900);
+            Rectangle part = new Rectangle(x, y, 1 + random.nextInt(1600 - x), 1 + random.nextInt(1000 - y));
+            java.awt.image.BufferedImage image = paintBoard(board, origin, part);
+            for (int py = part.y; py < part.y + part.height; py++) {
+                for (int px = part.x; px < part.x + part.width; px++) {
+                    if (image.getRGB(px, py) != full.getRGB(px, py)) {
+                        different++;
+                    }
+                }
+            }
+        }
+        check(different == 0, "一部だけ描き直しても、全体を描いたときと同じ絵になる（違った点 " + different + "）");
+    }
+
+    /**
+     * 上下に重なった・近いカードの矢印は、曲線が2枚を囲む四角の外へふくらむ。一部だけ描き直しても、
+     * その矢印が欠けないこと（描くかどうかを、曲線の範囲で決めているか）。
+     */
+    private static void clippedPaintCurved() {
+        List<Object> cards = new ArrayList<>();
+        List<Object> links = new ArrayList<>();
+        int[][] pairs = {
+            {100, 100, 160, 800, 150, 90, 160, 800},        // ほとんど重なる、とても背の高い2枚（曲線が上へ 60 ほどふくらむ）
+            {500, 100, 160, 100, 520, 210, 160, 100},       // 縦に近い（隙間 10）
+            {800, 400, 160, 100, 700, 380, 160, 100},       // 横に重なる（左へ戻る）
+            {300, 600, 160, 100, 470, 610, 160, 100},       // 横の隙間が 24 より狭い
+        };
+        int id = 1;
+        for (int[] p : pairs) {
+            cards.add(card(id, "上" + id, p[0], p[1], p[2], p[3], false));
+            cards.add(card(id + 1, "下" + id, p[4], p[5], p[6], p[7], false));
+            Map<String, Object> link = new LinkedHashMap<>();
+            link.put("from", id);
+            link.put("to", id + 1);
+            links.add(link);
+            id += 2;
+        }
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("mode", "board");
+        json.put("fontSize", 16);
+        json.put("cards", cards);
+        json.put("links", links);
+        BoardPane pane = BoardPane.fromJson(json);
+        pane.setSize(1600, 1000);
+        layoutAll(pane);
+        JComponent board = boardOf(pane);
+        java.awt.Point origin = pane.toView(0, 0);
+        java.awt.image.BufferedImage full = paintBoard(board, origin, new Rectangle(0, 0, 1600, 1000));
+        int different = 0;
+        // 細い帯を少しずつずらして描き直す（矢印のふくらみだけが入る帯も通る）
+        for (int y = 0; y < 1000; y += 7) {
+            Rectangle part = new Rectangle(0, y, 1600, 7);
+            java.awt.image.BufferedImage image = paintBoard(board, origin, part);
+            for (int py = part.y; py < Math.min(1000, part.y + part.height); py++) {
+                for (int px = 0; px < 1600; px++) {
+                    if (image.getRGB(px, py) != full.getRGB(px, py)) {
+                        different++;
+                    }
+                }
+            }
+        }
+        for (int x = 0; x < 1600; x += 7) {
+            Rectangle part = new Rectangle(x, 0, 7, 1000);
+            java.awt.image.BufferedImage image = paintBoard(board, origin, part);
+            for (int px = part.x; px < Math.min(1600, part.x + part.width); px++) {
+                for (int py = 0; py < 1000; py++) {
+                    if (image.getRGB(px, py) != full.getRGB(px, py)) {
+                        different++;
+                    }
+                }
+            }
+        }
+        check(different == 0, "重なった・近いカードの曲線の矢印も、一部だけ描き直して欠けない（違った点 " + different + "）");
+    }
+
+    private static java.awt.image.BufferedImage paintBoard(JComponent board, java.awt.Point origin, Rectangle clip) {
+        java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(1600, 1000, java.awt.image.BufferedImage.TYPE_INT_RGB);
+        java.awt.Graphics2D g = image.createGraphics();
+        g.translate(-origin.x, -origin.y);
+        g.setClip(origin.x + clip.x, origin.y + clip.y, clip.width, clip.height);
+        board.paint(g);
+        g.dispose();
+        return image;
+    }
+
+    /** カードが遠く離れていても、画像に書き出せる（大きすぎる画像を作ってメモリが足りなくならない）。 */
+    private static void hugeExport() {
+        List<Object> cards = new ArrayList<>();
+        cards.add(card(1, "左上", 0, 0, 160, 100, false));
+        cards.add(card(2, "右下", 30000, 30000, 160, 100, false));
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("mode", "board");
+        json.put("fontSize", 16);
+        json.put("cards", cards);
+        json.put("links", new ArrayList<>());
+        java.awt.image.BufferedImage image = BoardPane.fromJson(json).renderImage();
+        check(image != null && (long) image.getWidth() * image.getHeight() <= 65_000_000L,     // 上限は 6400 万画素（端数の切り上げぶんだけ超えてよい）
+                "遠く離れたカードのボードは、細かさを下げて書き出す（" + (image == null ? "null" : image.getWidth() + "x" + image.getHeight()) + "）");
     }
 
     /** 長押ししてから引くと、矢印を引ける。すぐに引けば、今までどおり移動になる。 */

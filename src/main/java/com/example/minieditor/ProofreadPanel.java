@@ -14,6 +14,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.function.Supplier;
 
 import javax.swing.BorderFactory;
@@ -27,12 +29,13 @@ import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.ListCellRenderer;
 import javax.swing.ListSelectionModel;
+import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 
 /**
  * 画面の右に出す「校正」の欄。今の文書を Proofreader で調べて、見つかった所を一覧にする。
  * 一覧をクリックするとその場所へ飛び、「直す」で案のとおりに書き換える（Ctrl+Z で戻せる）。
- * 文書を書き換えるたびに、少し待ってから自動で調べ直す。
+ * 文書を書き換えるたびに、少し待ってから自動で調べ直す（長い原稿では重いので、そのときの校正は裏のスレッドで行う）。
  */
 public final class ProofreadPanel extends JPanel {
 
@@ -53,7 +56,14 @@ public final class ProofreadPanel extends JPanel {
     private final JButton ignoreButton = Theme.flatButton("無視");
     private final JButton registerButton = Theme.flatButton("辞書に登録");
     private final Set<String> ignored = new HashSet<>();     // 「無視」した所（言葉と項目の組。エディタを閉じるまで覚える）
-    private final Timer recheck = new Timer(700, e -> refresh());
+    private final Timer recheck = new Timer(700, e -> refreshLater());
+    // 打ったあとの調べ直しを行う裏のスレッド（30 万字で 0.2 秒ほどかかり、その間 文字が打てなくなるため）
+    private final ExecutorService worker = Executors.newSingleThreadExecutor(r -> {
+        Thread thread = new Thread(r, "校正");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private int generation;                                 // 調べ直しを始めた回数（裏で調べている間に、もっと新しく調べ直したら、古い結果は捨てる）
     private String checkedText;                             // 最後に調べた文章（変わっていなければ、調べ直さない）
     private String linesOf;                                 // lineStarts を数えた文章
     private int[] lineStarts = {0};                         // 各行の始まりの位置（一覧の「何行目」を、毎回 先頭から数えないため）
@@ -164,8 +174,9 @@ public final class ProofreadPanel extends JPanel {
         }
     }
 
-    /** 今の文書を調べて、一覧を作り直す。 */
+    /** 今の文書を調べて、一覧を作り直す（その場で調べる。「直す」のあとなど、すぐに新しい一覧が要るとき）。 */
     public void refresh() {
+        generation++;                           // 裏で調べている途中のものがあれば、その結果は使わない
         Searchable doc = target.get();
         if (doc == null) {
             model.clear();
@@ -178,12 +189,49 @@ public final class ProofreadPanel extends JPanel {
         if (text.equals(checkedText)) {
             return;
         }
+        show(text, check(text, enabledCategories(), configDir.get()));
+    }
+
+    /**
+     * 打ち終わって少ししてからの調べ直し。校正そのものは裏のスレッドで行い、その間も文字を打てるようにする。
+     * 結果は画面のスレッドで一覧に出す。調べている間に文章が変わっていたら、その結果は捨てる（次の調べ直しが待っている）。
+     */
+    private void refreshLater() {
+        Searchable doc = target.get();
+        if (doc == null) {
+            refresh();
+            return;
+        }
+        String text = doc.getText();
+        if (text.equals(checkedText)) {
+            return;
+        }
+        int ticket = ++generation;
+        Set<Proofreader.Category> categories = enabledCategories();
+        Path dir = configDir.get();
+        worker.execute(() -> {
+            List<Proofreader.Issue> found = check(text, categories, dir);
+            SwingUtilities.invokeLater(() -> {
+                if (ticket == generation && target.get() == doc && text.equals(doc.getText())) {
+                    show(text, found);
+                }
+            });
+        });
+    }
+
+    /** 文章を調べ、校正辞書の語を除く（画面には触らないので、裏のスレッドからも呼べる）。 */
+    private static List<Proofreader.Issue> check(String text, Set<Proofreader.Category> categories, Path dir) {
+        // 校正辞書は、一覧を作るたびに読む（ファイルは小さいので、覚えておかない）
+        Set<String> words = ProofreadDictionary.load(ProofreadDictionary.fileIn(dir));
+        return ProofreadDictionary.filter(Proofreader.check(text, categories), words, text);
+    }
+
+    /** 調べた結果を一覧に出す（「無視」したものは除く）。 */
+    private void show(String text, List<Proofreader.Issue> found) {
         checkedText = text;
         Proofreader.Issue selected = list.getSelectedValue();
-        // 校正辞書は、一覧を作るたびに読む（ファイルは小さいので、覚えておかない）
-        Set<String> words = ProofreadDictionary.load(ProofreadDictionary.fileIn(configDir.get()));
         List<Proofreader.Issue> issues = new ArrayList<>();
-        for (Proofreader.Issue issue : ProofreadDictionary.filter(Proofreader.check(text, enabledCategories()), words, text)) {
+        for (Proofreader.Issue issue : found) {
             if (!ignored.contains(ignoreKey(text, issue))) {
                 issues.add(issue);
             }

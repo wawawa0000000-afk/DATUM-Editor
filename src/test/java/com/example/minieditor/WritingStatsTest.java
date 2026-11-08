@@ -31,6 +31,7 @@ public class WritingStatsTest {
     public static void main(String[] args) throws Exception {
         counting();
         selection();
+        sameAsBefore();
         existing();
         SwingUtilities.invokeAndWait(WritingStatsTest::existingPane);   // 画面の部品は、画面のスレッドで動かす
         System.out.println(failures == 0 ? "すべて通りました" : failures + " 件、失敗しました");
@@ -101,6 +102,67 @@ public class WritingStatsTest {
 
         Stub empty = new Stub("", 0, 0);
         check(WritingStats.charCountText(empty, NO_SPACE, false).equals("0 字（空白・改行を除く）"), "空の文書は 0 字");
+    }
+
+    /**
+     * 速くした countChars・charCountText が、前の数え方（コードポイントを1つずつ調べる）と同じ数になるか。
+     * 空白の種類・改行・サロゲートペア・対になっていないサロゲート・ルビを混ぜた文字列で比べる。
+     */
+    private static void sameAsBefore() {
+        String[] samples = {
+            "", "あ", "\n", "𠮷", "\uD842", "\uDFB7", "\uD842\uD842\uDFB7", "\uD842\uDFB7\uDFB7", "a\uD842",
+            "あ い　う\tえ\nお\r\n", "\u00A0\u2003\u3000x", "｜東京《とう きょう》\n𠮷野家《よしのや》　が",
+        };
+        java.util.Random random = new java.util.Random(7);
+        String pool = "あ漢字 　\n\t｜《》()（）𠮷\uD842\uDFB7\u00A0\u3099a";
+        boolean all = true;
+        for (int round = 0; round < 2000; round++) {
+            String text;
+            if (round < samples.length) {
+                text = samples[round];
+            } else {
+                StringBuilder sb = new StringBuilder();
+                for (int i = random.nextInt(30); i > 0; i--) {
+                    sb.append(pool.charAt(random.nextInt(pool.length())));
+                }
+                text = sb.toString();
+            }
+            for (WritingStats.CountMode mode : WritingStats.CountMode.values()) {
+                for (boolean ruby : new boolean[]{false, true}) {
+                    if (WritingStats.countChars(text, mode, ruby) != countBefore(text, mode, ruby)) {
+                        all = false;
+                        System.out.println("     ちがう: " + mode + " " + ruby + " [" + text + "]");
+                    }
+                }
+            }
+            int cut = text.isEmpty() ? 0 : random.nextInt(text.length() + 1);
+            Stub pane = new Stub(text, 0, cut);
+            int total = countBefore(text, ALL, true);
+            if (!WritingStats.charCountText(pane, ALL, true, total).equals(WritingStats.charCountText(pane, ALL, true))) {
+                all = false;
+                System.out.println("     ちがう（覚えた字数）: [" + text + "]");
+            }
+        }
+        check(all, "速くした数え方は、前の数え方と同じ数になる（決まった例と、でたらめな 2000 通り）");
+        check(WritingStats.charCountText(new Stub("あいう", 0, 2), ALL, false, 99).equals("99 字（全体）    選択 2 字"),
+                "覚えた全体の字数をそのまま出し、選択だけを数える");
+        check(WritingStats.charCountText(new Stub("あいう", 2, 9), ALL, false, 3).equals("3 字（全体）    選択 1 字"),
+                "選択が文書からはみ出していたら、文書の終わりまでを数える");
+    }
+
+    /** 前の countChars（コードポイントを1つずつ調べる）。sameAsBefore で比べるための写し。 */
+    private static int countBefore(String text, WritingStats.CountMode mode, boolean rubyNotation) {
+        String body = mode == BODY && rubyNotation ? NarouRuby.strip(text) : text;
+        int n = 0;
+        for (int i = 0; i < body.length(); ) {
+            int c = body.codePointAt(i);
+            i += Character.charCount(c);
+            boolean space = Character.isWhitespace(c) || Character.isSpaceChar(c);
+            if (mode == ALL || mode == NO_SPACE && !space || mode == BODY && c != '\n') {
+                n++;
+            }
+        }
+        return n;
     }
 
     /** 既存の数え方（原稿用紙の枚数・日々の字数）は、今までどおり。 */

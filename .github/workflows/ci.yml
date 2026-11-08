@@ -37,10 +37,13 @@ jobs:
         shell: bash
         run: |
           failed=0
-          for f in target/test-classes/com/example/minieditor/*Test.class; do
-            name=$(basename "$f" .class)
+          # 下のパッケージ（apple など）のテストも動かす。内部クラス（$ の付くもの）は除く
+          for f in $(find target/test-classes/com/example/minieditor -name '*Test.class' ! -name '*$*' | sort); do
+            name=${f#target/test-classes/}
+            name=${name%.class}
+            name=${name//\//.}
             echo "=== $name"
-            java -cp "target/classes;target/test-classes" "com.example.minieditor.$name" || { echo "FAILED: $name"; failed=1; }
+            java -cp "target/classes;target/test-classes" "$name" || { echo "FAILED: $name"; failed=1; }
           done
           exit $failed
 

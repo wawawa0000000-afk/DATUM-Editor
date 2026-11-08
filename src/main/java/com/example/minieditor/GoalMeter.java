@@ -1,7 +1,6 @@
 package com.example.minieditor;
 
 import java.awt.BorderLayout;
-import java.awt.Color;
 import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
@@ -23,26 +22,25 @@ import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 
 /**
- * ステータスバーに出す、今日の執筆量と目標の進み具合。
- * 「今日 1,234 / 3,000 字 ■■■■□□□□□□ 41%」のように、10 個のマス（1 マス＝10%）を塗って見せる。
- * 目標に届くと、マスが緑になる。クリックすると、目標字数をその場で変えられる。
+ * ステータスバーに出す、今日の執筆量と目標。
+ * 「今日 1,234 / 3,000 字」のように文字だけで出す（進み具合のマス目は出さない。状態バーは控えめに）。
+ * 目標に届いたら「✓」を付ける（色だけに頼らない）。クリックすると、目標字数をその場で変えられる。
  */
 final class GoalMeter extends JComponent {
 
-    private static final int CELLS = 10;
-    private static final Color DONE = new Color(0x5BD07A);          // 目標に届いたときのマスの色
     private static final int[] PRESETS = {1000, 2000, 3000, 5000};
 
     private final WritingStats stats;
     private final AppSettings settings;
     private final Runnable onChange;
+    private String shown;               // 最後に refresh で出した文字（変わっていなければ、並べ直さない）
 
     GoalMeter(WritingStats stats, AppSettings settings, Runnable onChange) {
         this.stats = stats;
         this.settings = settings;
         this.onChange = onChange;
         setFont(Theme.small());
-        setForeground(Color.WHITE);
+        setForeground(Theme.FG_DIM);       // ステータスバーと同じ、控えめな文字の色
         setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         setToolTipText("クリックで、1日の目標字数を変えられます");
         addMouseListener(new MouseAdapter() {
@@ -53,10 +51,17 @@ final class GoalMeter extends JComponent {
         });
     }
 
-    /** 字数や目標が変わったときに呼ぶ。 */
+    /**
+     * 字数や目標が変わったときに呼ぶ。カーソルが動くたびにも呼ばれるので、出す文字が変わったときだけ並べ直して描き直す
+     * （並べ直しは、ステータスバー全体に及ぶため）。見せ方は文字（今日の字数と目標）だけで決まる。
+     */
     void refresh() {
-        revalidate();
-        repaint();
+        String now = label();
+        if (!now.equals(shown)) {
+            shown = now;
+            revalidate();
+            repaint();
+        }
     }
 
     private String label() {
@@ -65,22 +70,15 @@ final class GoalMeter extends JComponent {
         return goal > 0 ? "今日 " + today + " / " + String.format("%,d", goal) + " 字" : "今日 " + today + " 字";
     }
 
-    private int percent() {
-        int goal = stats.goal();
-        return goal > 0 ? Math.max(0, (int) Math.floor(stats.today() * 100.0 / goal)) : 0;
-    }
-
-    private int cellSize() {
-        return Math.max(8, getFontMetrics(getFont()).getAscent() - 3);
+    private boolean reached() {
+        return stats.goal() > 0 && stats.today() >= stats.goal();
     }
 
     @Override
     public Dimension getPreferredSize() {
         FontMetrics fm = getFontMetrics(getFont());
-        int width = fm.stringWidth(label());
-        if (stats.goal() > 0) {
-            width += 10 + CELLS * (cellSize() + 2) + 8 + fm.stringWidth("100%");
-        } else {
+        int width = fm.stringWidth(label() + (reached() ? " ✓" : ""));
+        if (stats.goal() <= 0) {
             width += 10 + fm.stringWidth("目標を決める");
         }
         return new Dimension(width + 4, fm.getHeight());
@@ -95,38 +93,13 @@ final class GoalMeter extends JComponent {
         FontMetrics fm = g2.getFontMetrics();
         int baseline = (getHeight() + fm.getAscent() - fm.getDescent()) / 2;
         g2.setColor(getForeground());
-        String text = label();
+        String text = label() + (reached() ? " ✓" : "");
         g2.drawString(text, 0, baseline);
-        int x = fm.stringWidth(text) + 10;
-
-        int goal = stats.goal();
-        if (goal <= 0) {
-            // 目標がまだないときは、決められることがわかるように、薄い文字で誘う
-            g2.setColor(new Color(255, 255, 255, 170));
-            g2.drawString("目標を決める", x, baseline);
-            g2.dispose();
-            return;
+        if (stats.goal() <= 0) {
+            // 目標がまだないときは、決められることがわかるように誘う（押せることがわかるよう、ここだけアクセントの色）
+            g2.setColor(Theme.ACCENT);
+            g2.drawString("目標を決める", fm.stringWidth(text) + 10, baseline);
         }
-        int size = cellSize();
-        int top = (getHeight() - size) / 2;
-        double ratio = Math.max(0, stats.today() / (double) goal);
-        boolean reached = ratio >= 1.0;
-        for (int i = 0; i < CELLS; i++) {
-            int cx = x + i * (size + 2);
-            // マスの枠（まだ塗っていない所）
-            g2.setColor(new Color(255, 255, 255, 70));
-            g2.fillRect(cx, top, size, size);
-            // 塗る量：満たしたマスは全部、途中のマスは割合のぶんだけ左から塗る
-            double fill = Math.min(1.0, Math.max(0.0, ratio * CELLS - i));
-            if (fill > 0) {
-                g2.setColor(reached ? DONE : Color.WHITE);
-                g2.fillRect(cx, top, (int) Math.round(size * fill), size);
-            }
-        }
-        x += CELLS * (size + 2) + 6;
-        g2.setColor(getForeground());       // 数字は白のまま（青い地の上で読めるように）。届いたことは、マスの緑で伝える
-        g2.setFont(reached ? getFont().deriveFont(java.awt.Font.BOLD) : getFont());
-        g2.drawString(percent() + "%", x, baseline);
         g2.dispose();
     }
 

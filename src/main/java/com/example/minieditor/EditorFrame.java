@@ -63,7 +63,6 @@ import javax.swing.MenuSelectionManager;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
-import javax.swing.filechooser.FileNameExtensionFilter;
 import javax.swing.event.MenuEvent;
 import javax.swing.event.MenuListener;
 import javax.swing.plaf.basic.BasicSplitPaneUI;
@@ -105,31 +104,38 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     private boolean workVisible = false;
     private boolean workBeforeFocus;
     private JSplitPane lowerSplit;              // エディタ（上）と下の欄（検索・見出し・集計）の分割。いったん作ったら使い回す（欄の高さを覚えておくため）
-    private final JToggleButton terminalButton = createToolButton(">_", "ターミナルを表示する / 隠す（Ctrl+J）",
-            () -> setTerminalVisible(!terminalVisible));
-    private final JToggleButton folderButton = createIconButton(ToolIcons.folder(), "フォルダ",
+    private final ToolBar toolBar = new ToolBar();      // 上の帯（メニューバーは高さ 0 にして見せない）
+    // 上の帯は5つだけ：サイドバー ｜ 検索・AI・集中・その他。残りの操作（メニューの全部・分割・ターミナル）は「その他」の一覧に入れる
+    private final ToolBar.Button folderButton = ToolBar.button(ToolIcons.sidebar(), "フォルダのサイドバー", "サイドバー",
             "フォルダのサイドバーを表示する / 隠す（Ctrl+Shift+E）", this::toggleSidebar);
-    private final JToggleButton proofButton = createIconButton(ToolIcons.proofread(), "校正",
-            "校正の欄を表示する / 隠す（F7）", () -> showRight("proof"));
-    private final JToggleButton aiButton = createToolButton("AI", "AI の会話欄を表示する / 隠す（Ctrl+Shift+A）",
-            () -> showRight("ai"));
-    private final JToggleButton focusButton = createToolButton("集中", "集中モード（F11）", this::toggleFocusMode);
-    private final JToggleButton paletteButton = createIconButton(ToolIcons.search(), "すべての操作を探す",
-            "すべての操作を、名前で探して実行する（Ctrl+P）", this::showPalette);
+    private final ToolBar.Button searchButton = ToolBar.button(ToolIcons.search(), "検索", "検索",
+            "文書の中を検索する（Ctrl+F）", () -> this.findBar.open(false));
+    private final ToolBar.Button aiButton = ToolBar.button(ToolIcons.chat(), "AI の会話欄", "AI",
+            "AI の会話欄を表示する / 隠す（Ctrl+Shift+A）", () -> showRight("ai"));
+    private final ToolBar.Button focusButton = ToolBar.button(ToolIcons.focus(), "集中モード", "集中",
+            "メニューやタブを隠して、本文だけにする（F11）", this::toggleFocusMode);
+    private final ToolBar.Button moreButton = ToolBar.button(ToolIcons.more(), "その他の操作", "その他",
+            "ほかの操作（ファイル・編集・書式・表示…、分割、ターミナル）", () -> showMore(this.moreButton));
     private JMenuItem paletteItem;
     private JMenu snippetMenu;          // 「編集 → 定型文」（中身は開くたびに作り直す）
     private JMenu snippetDateMenu;      // 「定型文 → 日付・時刻」
-    private final JToggleButton splitSideButton = createIconButton(ToolIcons.split(() -> false), "左右に分割",
-            "左右に分割する / 分割をやめる（Ctrl+\\）。タブが2枚以上なら今のタブを右へ、1枚なら同じ文書を右にも出します",
-            () -> splitTo(JSplitPane.HORIZONTAL_SPLIT));
-    private final JToggleButton splitDownButton = createIconButton(ToolIcons.split(() -> true), "上下に分割",
-            "上下に分割する / 分割をやめる。タブが2枚以上なら今のタブを下へ、1枚なら同じ文書を下にも出します",
-            () -> splitTo(JSplitPane.VERTICAL_SPLIT));
     private final JCheckBoxMenuItem terminalItem = new JCheckBoxMenuItem("ターミナル");
+    // 「書式 → 書字方向」と「表示 → 画面の分割」「表示 → 欄」の項目。今の状態に合わせて印を付け直す
+    private final javax.swing.JRadioButtonMenuItem horizontalItem = new javax.swing.JRadioButtonMenuItem("横書き");
+    private final javax.swing.JRadioButtonMenuItem verticalItem = new javax.swing.JRadioButtonMenuItem("縦書き");
+    private final javax.swing.ButtonGroup splitGroup = new javax.swing.ButtonGroup();
+    private final javax.swing.JRadioButtonMenuItem noSplitItem = new javax.swing.JRadioButtonMenuItem("分割しない", true);
+    private final javax.swing.JRadioButtonMenuItem sideSplitItem = new javax.swing.JRadioButtonMenuItem("左右に並べる");
+    private final javax.swing.JRadioButtonMenuItem downSplitItem = new javax.swing.JRadioButtonMenuItem("上下に並べる");
+    private final JCheckBoxMenuItem sidebarItem = new JCheckBoxMenuItem("フォルダのサイドバー");
+    private final JCheckBoxMenuItem outlineItem = new JCheckBoxMenuItem("見出し一覧");
+    private final JCheckBoxMenuItem workItem = new JCheckBoxMenuItem("作品の集計");
+    private final JCheckBoxMenuItem proofItem = new JCheckBoxMenuItem("校正の欄");
+    private final JCheckBoxMenuItem chatItem = new JCheckBoxMenuItem("AI の会話欄");
 
     private final FindBar findBar = new FindBar(this::currentPane);
     private final JLabel statusLeft = new JLabel(" ");
-    private final JLabel statusRight = new JLabel(" ");
+    private final JLabel statusCenter = new JLabel(" ", SwingConstants.CENTER);    // 「保存しました」を1秒だけ出す所
     private JLabel zoomLabel;       // ステータスバーの「100%」
     private final JCheckBoxMenuItem wrapItem = new JCheckBoxMenuItem("折り返し");
     private final JCheckBoxMenuItem manuscriptItem = new JCheckBoxMenuItem("原稿用紙", true);   // 文字は、字数・行数に合わせて作り直す
@@ -147,7 +153,6 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     private FolderSidebar sidebar;
     private boolean sidebarVisible;
     private ProofreadPanel proofPanel;
-    private final Map<EditorPane, Integer> sheetCache = new java.util.WeakHashMap<>();  // 原稿用紙換算の枚数（中身が変わるまで覚えておく。カーソルが動くたびに全文を数えないため）
     private final Map<EditorPane, Object[]> zoomMemo = new java.util.WeakHashMap<>();   // 倍率を変えた文書：{そのとき付けた文字, 等倍の大きさ}
     private final Map<Theme.Scheme, javax.swing.JRadioButtonMenuItem> schemeItems = new java.util.EnumMap<>(Theme.Scheme.class);
     private AiChatPanel chatPanel;
@@ -159,6 +164,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
 
     // 集中モード
     private boolean focusMode;
+    private Fader barFader;                     // 集中モードに出入りするときに、ツールバーとステータスバーを薄くする
     private boolean terminalBeforeFocus;
     private int stateBeforeFocus;
     private final McpService mcp = new McpService(this);       // AI 連携（MCP）の窓口
@@ -168,10 +174,12 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         message = null;
         updateStatus();
     });
+    private final Timer savedTimer = new Timer(1000, e -> statusCenter.setText(" "));
 
     public EditorFrame() {
         super(APP_NAME);
         messageTimer.setRepeats(false);
+        savedTimer.setRepeats(false);
         // ウィンドウとタスクバーに出すアイコン（JAR の中に入れてある画像を読む）
         java.net.URL icon = EditorFrame.class.getResource("/icon.png");
         if (icon != null) {
@@ -188,7 +196,15 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         add(mainArea, BorderLayout.CENTER);
         statusBar = createStatusBar();
         add(statusBar, BorderLayout.SOUTH);
-        setJMenuBar(createMenuBar());
+        // メニューバーは見せない（操作は上の帯の「その他」から開く）。ただ、外すと Ctrl+S などの
+        // ショートカットも効かなくなるので、付けたまま高さを 0 にする
+        JMenuBar menuBar = createMenuBar();
+        menuBar.setPreferredSize(new Dimension(0, 0));
+        menuBar.setBorder(null);
+        setJMenuBar(menuBar);
+        buildToolBar();
+        add(toolBar, BorderLayout.NORTH);
+        barFader = new Fader(toolBar, statusBar);
         installExtraShortcuts();
         installZoomKeys();
         installZoomWheel();
@@ -224,17 +240,30 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     // ---------- 画面の部品 ----------
 
     private JPanel createStatusBar() {
-        JPanel bar = new JPanel(new BorderLayout());
-        bar.setBackground(Theme.ACCENT);
+        // 青い地にはしない。本文が主役なので、ステータスバーはメニューバーと同じ地に沈め、上に細い線だけ引く
+        JPanel bar = new JPanel(new BorderLayout()) {
+            @Override
+            public void paint(Graphics g) {
+                Fader.paint(this, g, super::paint);     // 集中モードに出入りするときは、薄くして描く
+            }
+
+            @Override
+            protected void paintComponent(Graphics g) {
+                g.setColor(Theme.MENU_BAR);
+                g.fillRect(0, 0, getWidth(), getHeight());
+                g.setColor(Theme.BORDER);
+                g.fillRect(0, 0, getWidth(), 1);
+            }
+        };
         bar.setBorder(BorderFactory.createEmptyBorder(4, 14, 4, 14));
-        for (JLabel label : new JLabel[]{statusLeft, statusRight}) {
+        for (JLabel label : new JLabel[]{statusLeft, statusCenter}) {
             label.setFont(Theme.small());
-            label.setForeground(Color.WHITE);
+            label.setForeground(Theme.FG_DIM);
         }
         bar.add(statusLeft, BorderLayout.WEST);
+        bar.add(statusCenter, BorderLayout.CENTER);
         JPanel right = new JPanel(new BorderLayout(24, 0));
         right.setOpaque(false);
-        right.add(statusRight, BorderLayout.CENTER);
         JPanel east = new JPanel(new BorderLayout(24, 0));
         east.setOpaque(false);
         if (Edition.has(Edition.VERTICAL)) {
@@ -300,7 +329,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
                 if (hover) {
                     Graphics2D g2 = (Graphics2D) g.create();
                     g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                    g2.setColor(new Color(255, 255, 255, 50));
+                    g2.setColor(Theme.HOVER);
                     g2.fillRoundRect(0, 0, getWidth(), getHeight(), 6, 6);
                     g2.dispose();
                 }
@@ -308,7 +337,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             }
         };
         label.setFont(Theme.small());
-        label.setForeground(Color.WHITE);
+        label.setForeground(Theme.FG_DIM);
         label.setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 8));
         label.setToolTipText(tooltip);
         label.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
@@ -320,52 +349,111 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         SheetSize.load(appSettings);    // 原稿用紙の字数・行数（前回の設定。メニューの項目と、縦書きの表示に使う）
         Spacing.load(appSettings);      // 行間・字間・余白（前回の設定。メニューの項目と、画面の描き方に使う）
 
+        // メニューバーは文字だけ（全部の操作の一覧）。よく使う操作は、下の段のツールバーにアイコンと名前で出す。
+        // メニューの中の項目は、よく使うものと、決まった印がある（はさみ・時計など）ものにだけアイコンを付ける
         JMenu file = new JMenu("ファイル");
-        file.add(item("新規（テキスト）", key(KeyEvent.VK_N, CTRL), () -> newDocument(EditorPane.Mode.TEXT)));
-        // 種類（Edition）に入っていない機能は、メニューに出さない（コマンドパレットとショートカット一覧からも消える）
-        if (Edition.has(Edition.VERTICAL)) {
-            file.add(item("新規（縦書き）", key(KeyEvent.VK_N, CTRL | SHIFT), () -> newDocument(EditorPane.Mode.VERTICAL)));
-        }
-        if (Edition.has(Edition.BOARD)) {
-            file.add(item("新規（カードボード）", key(KeyEvent.VK_K, CTRL | SHIFT), () -> newDocument(EditorPane.Mode.BOARD)));
+        // 種類（Edition）に入っていない機能は、メニューに出さない（コマンドパレットとショートカット一覧からも消える）。
+        // 新規は、種類が2つ以上あるときだけ「新規 ▸」にまとめる（ツールバーの「新規 ▾」と同じ並び）
+        JMenuItem newText = item("テキスト（横書き）", key(KeyEvent.VK_N, CTRL), ToolIcons.newPage(), () -> newDocument(EditorPane.Mode.TEXT));
+        if (Edition.has(Edition.VERTICAL) || Edition.has(Edition.BOARD)) {
+            JMenu newMenu = new JMenu("新規");
+            newMenu.add(newText);
+            if (Edition.has(Edition.VERTICAL)) {
+                newMenu.add(item("縦書き（原稿用紙）", key(KeyEvent.VK_N, CTRL | SHIFT), ToolIcons.newVertical(), () -> newDocument(EditorPane.Mode.VERTICAL)));
+            }
+            if (Edition.has(Edition.BOARD)) {
+                newMenu.add(item("カードボード", key(KeyEvent.VK_K, CTRL | SHIFT), ToolIcons.board(), () -> newDocument(EditorPane.Mode.BOARD)));
+            }
+            file.add(newMenu);
+        } else {
+            newText.setText("新規");
+            file.add(newText);
         }
         file.addSeparator();
-        file.add(item("開く…", key(KeyEvent.VK_O, CTRL), () -> openFile(false)));
+        file.add(item("開く…", key(KeyEvent.VK_O, CTRL), ToolIcons.open(), () -> openFile(false)));
         if (Edition.has(Edition.VERTICAL)) {
             file.add(item("縦書きで開く…", key(KeyEvent.VK_O, CTRL | SHIFT), () -> openFile(true)));
         }
-        file.add(item("保存", key(KeyEvent.VK_S, CTRL), () -> save(currentPane())));
+        file.add(item("保存", key(KeyEvent.VK_S, CTRL), ToolIcons.save(), () -> save(currentPane())));
         file.add(item("名前を付けて保存…", key(KeyEvent.VK_S, CTRL | SHIFT), () -> saveAs(currentPane())));
-        file.add(item("PDF として書き出す…", key(KeyEvent.VK_P, CTRL | SHIFT), this::exportPdf));
-        file.add(item("版の履歴…", key(KeyEvent.VK_H, CTRL | SHIFT), this::showHistory));
+        file.add(item("PDF として書き出す…", key(KeyEvent.VK_P, CTRL | SHIFT), ToolIcons.export(), this::exportPdf));
         file.addSeparator();
         file.add(item("フォルダをサイドバーに開く…", null, this::openFolderInSidebar));
-        file.add(item("設定…", key(KeyEvent.VK_COMMA, CTRL), this::openSettings));
+        file.add(item("版の履歴…", key(KeyEvent.VK_H, CTRL | SHIFT), ToolIcons.history(), this::showHistory));
+        file.add(item("設定…", key(KeyEvent.VK_COMMA, CTRL), ToolIcons.gear(), this::openSettings));
         file.addSeparator();
         file.add(item("タブを閉じる", key(KeyEvent.VK_W, CTRL), () -> closePane(activeGroup, currentPane())));
         file.add(item("終了", key(KeyEvent.VK_Q, CTRL), this::exitApp));
 
         JMenu edit = new JMenu("編集");
-        edit.add(item("元に戻す", key(KeyEvent.VK_Z, CTRL), () -> withPane(EditorPane::undo)));
-        edit.add(item("やり直し", key(KeyEvent.VK_Y, CTRL), () -> withPane(EditorPane::redo)));
+        edit.add(item("元に戻す", key(KeyEvent.VK_Z, CTRL), ToolIcons.undo(true), () -> withPane(EditorPane::undo)));
+        edit.add(item("やり直し", key(KeyEvent.VK_Y, CTRL), ToolIcons.undo(false), () -> withPane(EditorPane::redo)));
         edit.addSeparator();
-        edit.add(item("切り取り", key(KeyEvent.VK_X, CTRL), () -> withPane(EditorPane::cut)));
-        edit.add(item("コピー", key(KeyEvent.VK_C, CTRL), () -> withPane(EditorPane::copy)));
-        edit.add(item("貼り付け", key(KeyEvent.VK_V, CTRL), () -> withPane(EditorPane::paste)));
+        edit.add(item("切り取り", key(KeyEvent.VK_X, CTRL), ToolIcons.cut(), () -> withPane(EditorPane::cut)));
+        edit.add(item("コピー", key(KeyEvent.VK_C, CTRL), ToolIcons.copy(), () -> withPane(EditorPane::copy)));
+        edit.add(item("貼り付け", key(KeyEvent.VK_V, CTRL), ToolIcons.paste(), () -> withPane(EditorPane::paste)));
         edit.add(item("すべて選択", key(KeyEvent.VK_A, CTRL), () -> withPane(EditorPane::selectAll)));
         edit.addSeparator();
-        edit.add(item("検索", key(KeyEvent.VK_F, CTRL), () -> findBar.open(false)));
+        edit.add(item("検索", key(KeyEvent.VK_F, CTRL), ToolIcons.search(), () -> findBar.open(false)));
         edit.add(item("置換", key(KeyEvent.VK_H, CTRL), () -> findBar.open(true)));
         edit.add(item("フォルダ内を検索…", key(KeyEvent.VK_F, CTRL | SHIFT), this::showFolderSearch));
         edit.addSeparator();
         edit.add(createSnippetMenu());
         edit.add(item("校正辞書を編集…", null, this::editProofDictionary));
 
+        // 書式には「文章の見え方と並べ方」をまとめる（文字の大きさ → 縦横・折り返し・原稿用紙・行間 → 打つときの補助 → ルビ）。
+        // 表示には「画面（分割・倍率・配色・欄）」だけを残す。どちらにあるか迷わないように分けた
+        // 原稿用紙の字数・行数（選ぶと、開いている縦書きの文書にすぐ反映する）
+        JMenu sheetMenu = new JMenu("原稿用紙の字数・行数");
+        sheetMenu.add(sheetSizeMenu("字数", true));
+        sheetMenu.add(sheetSizeMenu("行数", false));
+        // 行間・字間・余白（縦書きは3つとも、横書きは余白だけ。選ぶと、開いている文書にすぐ反映する）
+        JMenu spacingRoot = new JMenu("行間・字間・余白");
+        spacingRoot.add(spacingMenu("縦の行間", 0));
+        spacingRoot.add(spacingMenu("縦の字間", 1));
+        spacingRoot.add(spacingMenu("余白", 2));
+        // 入力補助（段落頭の全角スペース・かっこの自動閉じ）。前回の設定を読んで、メニューと打つ処理に反映する。既定は切
+        InputAssist.indentOnBreak = appSettings.getBool(AppSettings.INPUT_INDENT, false);
+        InputAssist.pairs = appSettings.getBool(AppSettings.INPUT_PAIRS, false);
+        JMenu assistMenu = new JMenu("入力補助");
+        JCheckBoxMenuItem indentItem = new JCheckBoxMenuItem("段落頭に全角スペース", InputAssist.indentOnBreak);
+        indentItem.addActionListener(e -> {
+            InputAssist.indentOnBreak = indentItem.isSelected();
+            appSettings.put(AppSettings.INPUT_INDENT, InputAssist.indentOnBreak);
+            appSettings.save();
+        });
+        assistMenu.add(indentItem);
+        JCheckBoxMenuItem pairsItem = new JCheckBoxMenuItem("かっこの自動閉じ", InputAssist.pairs);
+        pairsItem.addActionListener(e -> {
+            InputAssist.pairs = pairsItem.isSelected();
+            appSettings.put(AppSettings.INPUT_PAIRS, InputAssist.pairs);
+            appSettings.save();
+        });
+        assistMenu.add(pairsItem);
         JMenu format = new JMenu("書式");
         format.add(item("フォント…", null, this::chooseFont));
-        format.add(item("本文の文字を大きく", key(KeyEvent.VK_SEMICOLON, CTRL | ALT), () -> zoom(1)));
-        format.add(item("本文の文字を小さく", key(KeyEvent.VK_MINUS, CTRL | ALT), () -> zoom(-1)));
+        format.add(item("本文の文字を大きく", key(KeyEvent.VK_SEMICOLON, CTRL | ALT), ToolIcons.textSize(true), () -> zoom(1)));
+        format.add(item("本文の文字を小さく", key(KeyEvent.VK_MINUS, CTRL | ALT), ToolIcons.textSize(false), () -> zoom(-1)));
         format.addSeparator();
+        if (Edition.has(Edition.VERTICAL)) {
+            // 書字方向：今どちらかに印が付く（切り替えのキーは、下の「切り替え」の項目に付ける）
+            JMenu direction = new JMenu("書字方向");
+            javax.swing.ButtonGroup directionGroup = new javax.swing.ButtonGroup();
+            for (javax.swing.JRadioButtonMenuItem choice : new javax.swing.JRadioButtonMenuItem[]{horizontalItem, verticalItem}) {
+                boolean toVertical = choice == verticalItem;
+                choice.addActionListener(e -> {
+                    if ((currentPane() instanceof VerticalTextPane) != toVertical) {
+                        switchWriting();
+                    }
+                    syncDirectionItems();       // 切り替えられなかったとき（カードボードなど）も、印を今の文書に合わせる
+                });
+                directionGroup.add(choice);
+                direction.add(choice);
+            }
+            direction.addSeparator();
+            direction.add(item("横書き ⇔ 縦書き を切り替え", key(KeyEvent.VK_T, CTRL | SHIFT), ToolIcons.swapWriting(), this::switchWriting));
+            format.add(direction);
+        }
         wrapItem.addActionListener(e -> {
             if (currentPane() instanceof TextEditorPane text) {
                 forEachView(text, view -> ((TextEditorPane) view).setWrap(wrapItem.isSelected()));
@@ -376,27 +464,54 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         });
         format.add(wrapItem);
         if (Edition.has(Edition.VERTICAL)) {
-            addVerticalFormatItems(format);
+            addManuscriptItem(format);
+            format.add(sheetMenu);
+        }
+        format.add(spacingRoot);
+        format.addSeparator();
+        format.add(assistMenu);
+        if (Edition.has(Edition.VERTICAL)) {
+            format.addSeparator();
+            format.add(item("ルビ（ふりがな）を振る…", key(KeyEvent.VK_R, CTRL), this::editRuby));
+            format.add(item("傍点を付ける", key(KeyEvent.VK_R, CTRL | SHIFT), this::addEmphasis));
+            format.add(item("ルビ・傍点を外す", null, this::removeRuby));
         }
 
         JMenu view = new JMenu("表示");
-        view.add(item("画面を分割 / 分割をやめる", key(KeyEvent.VK_BACK_SLASH, CTRL), this::toggleSplit));
-        view.add(item("分割の向きを切り替え（左右 ⇔ 上下）", null, this::toggleOrientation));
-        view.add(item("タブを反対側へ移動", key(KeyEvent.VK_M, CTRL | SHIFT), this::moveTabToOtherGroup));
-        view.addSeparator();
+        // 画面の分割：今の状態に印が付く（ツールバーの「分割 ▾」と同じ3つ）。Ctrl+\ は「分割する / やめる」に付ける
+        JMenu splitMenu = new JMenu("画面の分割");
+        Object[][] splits = {
+            {noSplitItem, -1}, {sideSplitItem, JSplitPane.HORIZONTAL_SPLIT}, {downSplitItem, JSplitPane.VERTICAL_SPLIT},
+        };
+        for (Object[] choice : splits) {
+            javax.swing.JRadioButtonMenuItem splitItem = (javax.swing.JRadioButtonMenuItem) choice[0];
+            int orientation = (Integer) choice[1];
+            splitItem.addActionListener(e -> chooseSplit(orientation));
+            splitGroup.add(splitItem);
+            splitMenu.add(splitItem);
+        }
+        splitMenu.addSeparator();
+        splitMenu.add(item("分割する / 分割をやめる", key(KeyEvent.VK_BACK_SLASH, CTRL), ToolIcons.split(() -> false), this::toggleSplit));
+        splitMenu.add(item("タブを反対側へ移動", key(KeyEvent.VK_M, CTRL | SHIFT), this::moveTabToOtherGroup));
+        view.add(splitMenu);
         // ブラウザと同じ、画面全体（メニュー・ボタン・本文）の拡大・縮小
-        view.add(item("拡大", key(KeyEvent.VK_SEMICOLON, CTRL), () -> setUiZoom(Theme.nextZoom(1))));
-        view.add(item("縮小", key(KeyEvent.VK_MINUS, CTRL), () -> setUiZoom(Theme.nextZoom(-1))));
-        view.add(item("100% に戻す", key(KeyEvent.VK_0, CTRL), () -> setUiZoom(100)));
-        view.addSeparator();
-        view.add(item("次のタブ", key(KeyEvent.VK_PAGE_DOWN, CTRL), () -> activeGroup.selectNext(1)));
-        view.add(item("前のタブ", key(KeyEvent.VK_PAGE_UP, CTRL), () -> activeGroup.selectNext(-1)));
+        JMenu zoomMenu = new JMenu("拡大・縮小");
+        zoomMenu.add(item("拡大", key(KeyEvent.VK_SEMICOLON, CTRL), ToolIcons.zoom(true), () -> setUiZoom(Theme.nextZoom(1))));
+        zoomMenu.add(item("縮小", key(KeyEvent.VK_MINUS, CTRL), ToolIcons.zoom(false), () -> setUiZoom(Theme.nextZoom(-1))));
+        zoomMenu.add(item("100% に戻す", key(KeyEvent.VK_0, CTRL), () -> setUiZoom(100)));
+        view.add(zoomMenu);
+        JMenu tabMenu = new JMenu("タブの切り替え");
+        tabMenu.add(item("次のタブ", key(KeyEvent.VK_PAGE_DOWN, CTRL), () -> activeGroup.selectNext(1)));
+        tabMenu.add(item("前のタブ", key(KeyEvent.VK_PAGE_UP, CTRL), () -> activeGroup.selectNext(-1)));
+        view.add(tabMenu);
         view.addSeparator();
         // 配色は、選ぶとすぐに変わる
         JMenu schemeMenu = new JMenu("配色");
         javax.swing.ButtonGroup schemeGroup = new javax.swing.ButtonGroup();
         for (Theme.Scheme scheme : Theme.Scheme.values()) {
             javax.swing.JRadioButtonMenuItem schemeItem = new javax.swing.JRadioButtonMenuItem(scheme.label, scheme == Theme.scheme());
+            Color[] colors = Theme.preview(scheme);
+            withIcon(schemeItem, ToolIcons.swatch(colors[0], colors[1], colors[2]));     // 名前を読む前に、色で選べるように
             schemeItem.addActionListener(e -> {
                 appSettings.put(AppSettings.THEME, scheme.id);
                 appSettings.save();
@@ -418,17 +533,6 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             countMenu.add(countItem);
         }
         view.add(countMenu);
-        // 原稿用紙の字数・行数（選ぶと、開いている縦書きの文書にすぐ反映する）
-        JMenu sheetMenu = new JMenu("原稿用紙");
-        sheetMenu.add(sheetSizeMenu("字数", true));
-        sheetMenu.add(sheetSizeMenu("行数", false));
-        view.add(sheetMenu);
-        // 行間・字間・余白（縦書きは3つとも、横書きは余白だけ。選ぶと、開いている文書にすぐ反映する）
-        JMenu spacingRoot = new JMenu("行間・字間・余白");
-        spacingRoot.add(spacingMenu("縦の行間", 0));
-        spacingRoot.add(spacingMenu("縦の字間", 1));
-        spacingRoot.add(spacingMenu("余白", 2));
-        view.add(spacingRoot);
         JCheckBoxMenuItem stripeItem = new JCheckBoxMenuItem("行の縞模様", Theme.stripes);
         stripeItem.addActionListener(e -> {
             Theme.stripes = stripeItem.isSelected();
@@ -447,44 +551,38 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             }
         });
         view.add(rubyItem);
-        // 入力補助（段落頭の全角スペース・かっこの自動閉じ）。前回の設定を読んで、メニューと打つ処理に反映する。既定は切
-        InputAssist.indentOnBreak = appSettings.getBool(AppSettings.INPUT_INDENT, false);
-        InputAssist.pairs = appSettings.getBool(AppSettings.INPUT_PAIRS, false);
-        JMenu assistMenu = new JMenu("入力補助");
-        JCheckBoxMenuItem indentItem = new JCheckBoxMenuItem("段落頭に全角スペース", InputAssist.indentOnBreak);
-        indentItem.addActionListener(e -> {
-            InputAssist.indentOnBreak = indentItem.isSelected();
-            appSettings.put(AppSettings.INPUT_INDENT, InputAssist.indentOnBreak);
-            appSettings.save();
-        });
-        assistMenu.add(indentItem);
-        JCheckBoxMenuItem pairsItem = new JCheckBoxMenuItem("かっこの自動閉じ", InputAssist.pairs);
-        pairsItem.addActionListener(e -> {
-            InputAssist.pairs = pairsItem.isSelected();
-            appSettings.put(AppSettings.INPUT_PAIRS, InputAssist.pairs);
-            appSettings.save();
-        });
-        assistMenu.add(pairsItem);
-        view.add(assistMenu);
         view.addSeparator();
-        view.add(item("フォルダのサイドバー", key(KeyEvent.VK_E, CTRL | SHIFT), this::toggleSidebar));
-        view.add(item("見出し一覧", key(KeyEvent.VK_L, CTRL | ALT), this::toggleOutline));
-        view.add(item("作品の集計", null, this::toggleWork));
+        // 欄の出し入れ：どれもチェックの付く項目にそろえ、出ている欄に印が付く（チェックの項目には、アイコンを付けない）
+        JMenu panelMenu = new JMenu("欄");
+        addPanelItem(panelMenu, sidebarItem, key(KeyEvent.VK_E, CTRL | SHIFT), this::toggleSidebar);
+        addPanelItem(panelMenu, outlineItem, key(KeyEvent.VK_L, CTRL | ALT), this::toggleOutline);
+        addPanelItem(panelMenu, workItem, null, this::toggleWork);
         if (Edition.has(Edition.VERTICAL)) {
-            view.add(item("校正の欄", key(KeyEvent.VK_F7, 0), () -> showRight("proof")));
+            addPanelItem(panelMenu, proofItem, key(KeyEvent.VK_F7, 0), () -> showRight("proof"));
         }
         if (Edition.has(Edition.AI)) {
-            view.add(item("AI の会話欄", key(KeyEvent.VK_A, CTRL | SHIFT), () -> showRight("ai")));
+            addPanelItem(panelMenu, chatItem, key(KeyEvent.VK_A, CTRL | SHIFT), () -> showRight("ai"));
+            addPanelItem(panelMenu, terminalItem, key(KeyEvent.VK_J, CTRL), () -> setTerminalVisible(!terminalVisible));
         }
-        view.add(item("集中モード", key(KeyEvent.VK_F11, 0), this::toggleFocusMode));
+        // 開くたびに、今の状態に印を合わせる
+        panelMenu.addMenuListener(new javax.swing.event.MenuListener() {
+            @Override
+            public void menuSelected(javax.swing.event.MenuEvent e) {
+                syncMenuMarks();
+            }
+
+            @Override
+            public void menuDeselected(javax.swing.event.MenuEvent e) {
+            }
+
+            @Override
+            public void menuCanceled(javax.swing.event.MenuEvent e) {
+            }
+        });
+        view.add(panelMenu);
+        view.add(item("集中モード", key(KeyEvent.VK_F11, 0), ToolIcons.focus(), this::toggleFocusMode));
         if (Edition.has(Edition.VERTICAL)) {
             view.add(item("執筆の記録…", null, this::showStats));
-        }
-        if (Edition.has(Edition.AI)) {
-            view.addSeparator();
-            terminalItem.setAccelerator(key(KeyEvent.VK_J, CTRL));
-            terminalItem.addActionListener(e -> setTerminalVisible(terminalItem.isSelected()));
-            view.add(terminalItem);
         }
 
         // カードボード専用の操作。ほかの種類の文書を開いているときは、案内を出すだけにする
@@ -523,7 +621,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         aiMenu.add(item("AI に任せるフォルダを選ぶ…", null, this::chooseWorkspace));
         aiMenu.add(item("接続のしかた…", null, this::showMcpHelp));
         aiMenu.addSeparator();
-        aiMenu.add(item("AI の会話欄を開く", null, () -> showRight("ai")));
+        aiMenu.add(item("AI の会話欄を開く", null, ToolIcons.chat(), () -> showRight("ai")));
         aiMenu.add(item("会話欄で使う AI の設定…", null, this::openSettings));
 
         menuBar.add(file);
@@ -539,7 +637,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
 
         // 困ったときに引ける説明（ふつうのエディタと同じ操作が多いので、チュートリアルは出さない）
         JMenu help = new JMenu("ヘルプ");
-        paletteItem = item("すべての操作を探す…", key(KeyEvent.VK_P, CTRL), this::showPalette);
+        paletteItem = item("すべての操作を探す…", key(KeyEvent.VK_P, CTRL), ToolIcons.commands(), this::showPalette);
         help.add(paletteItem);
         help.addSeparator();
         help.add(item("使い方", key(KeyEvent.VK_F1, 0), () -> HelpDialog.showGuide(this)));
@@ -548,23 +646,6 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         help.add(item("DATUM-Editor について", null, () -> HelpDialog.showAbout(this)));
         menuBar.add(help);
 
-        // 右端（ウィンドウの最小化・最大化・×のすぐ下）に、1回押すだけで使えるボタンを並べる
-        JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0)) {
-            @Override
-            public Dimension getMaximumSize() {
-                return getPreferredSize();      // 表示の倍率を変えたときも、ボタンの大きさに合わせて広がるように
-            }
-        };
-        tools.setOpaque(false);
-        for (JToggleButton button : new JToggleButton[]{paletteButton, folderButton, splitSideButton, splitDownButton, proofButton, aiButton, terminalButton, focusButton}) {
-            if ((button == proofButton && !Edition.has(Edition.VERTICAL))
-                    || ((button == aiButton || button == terminalButton) && !Edition.has(Edition.AI))) {
-                continue;           // 種類に入っていない機能のボタンは出さない
-            }
-            tools.add(button);
-        }
-        menuBar.add(Box.createHorizontalGlue());
-        menuBar.add(tools);
         return menuBar;
     }
 
@@ -597,6 +678,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             int value = level;
             javax.swing.JRadioButtonMenuItem levelItem = new javax.swing.JRadioButtonMenuItem(
                     Spacing.NAMES[level], level == current);
+            withIcon(levelItem, ToolIcons.spacing(kind, level));      // 文字を読む前に、形で広さの違いがわかるように
             levelItem.addActionListener(e -> setSpacing(kind, value));
             group.add(levelItem);
             menu.add(levelItem);
@@ -637,7 +719,6 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         SheetSize.save(appSettings);
         appSettings.save();
         manuscriptItem.setText(sheetLabel());
-        sheetCache.clear();
         for (EditorPane pane : documentPanes()) {
             if (pane instanceof VerticalTextPane vertical) {
                 forEachView(vertical, view -> ((VerticalTextPane) view).setManuscript(((VerticalTextPane) view).isManuscript()));
@@ -646,9 +727,8 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         updateStatus();
     }
 
-    /** 書式メニューの、縦書き（Writer から）の項目。 */
-    private void addVerticalFormatItems(JMenu format) {
-        format.add(item("横書き ⇔ 縦書き を切り替え", key(KeyEvent.VK_T, CTRL | SHIFT), this::switchWriting));
+    /** 書式メニューの、原稿用紙の表示を切り替える項目（縦書き。Writer から）。 */
+    private void addManuscriptItem(JMenu format) {
         manuscriptItem.setText(sheetLabel());
         manuscriptItem.setAccelerator(key(KeyEvent.VK_G, CTRL | SHIFT));
         manuscriptItem.addActionListener(e -> {
@@ -660,50 +740,107 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             }
         });
         format.add(manuscriptItem);
-        format.addSeparator();
-        format.add(item("ルビ（ふりがな）を振る…", key(KeyEvent.VK_R, CTRL), this::editRuby));
-        format.add(item("傍点を付ける", key(KeyEvent.VK_R, CTRL | SHIFT), this::addEmphasis));
-        format.add(item("ルビ・傍点を外す", null, this::removeRuby));
     }
 
-    /** メニューバーの右端に置く、1回押すだけで欄を出し入れするボタン。出ている間は青くなる。 */
-    private JToggleButton createToolButton(String label, String tooltip, Runnable action) {
-        JToggleButton button = new JToggleButton(label) {
+    /** ツールバーにボタンを並べる。種類（Edition）に入っていない機能のボタンは出さない。null は区切りの線。 */
+    private void buildToolBar() {
+        toolBar.addLeft(folderButton);
+        List<Component> rightParts = new ArrayList<>(List.of(searchButton));
+        if (Edition.has(Edition.AI)) {
+            rightParts.add(aiButton);
+        }
+        rightParts.add(focusButton);
+        rightParts.add(moreButton);
+        toolBar.addRight(rightParts.toArray(new Component[0]));
+    }
+
+    /**
+     * 「その他」の一覧。上に 操作を探す・分割・ターミナル、その下にメニューバーのメニューを全部並べる。
+     * メニューは作り直さず、開いている間だけメニューバーから借りてくる（定型文のように開くたびに中身を
+     * 作り直すメニューや、チェックの印も、そのまま動くように）。閉じたらすぐメニューバーへ返す
+     * （ショートカットはメニューバーにある項目でしか効かないため）。
+     */
+    private void showMore(Component invoker) {
+        JMenuBar bar = getJMenuBar();
+        JPopupMenu popup = new JPopupMenu();
+        popup.add(item("すべての操作を探す…", null, this::showPalette));    // 文字の頭をそろえるため、上の3つにはアイコンを付けない
+        popup.add(item(split ? "分割をやめる" : "左右に分ける", null,
+                () -> chooseSplit(split ? -1 : JSplitPane.HORIZONTAL_SPLIT)));
+        if (Edition.has(Edition.AI)) {
+            popup.add(item(terminalVisible ? "ターミナルを閉じる" : "ターミナル", null, () -> setTerminalVisible(!terminalVisible)));
+        }
+        popup.addSeparator();
+        List<JMenu> menus = new ArrayList<>();
+        for (int i = 0; i < bar.getMenuCount(); i++) {
+            menus.add(bar.getMenu(i));
+        }
+        for (JMenu menu : menus) {
+            popup.add(menu);            // メニューバーから移る（1つの部品は1か所にしか置けない）
+        }
+        popup.addPopupMenuListener(new javax.swing.event.PopupMenuListener() {
             @Override
-            protected void paintComponent(Graphics g) {
-                Graphics2D g2 = (Graphics2D) g.create();
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                boolean hot = getModel().isRollover() || getModel().isPressed();
-                g2.setColor(isSelected() ? Theme.ACCENT : hot ? Theme.HOVER : Theme.INPUT);
-                g2.fillRoundRect(0, 0, getWidth(), getHeight(), 8, 8);
-                g2.dispose();
-                super.paintComponent(g);
+            public void popupMenuWillBecomeVisible(javax.swing.event.PopupMenuEvent e) {
             }
-        };
-        button.setContentAreaFilled(false);
-        button.setFocusPainted(false);
-        button.setFocusable(false);
-        button.setRolloverEnabled(true);
-        button.setForeground(Theme.FG_STRONG);
-        // 青い地のときは白い文字にする（ライトの配色でも読めるように）
-        button.addItemListener(e -> button.setForeground(button.isSelected() ? Color.WHITE : Theme.FG_STRONG));
-        button.setFont(label.equals(">_") ? new Font(Font.MONOSPACED, Font.BOLD, Theme.SMALL_SIZE) : Theme.small());
-        button.setBorder(BorderFactory.createEmptyBorder(2, 10, 2, 10));
-        button.setToolTipText(tooltip);
-        button.addActionListener(e -> {
-            button.setSelected(!button.isSelected());   // 表示の切り替えは action 側で行い、その結果に合わせる
-            action.run();
+
+            @Override
+            public void popupMenuWillBecomeInvisible(javax.swing.event.PopupMenuEvent e) {
+                // 項目を押したときは、ここが先に呼ばれ、そのあとで項目の動作が走る。先に返しておけば、
+                // 動作の中でメニューバーを読むもの（操作を探す・キーの一覧）も、全部の項目を見られる
+                for (JMenu menu : menus) {
+                    bar.add(menu);
+                }
+                bar.revalidate();
+            }
+
+            @Override
+            public void popupMenuCanceled(javax.swing.event.PopupMenuEvent e) {
+            }
         });
-        return button;
+        popup.show(invoker, 0, invoker.getHeight());
     }
 
-    /** アイコンで表すボタン。name は、読み上げ（アクセシビリティ）用の名前。 */
-    private JToggleButton createIconButton(javax.swing.Icon icon, String name, String tooltip, Runnable action) {
-        JToggleButton button = createToolButton("", name + "：" + tooltip, action);
-        button.setIcon(icon);
-        button.getAccessibleContext().setAccessibleName(name);
-        button.setBorder(BorderFactory.createEmptyBorder(3, 8, 3, 8));
-        return button;
+    /** 「表示 → 欄」に、欄の出し入れの項目を足す。押したら出し入れし、印を本当の状態に合わせ直す。 */
+    private void addPanelItem(JMenu menu, JCheckBoxMenuItem panelItem, KeyStroke accelerator, Runnable toggle) {
+        panelItem.setAccelerator(accelerator);
+        panelItem.addActionListener(e -> {
+            toggle.run();
+            syncMenuMarks();
+        });
+        menu.add(panelItem);
+    }
+
+    /** メニューの印（書字方向・分割・欄）を、今の状態に合わせる。メニューを開くときと、コマンドパレットを開くときに呼ぶ。 */
+    private void syncMenuMarks() {
+        syncDirectionItems();
+        sidebarItem.setSelected(sidebarVisible);
+        outlineItem.setSelected(outlineVisible);
+        workItem.setSelected(workVisible);
+        proofItem.setSelected("proof".equals(rightPanel));
+        chatItem.setSelected("ai".equals(rightPanel));
+        terminalItem.setSelected(terminalVisible);
+    }
+
+    /** 書字方向の印を、今の文書に合わせる（カードボードなら、どちらにも付けない）。 */
+    private void syncDirectionItems() {
+        EditorPane pane = currentPane();
+        if (pane instanceof VerticalTextPane) {
+            verticalItem.setSelected(true);
+        } else if (pane instanceof TextEditorPane) {
+            horizontalItem.setSelected(true);
+        } else if (horizontalItem.getModel().getGroup() != null) {
+            horizontalItem.getModel().getGroup().clearSelection();
+        }
+    }
+
+    /** 分割を選ぶ（orientation が -1 なら分割しない）。今と同じなら何もしない。 */
+    private void chooseSplit(int orientation) {
+        if (orientation < 0) {
+            if (split) {
+                toggleSplit();
+            }
+        } else if (!split || splitOrientation != orientation) {
+            splitTo(orientation);
+        }
     }
 
     // ---------- 左右の欄（サイドバー・校正・AI） ----------
@@ -908,7 +1045,6 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             toggleFocusMode();          // 集中モード中に欄を開くときは、集中モードを終える
         }
         rightPanel = next;
-        proofButton.setSelected("proof".equals(next));
         aiButton.setSelected("ai".equals(next));
         layoutMain();
         if ("proof".equals(next)) {
@@ -946,8 +1082,10 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     /**
      * 集中モード：メニュー・タブ・ステータスバー・左右の欄を隠し、ウィンドウを最大にして、文章だけにする。
      * テキストの文書では、文字の列を中央に寄せ、カーソルの行をいつも画面の真ん中に保つ。F11（または Esc）で戻る。
+     * ツールバーとステータスバーは、入るときは 150ms かけて薄く消してから並びを変え、戻るときは並びを戻してから浮かび上がらせる。
      */
     private void toggleFocusMode() {
+        barFader.finish();                      // 前の切り替えの途中なら、先に終わらせる（続けて F11 を押されたとき）
         focusMode = !focusMode;
         InputMap windowKeys = getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
         if (focusMode) {
@@ -956,62 +1094,78 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             windowKeys.remove(key(KeyEvent.VK_ESCAPE, 0));
         }
         focusButton.setSelected(focusMode);
-        JMenuBar menuBar = getJMenuBar();
         if (focusMode) {
-            stateBeforeFocus = getExtendedState();
-            terminalBeforeFocus = terminalVisible;
-            folderSearchBeforeFocus = folderSearchVisible;
-            if (folderSearchVisible) {
-                folderSearch.cancelSearch();
-                folderSearchVisible = false;
-            }
-            outlineBeforeFocus = outlineVisible;
-            outlineVisible = false;
-            workBeforeFocus = workVisible;
-            if (workVisible) {
-                work.cancel();
-                workVisible = false;
-            }
-            if (terminalVisible) {
-                setTerminalVisible(false);
-            }
-            layoutCenter();
-            // メニューは隠すと Ctrl+S などのショートカットも効かなくなるので、高さを 0 にして見えなくする
-            menuBar.setPreferredSize(new Dimension(0, 0));
-            statusBar.setVisible(false);
-            group1.setTabsVisible(false);
-            group2.setTabsVisible(false);
-            setExtendedState(MAXIMIZED_BOTH);
-            if (currentPane() instanceof TextEditorPane text) {
-                text.setFocusMode(true);
-            }
-            showHint("集中モード　F11 か Esc で元に戻ります");
+            barFader.fade(false, this::enterFocusLayout);
         } else {
-            menuBar.setPreferredSize(null);
-            statusBar.setVisible(true);
-            group1.setTabsVisible(true);
-            group2.setTabsVisible(true);
-            setExtendedState(stateBeforeFocus);
-            for (EditorPane pane : allPanes()) {
-                if (pane instanceof TextEditorPane text) {
-                    text.setFocusMode(false);
-                }
-            }
-            folderSearchVisible = folderSearchBeforeFocus;
-            outlineVisible = outlineBeforeFocus;
-            if (outlineVisible) {
-                outline.refresh();              // 集中モードの間に文書が変わっているかもしれないので、探し直す
-            }
-            workVisible = workBeforeFocus;
-            if (workVisible) {
-                work.refresh();                 // 集中モードの間に文書が変わっているかもしれないので、数え直す
-            }
-            if (terminalBeforeFocus) {
-                setTerminalVisible(true);       // 中で、検索の欄の分と一緒に並べ直す
-            } else {
-                layoutCenter();
+            leaveFocusLayout();
+            barFader.fade(true, null);
+        }
+    }
+
+    /** 集中モードの並びにする（ツールバーとステータスバーを消し終わったところで呼ぶ）。 */
+    private void enterFocusLayout() {
+        JMenuBar menuBar = getJMenuBar();
+        stateBeforeFocus = getExtendedState();
+        terminalBeforeFocus = terminalVisible;
+        folderSearchBeforeFocus = folderSearchVisible;
+        if (folderSearchVisible) {
+            folderSearch.cancelSearch();
+            folderSearchVisible = false;
+        }
+        outlineBeforeFocus = outlineVisible;
+        outlineVisible = false;
+        workBeforeFocus = workVisible;
+        if (workVisible) {
+            work.cancel();
+            workVisible = false;
+        }
+        if (terminalVisible) {
+            setTerminalVisible(false);
+        }
+        layoutCenter();
+        statusBar.setVisible(false);
+        toolBar.setVisible(false);
+        group1.setTabsVisible(false);
+        group2.setTabsVisible(false);
+        setExtendedState(MAXIMIZED_BOTH);
+        if (currentPane() instanceof TextEditorPane text) {
+            text.setFocusMode(true);
+        }
+        showHint("集中モード　F11 か Esc で元に戻ります");
+        finishFocusLayout(menuBar);
+    }
+
+    /** 元の並びに戻す（このあと、ツールバーとステータスバーを浮かび上がらせる）。 */
+    private void leaveFocusLayout() {
+        JMenuBar menuBar = getJMenuBar();
+        statusBar.setVisible(true);
+        toolBar.setVisible(true);
+        group1.setTabsVisible(true);
+        group2.setTabsVisible(true);
+        setExtendedState(stateBeforeFocus);
+        for (EditorPane pane : allPanes()) {
+            if (pane instanceof TextEditorPane text) {
+                text.setFocusMode(false);
             }
         }
+        folderSearchVisible = folderSearchBeforeFocus;
+        outlineVisible = outlineBeforeFocus;
+        if (outlineVisible) {
+            outline.refresh();              // 集中モードの間に文書が変わっているかもしれないので、探し直す
+        }
+        workVisible = workBeforeFocus;
+        if (workVisible) {
+            work.refresh();                 // 集中モードの間に文書が変わっているかもしれないので、数え直す
+        }
+        if (terminalBeforeFocus) {
+            setTerminalVisible(true);       // 中で、検索の欄の分と一緒に並べ直す
+        } else {
+            layoutCenter();
+        }
+        finishFocusLayout(menuBar);
+    }
+
+    private void finishFocusLayout(JMenuBar menuBar) {
         menuBar.revalidate();
         layoutMain();
         withPane(pane -> SwingUtilities.invokeLater(pane::focusEditor));
@@ -1122,8 +1276,8 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
 
     /** コマンドパレット（すべての操作を名前で探す）を開く。メニューの項目は自動で集める。 */
     private void showPalette() {
-        paletteButton.setSelected(false);   // 押したままの見た目にしない（欄の出し入れのボタンではないため）
         refreshSnippetMenu();               // 定型文は、パレットに集める前に作り直す（メニューを開いていなくても最新にするため）
+        syncMenuMarks();                    // 欄などの「（今：オン）」を、本当の状態に合わせる
         List<CommandPalette.Command> extras = new ArrayList<>();
         // メニューにない操作（タブの右クリックなどでしかできないもの）
         extras.add(new CommandPalette.Command("extra/ほかのタブを閉じる", "ほかのタブを閉じる", "タブ", "", () -> {
@@ -1287,10 +1441,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     /** 起動したまま配色を変える。画面に出ていない部品（裏のタブ・閉じている欄）も一緒に塗り直す。 */
     private void applyScheme(Theme.Scheme scheme) {
         Theme.switchTo(scheme, themeRoots());
-        JToggleButton[] buttons = {paletteButton, folderButton, splitSideButton, splitDownButton, proofButton, aiButton, terminalButton, focusButton};
-        for (JToggleButton button : buttons) {
-            button.setForeground(button.isSelected() ? Color.WHITE : Theme.FG_STRONG);
-        }
+        toolBar.repaint();
         for (EditorGroup group : new EditorGroup[]{group1, group2}) {
             group.refreshTabs();
         }
@@ -1419,6 +1570,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         session.put("activeGroup", activeGroup == group2 ? 1 : 0);
         session.put("split", split);
         session.put("vertical", splitOrientation == JSplitPane.VERTICAL_SPLIT);
+        barFader.finish();          // 集中モードに入る途中で閉じたときも、入る前のウィンドウの状態を残せるように
         boolean maximized = (getExtendedState() & MAXIMIZED_BOTH) == MAXIMIZED_BOTH;
         int state = focusMode ? stateBeforeFocus : getExtendedState();
         session.put("window", McpServer.map("x", getX(), "y", getY(), "width", getWidth(), "height", getHeight(),
@@ -1655,7 +1807,6 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         if (visible && !Edition.has(Edition.AI)) {
             return;
         }
-        terminalButton.setSelected(visible);
         terminalItem.setSelected(visible);
         if (visible == terminalVisible) {
             return;
@@ -1836,7 +1987,21 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     }
 
     private static JMenuItem item(String label, KeyStroke accelerator, Runnable action) {
+        return item(label, accelerator, null, action);
+    }
+
+    /** メニュー項目にアイコンを付ける。文字とくっつかないように、アイコンの半分ほど間をあける。 */
+    private static void withIcon(javax.swing.AbstractButton item, javax.swing.Icon icon) {
+        item.setIcon(icon);
+        item.setIconTextGap(Math.max(6, icon.getIconWidth() / 2));
+    }
+
+    /** アイコン付きのメニュー項目（icon が null なら、文字だけ）。 */
+    private static JMenuItem item(String label, KeyStroke accelerator, javax.swing.Icon icon, Runnable action) {
         JMenuItem item = new JMenuItem(label);
+        if (icon != null) {
+            withIcon(item, icon);
+        }
         if (accelerator != null) {
             item.setAccelerator(accelerator);
         }
@@ -2031,23 +2196,12 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             flash("カードがないので、書き出すものがありません");
             return;
         }
-        JFileChooser chooser = newFileChooser();
-        FileNameExtensionFilter pngFilter = new FileNameExtensionFilter("PNG 画像 (*.png)", "png");
-        chooser.setAcceptAllFileFilterUsed(false);
-        chooser.setFileFilter(pngFilter);
-        if (board.getPath() != null) {
-            String base = board.getPath().toString().replaceAll("\\.[^.\\\\/]+$", "");
-            chooser.setSelectedFile(new java.io.File(base + ".png"));
-        }
-        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
+        Path chosen = chooseFile("画像として書き出す", true, sameNameWith(board.getPath(), "png"));
+        if (chosen == null) {
             return;
         }
-        String name = chooser.getSelectedFile().toString();
-        if (!name.toLowerCase().endsWith(".png")) {
-            name = name + ".png";
-        }
-        Path path = Path.of(name);
-        if (!confirmOverwrite(path)) {
+        Path path = withExtension(chosen, "png");
+        if (!path.equals(chosen) && !confirmOverwrite(path)) {     // 同じ名前なら、上書きの確認は OS の画面が済ませている
             return;
         }
         try {
@@ -2087,6 +2241,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         updateStatus();
         wrapItem.setSelected(currentPane() instanceof TextEditorPane text && text.isWrap());
         manuscriptItem.setSelected(!(currentPane() instanceof VerticalTextPane vertical) || vertical.isManuscript());
+        syncDirectionItems();
         findBar.paneSwitched();
         if (proofPanel != null && "proof".equals(rightPanel)) {
             proofPanel.refresh();
@@ -2104,40 +2259,27 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         if (pane == null) {
             setTitle(APP_NAME + " " + Edition.title());
         } else {
-            setTitle(pane.getTitle() + (pane.isDirty() ? " ●" : "") + " - " + APP_NAME);
+            setTitle(withoutExtension(pane.getTitle()) + (pane.isDirty() ? " ●" : "") + " - " + APP_NAME);
         }
     }
 
+    /** 題名に出す名前（「時系列.json」→「時系列」）。「.memo」のように点で始まる名前は、そのまま。 */
+    static String withoutExtension(String name) {
+        int dot = name.lastIndexOf('.');
+        return dot > 0 ? name.substring(0, dot) : name;
+    }
+
+    /**
+     * 状態バーは「AI 連携」「今日の文字数」「倍率」だけにする（文字コード・形式・枚数などは出さない。本文が主役）。
+     * 一時的な知らせ（message）があるときは、左にそれを出す。
+     */
     private void updateStatus() {
-        EditorPane pane = currentPane();
         goalMeter.refresh();
-        if (pane == null) {
-            statusLeft.setText(message != null ? message : " ");
-            statusRight.setText(" ");
-            return;
-        }
-        statusLeft.setText(message != null ? message : pane.getMode().label);
-        String format;
-        if (pane.getPath() == null) {
-            format = "未保存";
-        } else if (isJsonPath(pane.getPath()) && !pane.isRawFile()) {
-            format = "JSON";
-        } else {
-            format = "テキスト";
-        }
-        String sheets = pane instanceof TextEditorPane text && Edition.has(Edition.VERTICAL)
-                ? "    原稿用紙換算 " + sheetCache.computeIfAbsent(text.firstView(), p -> WritingStats.manuscriptSheets(text.getText())) + " 枚"
-                : "";
-        // 字数は、設定の数え方で数える（横書きは記法を含むので、ルビを除くモードでは親文字だけを数える）
-        String count = pane instanceof Searchable s
-                ? "    " + WritingStats.charCountText(s, WritingStats.CountMode.fromId(appSettings.getString(AppSettings.COUNT_MODE, "all")),
-                        pane instanceof TextEditorPane)
-                : "";
-        statusRight.setText(pane.statusText() + count + sheets + "    UTF-8    " + format
-                + (mcp.isRunning() ? "    AI 連携中" : ""));
+        String ai = Edition.has(Edition.AI) && mcp.isRunning() ? "● AI 連携中" : " ";
+        statusLeft.setText(message != null ? message : ai);
     }
 
-    /** 字数の数え方を変える。ステータスバーにすぐ出し、設定にも残す。 */
+    /** 字数の数え方を変える。設定に残し、作品の集計に使う。 */
     private void setCountMode(WritingStats.CountMode mode) {
         appSettings.put(AppSettings.COUNT_MODE, mode.id);
         appSettings.save();
@@ -2145,6 +2287,12 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         if (workVisible) {
             work.refresh();                     // 作品の集計の欄が出ていれば、新しい数え方で数え直す
         }
+    }
+
+    /** 保存できたことを、ステータスバーの真ん中に1秒だけ淡く出す（ダイアログは出さない）。 */
+    private void showSaved() {
+        statusCenter.setText("保存しました");
+        savedTimer.restart();
     }
 
     /** ステータスバーに、数秒だけお知らせを出す（ポップアップで作業を止めないため）。 */
@@ -2158,7 +2306,6 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
 
     @Override
     public void contentChanged(EditorPane pane) {
-        sheetCache.remove(pane.firstView());
         findBar.contentChanged(pane);
         stats.changed(pane);
         if (proofPanel != null && pane == currentPane()) {
@@ -2375,13 +2522,10 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
      */
     private void openFile(boolean forceVertical) {
         boolean vertical = Edition.has(Edition.VERTICAL) && (forceVertical || currentPane() instanceof VerticalTextPane);
-        JFileChooser chooser = newFileChooser();
-        chooser.setDialogTitle(vertical ? "縦書きで開く" : "開く");
-        chooser.addChoosableFileFilter(new FileNameExtensionFilter("テキスト / JSON (*.txt, *.json)", "txt", "json"));
-        if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
+        Path path = chooseFile(vertical ? "縦書きで開く" : "開く", false, null);
+        if (path == null) {
             return;
         }
-        Path path = chooser.getSelectedFile().toPath().toAbsolutePath();
         if (FolderSidebar.isGoogleFile(path)) {
             // Google ドキュメントなどは本文が PC にない（リンクだけ）ので、タブには開かずブラウザに渡す
             flash(FolderSidebar.openGoogleFile(path));
@@ -2506,6 +2650,41 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         return new JFileChooser(appSettings.startFolder().toFile());
     }
 
+    /**
+     * ファイルを開く・保存する場所を、OS の画面（Windows はエクスプローラー、Linux は GTK、macOS は Finder）で選ぶ。
+     * 使い慣れた画面のほうが迷わず、「最近使った項目」やよく使うフォルダもそのまま使えるため、Swing の画面は使わない。
+     * suggested は、初めに入れておくファイル（null なら、最後に保存したフォルダを開く）。選ばなければ null。
+     * フォルダだけを選ぶ画面は、Windows の OS の画面ではできないので、newFileChooser のまま。
+     */
+    private Path chooseFile(String title, boolean save, Path suggested) {
+        java.awt.FileDialog dialog = new java.awt.FileDialog(this, title, save ? java.awt.FileDialog.SAVE : java.awt.FileDialog.LOAD);
+        Path folder = suggested != null && suggested.toAbsolutePath().getParent() != null
+                ? suggested.toAbsolutePath().getParent() : appSettings.startFolder();
+        dialog.setDirectory(folder.toString());
+        if (suggested != null) {
+            dialog.setFile(suggested.getFileName().toString());
+        }
+        dialog.setVisible(true);            // 選び終わるまで、ここで待つ
+        if (dialog.getFile() == null || dialog.getDirectory() == null) {
+            return null;
+        }
+        return Path.of(dialog.getDirectory(), dialog.getFile()).toAbsolutePath();
+    }
+
+    /** 書き出すときに初めに入れておく名前：今の文書と同じ名前で、拡張子だけ ext にする。保存していなければ「無題」。 */
+    private Path sameNameWith(Path path, String ext) {
+        if (path == null) {
+            return appSettings.startFolder().resolve("無題." + ext);
+        }
+        return Path.of(path.toString().replaceAll("\\.[^.\\\\/]+$", "") + "." + ext);
+    }
+
+    /** 拡張子が ext でなければ、付け足す（ext は「.」なし）。 */
+    private static Path withExtension(Path path, String ext) {
+        String name = path.toString();
+        return name.toLowerCase().endsWith("." + ext) ? path : Path.of(name + "." + ext);
+    }
+
     /** 保存する。成功したら true。保存先が決まっていなければ「名前を付けて保存」になる。 */
     private boolean save(EditorPane pane) {
         if (pane == null) {
@@ -2521,31 +2700,24 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         if (pane == null) {
             return false;
         }
-        JFileChooser chooser = newFileChooser();
-        FileNameExtensionFilter txtFilter = new FileNameExtensionFilter("テキスト (*.txt)", "txt");
-        FileNameExtensionFilter jsonFilter = new FileNameExtensionFilter("JSON：設定や配置も保存 (*.json)", "json");
-        chooser.setAcceptAllFileFilterUsed(false);
-        boolean cardBoard = pane.getMode() == EditorPane.Mode.BOARD;
-        if (!cardBoard) {
-            chooser.addChoosableFileFilter(txtFilter);     // カードボードはカードの位置があるので、JSON だけにする
-        }
-        chooser.addChoosableFileFilter(jsonFilter);
+        boolean cardBoard = pane.getMode() == EditorPane.Mode.BOARD;    // カードボードはカードの位置があるので、JSON だけにする
         boolean preferJson = cardBoard || (pane.getPath() != null && isJsonPath(pane.getPath()) && !pane.isRawFile());
-        chooser.setFileFilter(preferJson ? jsonFilter : txtFilter);
-        if (pane.getPath() != null) {
-            chooser.setSelectedFile(pane.getPath().toFile());
-        }
-        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
+        Path suggested = pane.getPath() != null ? pane.getPath()
+                : appSettings.startFolder().resolve("無題" + (preferJson ? ".json" : ".txt"));
+        Path chosen = chooseFile("名前を付けて保存", true, suggested);
+        if (chosen == null) {
             return false;
         }
-
-        // 選んだ形式の拡張子が付いていなければ、付け足す
-        String extension = ((FileNameExtensionFilter) chooser.getFileFilter()).getExtensions()[0];
-        String name = chooser.getSelectedFile().toString();
-        if (!name.toLowerCase().endsWith("." + extension)) {
-            name = name + "." + extension;
+        // 形式は聞かない。打った名前に拡張子があればそのまま使い、なければ今の文書の形式の拡張子を足す
+        // （カードボードは位置があるので、いつも .json）
+        Path path;
+        if (cardBoard) {
+            path = withExtension(chosen, "json");
+        } else if (hasExtension(chosen)) {
+            path = chosen;
+        } else {
+            path = withExtension(chosen, preferJson ? "json" : "txt");
         }
-        Path path = Path.of(name).toAbsolutePath();
         EditorPane open = findOpenDocument(path);
         if (open != null && open.firstView() != pane.firstView()) {
             // 別のタブで開いているファイルに保存すると、あとでそのタブを保存したときに、こちらの中身が消えてしまう
@@ -2553,18 +2725,16 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
                     + "そのタブを閉じてから保存するか、別の名前を付けてください。", "保存できません", JOptionPane.WARNING_MESSAGE);
             return false;
         }
-        // 書き方（文字コード・改行）は、今の文書の形式を初めから選んでおく
-        EncodingChoice current = pane.getPath() == null ? EncodingChoice.UTF8 : fileService.formatOf(pane.getPath());
-        EncodingChoice choice = chooseEncoding(current);
-        if (choice == null) {
-            return false;
-        }
-        if (!path.equals(pane.getPath()) && !confirmOverwrite(path)) {
+        // 上書きの確認は OS の画面が済ませている。あとから拡張子を足して名前が変わったときだけ、ここで確かめる
+        if (!path.equals(pane.getPath()) && !path.equals(chosen) && !confirmOverwrite(path)) {
             return false;
         }
 
-        boolean wasRaw = pane.isRawFile();
-        pane.setRawFile(false);         // 自分で形式を選んだので、このアプリの形式で保存する
+        // 書き方（文字コード・改行）も聞かない。開いたファイルなら、その書き方のまま（Shift_JIS で開いたら Shift_JIS で書く）。
+        // 新しい文書は UTF-8 で、改行はこの OS のふつう（Windows は CRLF、ほかは LF）にする
+        // ほかのソフトの JSON を開いていたとき（rawFile）は、名前を変えても中身はそのまま書く
+        EncodingChoice choice = pane.getPath() != null ? fileService.formatOf(pane.getPath())
+                : EncodingChoice.UTF8.withCrlf("\r\n".equals(System.lineSeparator()));
         if (write(pane, path, true, choice)) {
             pane.setPath(path);
             updateStatus();
@@ -2573,30 +2743,14 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             }
             return true;
         }
-        pane.setRawFile(wasRaw);
         return false;
     }
 
-    /** 「名前を付けて保存」のあとに、文字コードと改行を選ぶ画面。キャンセルなら null。 */
-    private EncodingChoice chooseEncoding(EncodingChoice current) {
-        JComboBox<String> encodingBox = new JComboBox<>(new String[]{"UTF-8", "UTF-8（BOM 付き）", "Shift_JIS"});
-        encodingBox.setSelectedIndex(current.encodingIndex());
-        JComboBox<String> newlineBox = new JComboBox<>(EncodingChoice.NEWLINES.toArray(new String[0]));
-        newlineBox.setSelectedIndex(current.crlf() ? 1 : 0);
-
-        JPanel panel = new JPanel();
-        panel.add(new JLabel("文字コード:"));
-        panel.add(encodingBox);
-        panel.add(new JLabel("改行:"));
-        panel.add(newlineBox);
-
-        int result = JOptionPane.showConfirmDialog(this, panel, "書き方",
-                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
-        if (result != JOptionPane.OK_OPTION) {
-            return null;
-        }
-        return EncodingChoice.ENCODINGS.get(encodingBox.getSelectedIndex())
-                .withCrlf(newlineBox.getSelectedIndex() == 1);
+    /** 名前に拡張子（「.」のあとの文字）が付いているか。「.」で始まる名前は、拡張子とみなさない。 */
+    private static boolean hasExtension(Path path) {
+        String name = path.getFileName().toString();
+        int dot = name.lastIndexOf('.');
+        return dot > 0 && dot < name.length() - 1;
     }
 
     /** 今の文書を、PDF ファイルに書き出す。 */
@@ -2609,22 +2763,12 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             flash("カードがないので、書き出すものがありません");
             return;
         }
-        JFileChooser chooser = newFileChooser();
-        chooser.setAcceptAllFileFilterUsed(false);
-        chooser.setFileFilter(new FileNameExtensionFilter("PDF (*.pdf)", "pdf"));
-        if (pane.getPath() != null) {
-            String base = pane.getPath().toString().replaceAll("\\.[^.\\\\/]+$", "");
-            chooser.setSelectedFile(new java.io.File(base + ".pdf"));
-        }
-        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
+        Path chosen = chooseFile("PDF として書き出す", true, sameNameWith(pane.getPath(), "pdf"));
+        if (chosen == null) {
             return;
         }
-        String name = chooser.getSelectedFile().toString();
-        if (!name.toLowerCase().endsWith(".pdf")) {
-            name = name + ".pdf";
-        }
-        Path path = Path.of(name);
-        if (!confirmOverwrite(path)) {
+        Path path = withExtension(chosen, "pdf");
+        if (!path.equals(chosen) && !confirmOverwrite(path)) {     // 同じ名前なら、上書きの確認は OS の画面が済ませている
             return;
         }
 
@@ -2715,7 +2859,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             }
             if (manual) {
                 appSettings.rememberFolder(path.toAbsolutePath().getParent());   // 次に「開く」「保存」を出したとき、ここから始める
-                flash("保存しました: " + path);
+                showSaved();
             }
             return true;
         } catch (IOException ex) {
@@ -3139,8 +3283,9 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         } else {
             editorArea.add(group1, BorderLayout.CENTER);
         }
-        splitSideButton.setSelected(split && splitOrientation == JSplitPane.HORIZONTAL_SPLIT);
-        splitDownButton.setSelected(split && splitOrientation == JSplitPane.VERTICAL_SPLIT);
+        group1.setAlone(!split);                // 分けていなくてファイルが1つなら、タブの帯を出さない
+        group2.setAlone(!split);
+        (split ? (splitOrientation == JSplitPane.HORIZONTAL_SPLIT ? sideSplitItem : downSplitItem) : noSplitItem).setSelected(true);
         editorArea.revalidate();
         editorArea.repaint();
     }

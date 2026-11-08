@@ -51,6 +51,7 @@ public final class VerticalLayout {
     public final List<RubyRun> rubies;
     public final int totalColumns;
     private final String text;
+    private final int rows;             // 1列に入る文字数（前の配置を使い回せるかを見るため）
 
     /**
      * 配置を計算する。
@@ -60,8 +61,21 @@ public final class VerticalLayout {
      * @param rubies        ルビの一覧（親文字の範囲と、ルビの文字）
      */
     public VerticalLayout(String text, int rowsPerColumn, List<RubyRun> rubies) {
+        this(text, rowsPerColumn, rubies, null);
+    }
+
+    /**
+     * 配置を計算する。前の配置（previous）があれば、変わった段落だけを並べ直し、ほかはそこから写す。
+     * 段落（改行のすぐ後ろから）の並び方は、その段落の文字と、始まる列だけで決まるので、
+     * 変わった所より前の段落はそのまま、後ろの段落は列をずらすだけで、全部を並べ直したときと同じになる。
+     * 1文字打つたびに、長い原稿の全文を並べ直さないために使う。
+     *
+     * @param previous 前の配置（1列の文字数が違う・null のときは、全部を並べ直す）
+     */
+    public VerticalLayout(String text, int rowsPerColumn, List<RubyRun> rubies, VerticalLayout previous) {
         this.text = text;
         this.rubies = List.copyOf(rubies);
+        this.rows = Math.max(1, rowsPerColumn);
         int n = text.length();
         col = new int[n + 1];
         row = new int[n + 1];
@@ -70,23 +84,52 @@ public final class VerticalLayout {
         tucked = new int[n + 1];
         hasTucked = new boolean[n + 1];
 
-        // 1) 縦中横にする2文字の組を探す
-        for (int i = 0; i + 1 < n; i++) {
-            if (isPair(i)) {
-                pairHead[i] = true;
-                pairTail[i + 1] = true;
-                i++;
-            }
+        if (previous == null || previous.rows != rows) {
+            totalColumns = place(0, 0, null, 0, 0);
+            return;
         }
+        // 前と同じ文字が続く長さを、先頭と末尾から数える
+        String old = previous.text;
+        int m = old.length();
+        int limit = Math.min(n, m);
+        int same = 0;
+        while (same < limit && text.charAt(same) == old.charAt(same)) {
+            same++;
+        }
+        int sameTail = 0;
+        while (sameTail < limit - same && text.charAt(n - 1 - sameTail) == old.charAt(m - 1 - sameTail)) {
+            sameTail++;
+        }
+        // 変わった所を含む段落の頭から並べ直す（その前の改行は、前と同じ文字）。それより前は写す
+        int from = text.lastIndexOf('\n', same - 1) + 1;
+        System.arraycopy(previous.col, 0, col, 0, from);
+        System.arraycopy(previous.row, 0, row, 0, from);
+        System.arraycopy(previous.pairHead, 0, pairHead, 0, from);
+        System.arraycopy(previous.pairTail, 0, pairTail, 0, from);
+        System.arraycopy(previous.tucked, 0, tucked, 0, from);
+        System.arraycopy(previous.hasTucked, 0, hasTucked, 0, from);
+        int startColumn = from == 0 ? 0 : previous.col[from - 1] + 1;    // 改行のあとは、その次の列から
+        totalColumns = place(from, startColumn, previous, n - sameTail, n - m);
+    }
 
-        // 2) 1文字ずつ、置く場所を決める
-        int rows = Math.max(1, rowsPerColumn);
-        int c = 0;
+    /**
+     * from 文字目（文の頭か、改行のすぐ後ろ）から、column 列目の一番上を始まりにして、1文字ずつ置く場所を決める。
+     * previous があれば、reuseFrom 文字目より後ろの改行まで来た所で、残りを previous から列をずらして写す
+     * （delta は、前の文章と比べて増えた文字数）。列の数を返す。
+     */
+    private int place(int from, int column, VerticalLayout previous, int reuseFrom, int delta) {
+        int n = text.length();
+        int c = column;
         int r = 0;
         boolean wrapped = false;        // 今の列が、折り返しで始まったか（改行で始まった列では、前の行へ入れない）
         int tuckedCount = 0;            // 前の列の一番下のマスに、いくつ入れたか
         int lastPlaced = -1;            // 最後にマスへ置いた文字（句読点を一緒に入れる相手）
-        for (int i = 0; i < n; i++) {
+        for (int i = from; i < n; i++) {
+            // 縦中横にする2文字の組（前から順に探し、組にした2文字目は飛ばす）
+            if (!pairTail[i] && i + 1 < n && isPair(i)) {
+                pairHead[i] = true;
+                pairTail[i + 1] = true;
+            }
             char ch = text.charAt(i);
             if (joinsPrevious(text, i) || pairTail[i]) {
                 col[i] = col[i - 1];    // 前の文字と同じマスに入る
@@ -118,30 +161,52 @@ public final class VerticalLayout {
                 wrapped = false;
                 tuckedCount = 0;
                 lastPlaced = -1;
-                continue;
-            }
-            col[i] = c;
-            row[i] = r;
-            if (ch == '\n') {
-                c++;                    // 改行したら、左の列の一番上へ
-                r = 0;
-                wrapped = false;
-                tuckedCount = 0;
-                lastPlaced = -1;
             } else {
-                lastPlaced = i;
-                r++;
-                if (r >= rows) {        // 下まで来たら、折り返して左の列へ
-                    c++;
+                col[i] = c;
+                row[i] = r;
+                if (ch == '\n') {
+                    c++;                // 改行したら、左の列の一番上へ
                     r = 0;
-                    wrapped = true;
+                    wrapped = false;
                     tuckedCount = 0;
+                    lastPlaced = -1;
+                } else {
+                    lastPlaced = i;
+                    r++;
+                    if (r >= rows) {    // 下まで来たら、折り返して左の列へ
+                        c++;
+                        r = 0;
+                        wrapped = true;
+                        tuckedCount = 0;
+                    }
                 }
+            }
+            if (ch == '\n' && previous != null && i >= reuseFrom) {
+                // この改行から後ろは、前の文章と同じ文字。並び方も同じで、列がずれるだけなので、写して終わる
+                return copyTail(previous, i + 1, delta, c);
             }
         }
         col[n] = c;                     // 文末のカーソル位置
         row[n] = r;
-        totalColumns = c + 1;
+        return c + 1;
+    }
+
+    /** start 文字目（段落の頭）から後ろを、前の配置から写す。列は column 列目から始まるようにずらす。列の数を返す。 */
+    private int copyTail(VerticalLayout previous, int start, int delta, int column) {
+        int n = text.length();
+        int oldStart = start - delta;
+        int shift = column - (oldStart == 0 ? 0 : previous.col[oldStart - 1] + 1);
+        int count = n + 1 - start;
+        System.arraycopy(previous.row, oldStart, row, start, count);
+        System.arraycopy(previous.pairHead, oldStart, pairHead, start, count);
+        System.arraycopy(previous.pairTail, oldStart, pairTail, start, count);
+        System.arraycopy(previous.tucked, oldStart, tucked, start, count);
+        System.arraycopy(previous.hasTucked, oldStart, hasTucked, start, count);
+        int[] oldCol = previous.col;
+        for (int k = 0; k < count; k++) {
+            col[start + k] = oldCol[oldStart + k] + shift;
+        }
+        return previous.totalColumns + shift;
     }
 
     /**
@@ -149,13 +214,13 @@ public final class VerticalLayout {
      * PDF の枚数に使う（文末が列のちょうど終わりのときに、白紙のページが1枚増えないように）。
      */
     public int usedColumns() {
-        int last = 0;
-        for (int i = 0; i < text.length(); i++) {
+        // 文字は列の順に並んでいるので、後ろから見て、最初に描く文字の列がいちばん大きい
+        for (int i = text.length() - 1; i >= 0; i--) {
             if (isDrawn(i)) {
-                last = Math.max(last, col[i]);
+                return col[i] + 1;
             }
         }
-        return last + 1;
+        return 1;
     }
 
     /** i 文字目と次の文字が、縦中横にする組（半角数字2桁、または !? の2文字）かどうか。 */
@@ -346,6 +411,11 @@ public final class VerticalLayout {
         FontMetrics fm = g2.getFontMetrics();
 
         for (RubyRun run : rubies) {
+            // 文字は列の順に並んでいるので、親文字の両端の列だけで、描く範囲の外かがわかる（長い原稿で、毎回集めないように）
+            if (run.baseEnd() <= run.baseStart() || run.baseEnd() > text.length()
+                    || col[run.baseStart()] > lastColumn || col[run.baseEnd() - 1] < firstColumn) {
+                continue;
+            }
             // 親文字のうち、実際にマスを持っている文字を集める
             List<Integer> bases = new ArrayList<>();
             for (int i = run.baseStart(); i < run.baseEnd(); i++) {

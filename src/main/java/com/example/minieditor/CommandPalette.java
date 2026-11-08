@@ -38,7 +38,7 @@ import javax.swing.event.DocumentListener;
 /**
  * コマンドパレット（Ctrl+P）。すべての操作を、名前の一部を打つだけで探して実行できる。
  * メニューの項目を自動で集めるので、メニューに機能を足せば、ここにも自動で出る。
- * 何も打っていないときは、最近使った操作を上に出す。
+ * 何も打っていないときは、入力欄だけを出す。打ち始めたら合うものを7つまで出し、同じくらい合うものは、最近使った操作を上にする。
  */
 final class CommandPalette {
 
@@ -47,7 +47,7 @@ final class CommandPalette {
     }
 
     private static final int RECENT_LIMIT = 8;
-    private static final int VISIBLE_ROWS = 12;
+    private static final int VISIBLE_ROWS = 7;      // 出す候補は7つまで（それより多いときは、もう少し打って絞ってもらう。並びをスクロールさせない）
 
     private CommandPalette() {
     }
@@ -159,7 +159,7 @@ final class CommandPalette {
                     // 何も打っていないときは、打てばよいことがわかるように、薄い字で例を出す
                     java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
                     g2.setRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING, java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-                    g2.setColor(Theme.FG_DIM);
+                    g2.setColor(ToolBar.Button.placeholderColor());     // ツールバーの「操作を探す…」と同じ、沈まない灰色
                     g2.setFont(getFont());
                     java.awt.Insets in = getInsets();
                     g2.drawString("操作の名前を入力（例：分割、配色、ルビ、保存）", in.left,
@@ -183,10 +183,11 @@ final class CommandPalette {
         JScrollPane scroll = new JScrollPane(list);
         scroll.setBorder(null);
 
-        JLabel empty = new JLabel("見つかりません", JLabel.CENTER);
-        empty.setForeground(Theme.FG_DIM);
-        empty.setFont(Theme.small());
-        empty.setBorder(BorderFactory.createEmptyBorder(16, 0, 16, 0));
+        // 見つからないときの1行。候補の並び（list）には入れないので、上下キーでもクリックでも選ばれない
+        JLabel empty = new JLabel(" ");
+        empty.setForeground(ToolBar.Button.placeholderColor());
+        empty.setFont(Theme.ui());
+        empty.setBorder(BorderFactory.createEmptyBorder(6, 14, 6, 14));     // 候補の1行と同じ余白
 
         JPanel root = new JPanel(new BorderLayout());
         root.setBackground(Theme.PANEL);
@@ -196,20 +197,33 @@ final class CommandPalette {
         dialog.setContentPane(root);
 
         List<String> recent = settings.getStrings(AppSettings.RECENT_COMMANDS);
+        int width = Math.min(760, Math.max(480, owner.getWidth() - 80));
+        int rowHeight = new Renderer().getListCellRendererComponent(list, commands.isEmpty() ? null : commands.get(0), 0, false, false)
+                .getPreferredSize().height;
+        list.setFixedCellHeight(rowHeight);
+        // 何も打っていないときは、入力欄だけを出す（候補を並べない）。打ち始めてから、合うものを上から7つまで出し、いちばん合うものを選んでおく
         Runnable refill = () -> {
             model.clear();
-            for (Command c : filter(commands, field.getText(), recent)) {
-                model.addElement(c);
+            boolean typed = !field.getText().isBlank();
+            if (typed) {
+                List<Command> hits = filter(commands, field.getText(), recent);
+                for (Command c : hits.subList(0, Math.min(VISIBLE_ROWS, hits.size()))) {
+                    model.addElement(c);
+                }
             }
-            if (model.isEmpty()) {
-                root.remove(scroll);
+            root.remove(scroll);
+            root.remove(empty);
+            int height = field.getPreferredSize().height + 2;
+            if (typed && model.isEmpty()) {
+                empty.setText("「" + shorten(field.getText().strip()) + "」は見つかりません — 別の言葉で");
                 root.add(empty, BorderLayout.CENTER);
-            } else {
-                root.remove(empty);
+                height += rowHeight + 2;
+            } else if (typed) {
                 root.add(scroll, BorderLayout.CENTER);
                 list.setSelectedIndex(0);
-                list.ensureIndexIsVisible(0);
+                height += rowHeight * model.getSize() + 2;
             }
+            dialog.setSize(new Dimension(width, height));
             root.revalidate();
             root.repaint();
         };
@@ -285,15 +299,15 @@ final class CommandPalette {
         });
 
         refill.run();
-        int width = Math.min(760, Math.max(480, owner.getWidth() - 80));
-        int rowHeight = new Renderer().getListCellRendererComponent(list, commands.isEmpty() ? null : commands.get(0), 0, false, false)
-                .getPreferredSize().height;
-        list.setFixedCellHeight(rowHeight);
-        dialog.setSize(new Dimension(width, field.getPreferredSize().height + rowHeight * VISIBLE_ROWS + 4));
         Point at = owner.getLocationOnScreen();
         dialog.setLocation(at.x + (owner.getWidth() - width) / 2, at.y + 70);     // VS Code と同じく、上の中央に出す
         dialog.setVisible(true);
         field.requestFocusInWindow();
+    }
+
+    /** 見つからないときの案内に入れる、打った言葉。長すぎると1行に入らないので、20 字で切る。 */
+    private static String shorten(String text) {
+        return text.length() <= 20 ? text : text.substring(0, 20) + "…";
     }
 
     private static void move(JList<Command> list, int index) {

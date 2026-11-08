@@ -311,21 +311,29 @@ public class VerticalTextPane extends EditorPane implements Searchable {
         // 一度ルビにした印。親文字の途中にルビの外の文字が入って（11文字目など）、同じ印が2か所に分かれたときは、
         // 前のほうだけをルビにする（両方に同じふりがなが付かないように。間の文字を消せば、また1つにつながる）
         java.util.Set<RubyMark> used = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
-        while (position < length) {
-            Element element = doc.getCharacterElement(position);
-            Object mark = element.getAttributes().getAttribute(RUBY);
-            if (mark != null && mark != current && used.contains(mark)) {
-                mark = null;
-            }
-            if (mark != current) {      // 印が変わった所が、ルビの切れ目
-                if (current != null) {
-                    found.add(new VerticalLayout.RubyRun(start, position, current.ruby));
-                    used.add(current);
+        // 段落→文字のまとまりの順に、木を直接たどる（位置から毎回探すより速い）
+        Element root = doc.getDefaultRootElement();
+        for (int p = 0; p < root.getElementCount() && position < length; p++) {
+            Element paragraph = root.getElement(p);
+            for (int k = 0; k < paragraph.getElementCount() && position < length; k++) {
+                Element element = paragraph.getElement(k);
+                if (element.getEndOffset() <= position) {
+                    continue;
                 }
-                current = (RubyMark) mark;
-                start = position;
+                Object mark = element.getAttributes().getAttribute(RUBY);
+                if (mark != null && mark != current && used.contains(mark)) {
+                    mark = null;
+                }
+                if (mark != current) {  // 印が変わった所が、ルビの切れ目
+                    if (current != null) {
+                        found.add(new VerticalLayout.RubyRun(start, position, current.ruby));
+                        used.add(current);
+                    }
+                    current = (RubyMark) mark;
+                    start = position;
+                }
+                position = Math.max(position + 1, Math.min(element.getEndOffset(), length));
             }
-            position = Math.max(position + 1, Math.min(element.getEndOffset(), length));
         }
         if (current != null) {
             found.add(new VerticalLayout.RubyRun(start, length, current.ruby));
@@ -762,7 +770,8 @@ public class VerticalTextPane extends EditorPane implements Searchable {
         // 一番下の1文字ぶんは、余白として空けておく。
         rowsPerColumn = manuscript ? SheetSize.chars()
                 : Math.max(1, (height - 2 * margin() - cellHeight()) / cellHeight());
-        layout = new VerticalLayout(shownText(), rowsPerColumn, shownRuns());
+        // 前の配置を渡して、変わった段落だけを並べ直す（長い原稿で、1文字ごとに全文を並べ直さないように）
+        layout = new VerticalLayout(shownText(), rowsPerColumn, shownRuns(), layout);
         colOf = layout.col;
         rowOf = layout.row;
         totalCols = layout.totalColumns;
@@ -779,6 +788,37 @@ public class VerticalTextPane extends EditorPane implements Searchable {
                 low = middle + 1;
             } else {
                 high = middle;
+            }
+        }
+        return low;
+    }
+
+    /** 左端が x より左（x を含む）にある列のうち、いちばん小さい番号。なければ limit。列の左端は、番号が大きいほど左にある。 */
+    private int firstColumnStartingBefore(int x, int limit) {
+        int low = 0;
+        int high = limit;
+        while (low < high) {
+            int middle = (low + high) >>> 1;
+            if (columnLeft(middle) <= x) {
+                high = middle;
+            } else {
+                low = middle + 1;
+            }
+        }
+        return low;
+    }
+
+    /** 右端が x より右（x を含む）にある列のうち、いちばん大きい番号。なければ -1。 */
+    private int lastColumnEndingAfter(int x, int limit) {
+        int width = columnWidth();
+        int low = -1;
+        int high = limit - 1;
+        while (low < high) {
+            int middle = (low + high + 1) >>> 1;
+            if (columnLeft(middle) + width >= x) {
+                low = middle;
+            } else {
+                high = middle - 1;
             }
         }
         return low;
@@ -944,14 +984,16 @@ public class VerticalTextPane extends EditorPane implements Searchable {
     /** position が何行目か（1 から）。行の始まりの表を作っておき、半分ずつ探す。 */
     private int lineNumber(int position) {
         if (lineStarts == null) {
-            List<Integer> starts = new ArrayList<>();
-            starts.add(0);
-            for (int i = 0; i < text.length(); i++) {
-                if (text.charAt(i) == '\n') {
-                    starts.add(i + 1);
-                }
+            int count = 1;
+            for (int i = text.indexOf('\n'); i >= 0; i = text.indexOf('\n', i + 1)) {
+                count++;
             }
-            lineStarts = starts.stream().mapToInt(Integer::intValue).toArray();
+            int[] starts = new int[count];
+            int k = 1;
+            for (int i = text.indexOf('\n'); i >= 0; i = text.indexOf('\n', i + 1)) {
+                starts[k++] = i + 1;
+            }
+            lineStarts = starts;
         }
         int found = java.util.Arrays.binarySearch(lineStarts, position);
         return (found >= 0 ? found : -found - 2) + 1;
@@ -1642,11 +1684,15 @@ public class VerticalTextPane extends EditorPane implements Searchable {
 
             int columnWidth = columnWidth();
             int caretColumn = freeCell != null ? freeCell.x : colOf[Math.min(shownCaret(), colOf.length - 1)];
+            // 見えている列の範囲。列の左端は、番号が大きいほど左にあるので、半分ずつ探す
+            // （長い原稿で、カーソルの点滅のたびに全部の列を調べないように）
+            int firstVisible = firstColumnStartingBefore(clip.x + clip.width, totalCols);
+            int lastVisible = lastColumnEndingAfter(clip.x, totalCols);
             if (manuscript) {
                 paintSheets(g2, clip, caretColumn);
             } else {
                 // 1列おきの縞と、カーソルのある列の強調
-                for (int col = 0; col < totalCols; col++) {
+                for (int col = firstVisible; col <= lastVisible; col++) {
                     int x = columnLeft(col);
                     if (x > clip.x + clip.width || x + columnWidth < clip.x) {
                         continue;
@@ -1661,11 +1707,21 @@ public class VerticalTextPane extends EditorPane implements Searchable {
                 }
             }
 
+            // 前後1列は余分に描く（はみ出す句読点・ルビのため）
+            int fromColumn = Math.max(0, firstVisible - 1);
+            int toColumn = lastVisible + 1;
+            int length = shownText().length();
+            // 見えている文字の範囲（文書の中の位置）。色を塗るのも、この中だけにする
+            int shownFrom = firstIndexInColumn(fromColumn, length);
+            int shownTo = firstIndexInColumn(toColumn + 1, length);
+            int visibleFrom = Math.max(0, fromShown(shownFrom) - 1);
+            int visibleTo = fromShown(shownTo) + 1;
+
             // 検索の色と、範囲選択の色
             for (Highlight h : highlights) {
-                fillRange(g2, h.start(), h.end(), h.color());
+                fillRange(g2, Math.max(h.start(), visibleFrom), Math.min(h.end(), visibleTo), h.color());
             }
-            fillRange(g2, selectionStart(), selectionEnd(), Theme.SELECTION);
+            fillRange(g2, Math.max(selectionStart(), visibleFrom), Math.min(selectionEnd(), visibleTo), Theme.SELECTION);
             if (rubyField != null) {
                 fillRange(g2, rubyEditStart, rubyEditEnd, Theme.MENU_SELECTION);    // ルビを入力している親文字
             }
@@ -1677,19 +1733,7 @@ public class VerticalTextPane extends EditorPane implements Searchable {
             FontMetrics fm = g2.getFontMetrics();
             // 見えている列だけを描く（カーソルの点滅のたびに、長い原稿の全文をたどらないように）。
             // 列は右から数え、文字は列の順に並んでいるので、見えている最初の列の文字から始めて、最後の列を過ぎたらやめる
-            int firstVisible = totalCols;
-            int lastVisible = -1;
-            for (int col = 0; col < totalCols; col++) {
-                int x = columnLeft(col);
-                if (x <= clip.x + clip.width && x + columnWidth >= clip.x) {
-                    firstVisible = Math.min(firstVisible, col);
-                    lastVisible = Math.max(lastVisible, col);
-                }
-            }
-            int fromColumn = Math.max(0, firstVisible - 1);     // 前後1列は余分に（はみ出す句読点・ルビのため）
-            int toColumn = lastVisible + 1;
-            int length = shownText().length();
-            for (int i = firstIndexInColumn(fromColumn, length); i < length && colOf[i] <= toColumn; i++) {
+            for (int i = shownFrom; i < length && colOf[i] <= toColumn; i++) {
                 if (!layout.isDrawn(i)) {
                     continue;
                 }
@@ -1740,7 +1784,10 @@ public class VerticalTextPane extends EditorPane implements Searchable {
             int lines = SheetSize.lines();
             int gridHeight = chars * cell;
             int sheets = displayColumns() / lines;
-            for (int sheet = 0; sheet < sheets; sheet++) {
+            // 見えている列の前後1枚だけを調べる（紙の端は、列より少し外に出るため）
+            int firstSheet = Math.max(0, firstColumnStartingBefore(clip.x + clip.width, sheets * lines) / lines - 1);
+            int lastSheet = Math.min(sheets - 1, lastColumnEndingAfter(clip.x, sheets * lines) / lines + 1);
+            for (int sheet = firstSheet; sheet <= lastSheet; sheet++) {
                 int firstColumn = sheet * lines;
                 int lastColumn = firstColumn + lines - 1;
                 int paperLeft = columnLeft(lastColumn) - cell / 2;
