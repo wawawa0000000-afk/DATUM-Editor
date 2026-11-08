@@ -124,7 +124,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     private final ToolBar.Button aiButton = ToolBar.button(ToolIcons.chat(), "AI の会話欄", "AI",
             "AI の会話欄を表示する / 隠す（Ctrl+Shift+A）", () -> showRight("ai"));
     private final ToolBar.Button focusButton = ToolBar.button(ToolIcons.focus(), "集中モード", "集中",
-            "メニューやタブを隠して、本文だけにする（F11）", this::toggleFocusMode);
+            "メニューなどを隠して、本文とタブだけにする（F11）", this::toggleFocusMode);
     private JMenuItem paletteItem;
     private JMenu snippetMenu;          // 「編集 → 定型文」（中身は開くたびに作り直す）
     private JMenu snippetDateMenu;      // 「定型文 → 日付・時刻」
@@ -1062,7 +1062,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     // ---------- 集中モード ----------
 
     /**
-     * 集中モード：メニュー・タブ・ステータスバー・左右の欄を隠し、ウィンドウを最大にして、文章だけにする。
+     * 集中モード：メニュー・ステータスバー・左右の欄を隠し、ウィンドウを最大にして、文章とタブだけにする（タブは操作できるよう残す）。
      * テキストの文書では、文字の列を中央に寄せ、カーソルの行をいつも画面の真ん中に保つ。F11（または Esc）で戻る。
      * ツールバーとステータスバーは、入るときは 150ms かけて薄く消してから並びを変え、戻るときは並びを戻してから浮かび上がらせる。
      */
@@ -1109,8 +1109,6 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         menuBar.setPreferredSize(new Dimension(0, 0));
         statusBar.setVisible(false);
         toolBar.setVisible(false);
-        group1.setTabsVisible(false);
-        group2.setTabsVisible(false);
         setExtendedState(MAXIMIZED_BOTH);
         if (currentPane() instanceof TextEditorPane text) {
             text.setFocusMode(true);
@@ -1125,8 +1123,6 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         menuBar.setPreferredSize(null);
         statusBar.setVisible(true);
         toolBar.setVisible(true);
-        group1.setTabsVisible(true);
-        group2.setTabsVisible(true);
         setExtendedState(stateBeforeFocus);
         for (EditorPane pane : allPanes()) {
             if (pane instanceof TextEditorPane text) {

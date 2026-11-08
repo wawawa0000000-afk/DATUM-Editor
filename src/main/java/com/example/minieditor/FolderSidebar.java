@@ -591,8 +591,11 @@ public final class FolderSidebar extends JPanel {
             String text = user instanceof Path p ? (p.getFileName() == null ? p.toString() : p.getFileName().toString())
                     : String.valueOf(user);
             EditorPane.Mode mode = user instanceof Path p && Files.isRegularFile(p) ? kindOf(p) : null;
+            if (mode == null && user instanceof Path p && Files.isRegularFile(p) && isText(p)) {
+                mode = EditorPane.Mode.TEXT;    // ふつうのテキストファイル（.txt など）も「文」の印を付ける
+            }
             if (mode != null) {
-                // このアプリの .json は、タブと同じ印（文・縦・板）を名前の前に付けて、種類がわかるようにする
+                // タブと同じ印（文・縦・板）を名前の前に付けて、種類がわかるようにする
                 text = "<html><font color='" + BADGE_HEX[mode.ordinal()] + "'><b>" + mode.badge + "</b></font>&nbsp;&nbsp;"
                         + text.replace("&", "&amp;").replace("<", "&lt;") + "</html>";
             } else if (user instanceof Path p && isGoogleFile(p)) {

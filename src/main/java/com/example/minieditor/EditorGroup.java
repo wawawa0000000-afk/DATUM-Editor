@@ -265,7 +265,7 @@ public class EditorGroup extends JPanel {
         }
     }
 
-    /** タブの帯を出す／隠す（集中モードで隠す）。 */
+    /** タブの帯を出す／隠す。 */
     public void setTabsVisible(boolean visible) {
         stripScroll.setVisible(visible);
         revalidate();
