@@ -266,10 +266,9 @@ public class EditorGroup extends JPanel {
     }
 
     /** タブの帯を出す／隠す（集中モードで隠す）。 */
-    /** 集中モードでは、タブの帯を隠す（false）。true に戻すと、ふだんの決まり（updateStripVisible）に従う。 */
     public void setTabsVisible(boolean visible) {
-        tabsAllowed = visible;
-        updateStripVisible();
+        stripScroll.setVisible(visible);
+        revalidate();
     }
 
     /** タブの名前や未保存マークが変わったときに呼ぶ。 */
@@ -278,29 +277,7 @@ public class EditorGroup extends JPanel {
     }
 
     /** タブの帯を作り直す。 */
-    /**
-     * 画面を分けていない（このグループだけが見えている）か。
-     * そのうえでタブが1つ以下なら、タブの帯は出さない（ファイルが1つなら、名前はウィンドウの題名でわかる）。
-     */
-    private boolean alone = true;
-    private boolean tabsAllowed = true;     // 集中モードの間は false
-
-    public void setAlone(boolean alone) {
-        this.alone = alone;
-        updateStripVisible();
-    }
-
-    private void updateStripVisible() {
-        boolean show = tabsAllowed && (!alone || panes.size() > 1);
-        if (stripScroll.isVisible() != show) {
-            stripScroll.setVisible(show);
-            revalidate();
-            repaint();
-        }
-    }
-
     private void rebuild() {
-        updateStripVisible();
         strip.removeAll();
         for (EditorPane pane : panes) {
             strip.add(new Tab(pane));

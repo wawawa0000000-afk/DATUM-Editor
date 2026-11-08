@@ -104,18 +104,27 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     private boolean workVisible = false;
     private boolean workBeforeFocus;
     private JSplitPane lowerSplit;              // エディタ（上）と下の欄（検索・見出し・集計）の分割。いったん作ったら使い回す（欄の高さを覚えておくため）
-    private final ToolBar toolBar = new ToolBar();      // 上の帯（メニューバーは高さ 0 にして見せない）
-    // 上の帯は5つだけ：サイドバー ｜ 検索・AI・集中・その他。残りの操作（メニューの全部・分割・ターミナル）は「その他」の一覧に入れる
+    // ツールバー（メニューバーの下の段）のボタン。左に文書の操作、右に探す・欄・集中。
+    // 保存（自動保存がある）・ターミナルは、毎日押すものではないので置かない。メニューとキーには残す
+    private final ToolBar toolBar = new ToolBar();
+    private final ToolBar.Button newButton = Edition.has(Edition.VERTICAL) || Edition.has(Edition.BOARD)
+            ? ToolBar.dropdown(ToolIcons.newPage(), "新規", "新規", "新しい文書を作る（種類を選ぶ）", this::showNewMenu)
+            : ToolBar.button(ToolIcons.newPage(), "新規", "新規", "新しい文書を作る（Ctrl+N）", () -> newDocument(EditorPane.Mode.TEXT));
+    private final ToolBar.Button openButton = ToolBar.button(ToolIcons.open(), "開く", "開く…",
+            "ファイルを開く（Ctrl+O）", () -> openFile(false));
     private final ToolBar.Button folderButton = ToolBar.button(ToolIcons.sidebar(), "フォルダのサイドバー", "サイドバー",
             "フォルダのサイドバーを表示する / 隠す（Ctrl+Shift+E）", this::toggleSidebar);
-    private final ToolBar.Button searchButton = ToolBar.button(ToolIcons.search(), "検索", "検索",
-            "文書の中を検索する（Ctrl+F）", () -> this.findBar.open(false));
+    private final ToolBar.Button splitButton = ToolBar.button(ToolIcons.split(() -> false), "画面の分割", "分割",
+            "画面を左右に分ける / 分割をやめる（Ctrl+\\。上下に分けるのは 表示 → 画面の分割）",
+            () -> chooseSplit(split ? -1 : JSplitPane.HORIZONTAL_SPLIT));
+    private final ToolBar.Button paletteButton = ToolBar.field(ToolIcons.commands(), "すべての操作を探す", "操作を探す…", "Ctrl+P",
+            "すべての操作を、名前で探して実行する。本文の中を探すのは、編集 → 検索（Ctrl+F）です", this::showPalette);
+    private final ToolBar.Button proofButton = ToolBar.button(ToolIcons.proofread(), "校正", "校正",
+            "校正の欄を表示する / 隠す（F7）", () -> showRight("proof"));
     private final ToolBar.Button aiButton = ToolBar.button(ToolIcons.chat(), "AI の会話欄", "AI",
             "AI の会話欄を表示する / 隠す（Ctrl+Shift+A）", () -> showRight("ai"));
     private final ToolBar.Button focusButton = ToolBar.button(ToolIcons.focus(), "集中モード", "集中",
             "メニューやタブを隠して、本文だけにする（F11）", this::toggleFocusMode);
-    private final ToolBar.Button moreButton = ToolBar.button(ToolIcons.more(), "その他の操作", "その他",
-            "ほかの操作（ファイル・編集・書式・表示…、分割、ターミナル）", () -> showMore(this.moreButton));
     private JMenuItem paletteItem;
     private JMenu snippetMenu;          // 「編集 → 定型文」（中身は開くたびに作り直す）
     private JMenu snippetDateMenu;      // 「定型文 → 日付・時刻」
@@ -135,6 +144,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
 
     private final FindBar findBar = new FindBar(this::currentPane);
     private final JLabel statusLeft = new JLabel(" ");
+    private final JLabel statusRight = new JLabel(" ");
     private final JLabel statusCenter = new JLabel(" ", SwingConstants.CENTER);    // 「保存しました」を1秒だけ出す所
     private JLabel zoomLabel;       // ステータスバーの「100%」
     private final JCheckBoxMenuItem wrapItem = new JCheckBoxMenuItem("折り返し");
@@ -153,6 +163,8 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     private FolderSidebar sidebar;
     private boolean sidebarVisible;
     private ProofreadPanel proofPanel;
+    private final Map<EditorPane, Integer> sheetCache = new java.util.WeakHashMap<>();  // 原稿用紙換算の枚数（中身が変わるまで覚えておく。カーソルが動くたびに全文を数えないため）
+    private final Map<EditorPane, CharCount> countCache = new java.util.WeakHashMap<>();  // ステータスバーの字数（同じく、中身が変わるまで覚えておく）
     private final Map<EditorPane, Object[]> zoomMemo = new java.util.WeakHashMap<>();   // 倍率を変えた文書：{そのとき付けた文字, 等倍の大きさ}
     private final Map<Theme.Scheme, javax.swing.JRadioButtonMenuItem> schemeItems = new java.util.EnumMap<>(Theme.Scheme.class);
     private AiChatPanel chatPanel;
@@ -196,12 +208,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         add(mainArea, BorderLayout.CENTER);
         statusBar = createStatusBar();
         add(statusBar, BorderLayout.SOUTH);
-        // メニューバーは見せない（操作は上の帯の「その他」から開く）。ただ、外すと Ctrl+S などの
-        // ショートカットも効かなくなるので、付けたまま高さを 0 にする
-        JMenuBar menuBar = createMenuBar();
-        menuBar.setPreferredSize(new Dimension(0, 0));
-        menuBar.setBorder(null);
-        setJMenuBar(menuBar);
+        setJMenuBar(createMenuBar());
         buildToolBar();
         add(toolBar, BorderLayout.NORTH);
         barFader = new Fader(toolBar, statusBar);
@@ -256,7 +263,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             }
         };
         bar.setBorder(BorderFactory.createEmptyBorder(4, 14, 4, 14));
-        for (JLabel label : new JLabel[]{statusLeft, statusCenter}) {
+        for (JLabel label : new JLabel[]{statusLeft, statusCenter, statusRight}) {
             label.setFont(Theme.small());
             label.setForeground(Theme.FG_DIM);
         }
@@ -264,6 +271,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         bar.add(statusCenter, BorderLayout.CENTER);
         JPanel right = new JPanel(new BorderLayout(24, 0));
         right.setOpaque(false);
+        right.add(statusRight, BorderLayout.CENTER);
         JPanel east = new JPanel(new BorderLayout(24, 0));
         east.setOpaque(false);
         if (Edition.has(Edition.VERTICAL)) {
@@ -719,6 +727,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         SheetSize.save(appSettings);
         appSettings.save();
         manuscriptItem.setText(sheetLabel());
+        sheetCache.clear();
         for (EditorPane pane : documentPanes()) {
             if (pane instanceof VerticalTextPane vertical) {
                 forEachView(vertical, view -> ((VerticalTextPane) view).setManuscript(((VerticalTextPane) view).isManuscript()));
@@ -744,59 +753,18 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
 
     /** ツールバーにボタンを並べる。種類（Edition）に入っていない機能のボタンは出さない。null は区切りの線。 */
     private void buildToolBar() {
-        toolBar.addLeft(folderButton);
-        List<Component> rightParts = new ArrayList<>(List.of(searchButton));
+        toolBar.addLeft(newButton, openButton, null, folderButton, splitButton);
+        // 右は2つのまとまり：探す ｜ 欄と集中（校正・AI・集中）
+        List<Component> rightParts = new ArrayList<>(List.of(paletteButton));
+        rightParts.add(null);
+        if (Edition.has(Edition.VERTICAL)) {
+            rightParts.add(proofButton);
+        }
         if (Edition.has(Edition.AI)) {
             rightParts.add(aiButton);
         }
         rightParts.add(focusButton);
-        rightParts.add(moreButton);
         toolBar.addRight(rightParts.toArray(new Component[0]));
-    }
-
-    /**
-     * 「その他」の一覧。上に 操作を探す・分割・ターミナル、その下にメニューバーのメニューを全部並べる。
-     * メニューは作り直さず、開いている間だけメニューバーから借りてくる（定型文のように開くたびに中身を
-     * 作り直すメニューや、チェックの印も、そのまま動くように）。閉じたらすぐメニューバーへ返す
-     * （ショートカットはメニューバーにある項目でしか効かないため）。
-     */
-    private void showMore(Component invoker) {
-        JMenuBar bar = getJMenuBar();
-        JPopupMenu popup = new JPopupMenu();
-        popup.add(item("すべての操作を探す…", null, this::showPalette));    // 文字の頭をそろえるため、上の3つにはアイコンを付けない
-        popup.add(item(split ? "分割をやめる" : "左右に分ける", null,
-                () -> chooseSplit(split ? -1 : JSplitPane.HORIZONTAL_SPLIT)));
-        if (Edition.has(Edition.AI)) {
-            popup.add(item(terminalVisible ? "ターミナルを閉じる" : "ターミナル", null, () -> setTerminalVisible(!terminalVisible)));
-        }
-        popup.addSeparator();
-        List<JMenu> menus = new ArrayList<>();
-        for (int i = 0; i < bar.getMenuCount(); i++) {
-            menus.add(bar.getMenu(i));
-        }
-        for (JMenu menu : menus) {
-            popup.add(menu);            // メニューバーから移る（1つの部品は1か所にしか置けない）
-        }
-        popup.addPopupMenuListener(new javax.swing.event.PopupMenuListener() {
-            @Override
-            public void popupMenuWillBecomeVisible(javax.swing.event.PopupMenuEvent e) {
-            }
-
-            @Override
-            public void popupMenuWillBecomeInvisible(javax.swing.event.PopupMenuEvent e) {
-                // 項目を押したときは、ここが先に呼ばれ、そのあとで項目の動作が走る。先に返しておけば、
-                // 動作の中でメニューバーを読むもの（操作を探す・キーの一覧）も、全部の項目を見られる
-                for (JMenu menu : menus) {
-                    bar.add(menu);
-                }
-                bar.revalidate();
-            }
-
-            @Override
-            public void popupMenuCanceled(javax.swing.event.PopupMenuEvent e) {
-            }
-        });
-        popup.show(invoker, 0, invoker.getHeight());
     }
 
     /** 「表示 → 欄」に、欄の出し入れの項目を足す。押したら出し入れし、印を本当の状態に合わせ直す。 */
@@ -841,6 +809,19 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         } else if (!split || splitOrientation != orientation) {
             splitTo(orientation);
         }
+    }
+
+    /** 「新規 ▾」の一覧：作る文書の種類を選ぶ。 */
+    private void showNewMenu(ToolBar.Button button) {
+        javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
+        menu.add(item("テキスト（横書き）", key(KeyEvent.VK_N, CTRL), ToolIcons.newPage(), () -> newDocument(EditorPane.Mode.TEXT)));
+        if (Edition.has(Edition.VERTICAL)) {
+            menu.add(item("縦書き（原稿用紙）", key(KeyEvent.VK_N, CTRL | SHIFT), ToolIcons.newVertical(), () -> newDocument(EditorPane.Mode.VERTICAL)));
+        }
+        if (Edition.has(Edition.BOARD)) {
+            menu.add(item("カードボード", key(KeyEvent.VK_K, CTRL | SHIFT), ToolIcons.board(), () -> newDocument(EditorPane.Mode.BOARD)));
+        }
+        menu.show(button, 0, button.getHeight());
     }
 
     // ---------- 左右の欄（サイドバー・校正・AI） ----------
@@ -1045,6 +1026,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             toggleFocusMode();          // 集中モード中に欄を開くときは、集中モードを終える
         }
         rightPanel = next;
+        proofButton.setSelected("proof".equals(next));
         aiButton.setSelected("ai".equals(next));
         layoutMain();
         if ("proof".equals(next)) {
@@ -1123,6 +1105,8 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             setTerminalVisible(false);
         }
         layoutCenter();
+        // メニューは隠すと Ctrl+S などのショートカットも効かなくなるので、高さを 0 にして見えなくする
+        menuBar.setPreferredSize(new Dimension(0, 0));
         statusBar.setVisible(false);
         toolBar.setVisible(false);
         group1.setTabsVisible(false);
@@ -1138,6 +1122,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     /** 元の並びに戻す（このあと、ツールバーとステータスバーを浮かび上がらせる）。 */
     private void leaveFocusLayout() {
         JMenuBar menuBar = getJMenuBar();
+        menuBar.setPreferredSize(null);
         statusBar.setVisible(true);
         toolBar.setVisible(true);
         group1.setTabsVisible(true);
@@ -1276,6 +1261,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
 
     /** コマンドパレット（すべての操作を名前で探す）を開く。メニューの項目は自動で集める。 */
     private void showPalette() {
+        paletteButton.setSelected(false);   // 押したままの見た目にしない（欄の出し入れのボタンではないため）
         refreshSnippetMenu();               // 定型文は、パレットに集める前に作り直す（メニューを開いていなくても最新にするため）
         syncMenuMarks();                    // 欄などの「（今：オン）」を、本当の状態に合わせる
         List<CommandPalette.Command> extras = new ArrayList<>();
@@ -2259,27 +2245,53 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         if (pane == null) {
             setTitle(APP_NAME + " " + Edition.title());
         } else {
-            setTitle(withoutExtension(pane.getTitle()) + (pane.isDirty() ? " ●" : "") + " - " + APP_NAME);
+            setTitle(pane.getTitle() + (pane.isDirty() ? " ●" : "") + " - " + APP_NAME);
         }
     }
 
-    /** 題名に出す名前（「時系列.json」→「時系列」）。「.memo」のように点で始まる名前は、そのまま。 */
-    static String withoutExtension(String name) {
-        int dot = name.lastIndexOf('.');
-        return dot > 0 ? name.substring(0, dot) : name;
-    }
-
-    /**
-     * 状態バーは「AI 連携」「今日の文字数」「倍率」だけにする（文字コード・形式・枚数などは出さない。本文が主役）。
-     * 一時的な知らせ（message）があるときは、左にそれを出す。
-     */
     private void updateStatus() {
+        EditorPane pane = currentPane();
         goalMeter.refresh();
-        String ai = Edition.has(Edition.AI) && mcp.isRunning() ? "● AI 連携中" : " ";
-        statusLeft.setText(message != null ? message : ai);
+        if (pane == null) {
+            statusLeft.setText(message != null ? message : " ");
+            statusRight.setText(" ");
+            return;
+        }
+        statusLeft.setText(message != null ? message : pane.getMode().label);
+        String format;
+        if (pane.getPath() == null) {
+            format = "未保存";
+        } else if (isJsonPath(pane.getPath()) && !pane.isRawFile()) {
+            format = "JSON";
+        } else {
+            format = "テキスト";
+        }
+        String sheets = pane instanceof TextEditorPane text && Edition.has(Edition.VERTICAL)
+                ? "    原稿用紙換算 " + sheetCache.computeIfAbsent(text.firstView(), p -> WritingStats.manuscriptSheets(text.getText())) + " 枚"
+                : "";
+        // 字数は、設定の数え方で数える（横書きは記法を含むので、ルビを除くモードでは親文字だけを数える）
+        String count = pane instanceof Searchable s ? "    " + charCountText(pane, s) : "";
+        statusRight.setText(pane.statusText() + count + sheets + "    " + (pane.getPath() == null ? "UTF-8" : fileService.formatOf(pane.getPath()).label()) + "    " + format
+                + (mcp.isRunning() ? "    AI 連携中" : ""));
     }
 
-    /** 字数の数え方を変える。設定に残し、作品の集計に使う。 */
+    /** 覚えておく字数（数え方ごと。数え方を変えたら数え直す）。 */
+    private record CharCount(WritingStats.CountMode mode, int total) {
+    }
+
+    /** ステータスバーの字数。全体の字数は、文書が変わるまで覚えておき、カーソルが動いただけでは数え直さない。 */
+    private String charCountText(EditorPane pane, Searchable s) {
+        WritingStats.CountMode mode = WritingStats.CountMode.fromId(appSettings.getString(AppSettings.COUNT_MODE, "all"));
+        boolean rubyNotation = pane instanceof TextEditorPane;     // 横書きは記法を含むので、ルビを除くモードでは親文字だけを数える
+        CharCount cached = countCache.get(pane.firstView());
+        if (cached == null || cached.mode() != mode) {
+            cached = new CharCount(mode, WritingStats.countChars(s.getText(), mode, rubyNotation));
+            countCache.put(pane.firstView(), cached);
+        }
+        return WritingStats.charCountText(s, mode, rubyNotation, cached.total());
+    }
+
+    /** 字数の数え方を変える。ステータスバーにすぐ出し、設定にも残す。 */
     private void setCountMode(WritingStats.CountMode mode) {
         appSettings.put(AppSettings.COUNT_MODE, mode.id);
         appSettings.save();
@@ -2306,6 +2318,8 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
 
     @Override
     public void contentChanged(EditorPane pane) {
+        sheetCache.remove(pane.firstView());
+        countCache.remove(pane.firstView());
         findBar.contentChanged(pane);
         stats.changed(pane);
         if (proofPanel != null && pane == currentPane()) {
@@ -3283,8 +3297,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         } else {
             editorArea.add(group1, BorderLayout.CENTER);
         }
-        group1.setAlone(!split);                // 分けていなくてファイルが1つなら、タブの帯を出さない
-        group2.setAlone(!split);
+        splitButton.setSelected(split);         // 上下に分けているときも、分割中として地を付ける（押すと分割をやめる）
         (split ? (splitOrientation == JSplitPane.HORIZONTAL_SPLIT ? sideSplitItem : downSplitItem) : noSplitItem).setSelected(true);
         editorArea.revalidate();
         editorArea.repaint();

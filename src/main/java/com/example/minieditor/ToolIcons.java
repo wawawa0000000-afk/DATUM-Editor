@@ -83,7 +83,7 @@ final class ToolIcons {
         abstract void draw(Graphics2D g2, float s);
     }
 
-    /** 虫眼鏡（文書の中を検索する）。 */
+    /** 虫眼鏡（すべての操作を探す）。 */
     static Icon search() {
         return new Base() {
             @Override
@@ -284,19 +284,6 @@ final class ToolIcons {
                     p.lineTo(c[0], c[1]);
                     p.lineTo(c[0], c[1] + k * c[3]);
                     g2.draw(p);
-                }
-            }
-        };
-    }
-
-    /** その他：横に並んだ3つの点（残りの操作の一覧が開く）。 */
-    static Icon more() {
-        return new Base() {
-            @Override
-            void draw(Graphics2D g2, float s) {
-                float r = Math.max(1.2f, s * 0.08f);
-                for (float cx : new float[]{s * 0.22f, s * 0.5f, s * 0.78f}) {
-                    g2.fill(new Ellipse2D.Float(cx - r, s * 0.5f - r, r * 2, r * 2));
                 }
             }
         };
