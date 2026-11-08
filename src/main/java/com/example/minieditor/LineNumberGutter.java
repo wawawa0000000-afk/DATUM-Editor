@@ -102,7 +102,7 @@ public class LineNumberGutter extends JComponent {
                 String number = String.valueOf(line + 1);
                 g2.setColor(line == caretLine ? Theme.FG_STRONG : Theme.FG_DIM);
                 int x = getWidth() - 14 - fm.stringWidth(number);    // 右にそろえる
-                g2.drawString(number, x, (int) r.getY() + fm.getAscent());
+                g2.drawString(number, x, (int) (r.getY() + r.getHeight()) - fm.getDescent());   // 行の下にそろえる（見出しで行が高いときも、1段目の下に付く）
             }
         } catch (BadLocationException ex) {
             // 行の位置は文書の中から求めているので、通常は起きない

@@ -33,6 +33,11 @@ public class StripedTextArea extends JTextArea {
         super.paintComponent(g);                // 背景の上に、文字やハイライトを描かせる
     }
 
+    /** 行の高さがそろわない文書（見出しだけ大きい Markdown）で、縞を自分で描くときに上書きする。描いたら true。 */
+    protected boolean paintLineStripes(Graphics g, Rectangle visible) {
+        return false;
+    }
+
     /** 縞やカーソル行の上、文字の下に、何か描きたいときに上書きする（Markdown のコードの地など）。ふだんは何もしない。 */
     protected void paintBackdrop(Graphics g) {
     }
@@ -48,7 +53,9 @@ public class StripedTextArea extends JTextArea {
         }
         int top = getInsets().top;
 
-        if (Theme.stripes) {
+        if (Theme.stripes && paintLineStripes(g, visible)) {
+            // 子クラスが、行の高さに合わせて縞を描いた
+        } else if (Theme.stripes) {
             g.setColor(Theme.BG_STRIPE);
             int first = Math.max((visible.y - top) / rowHeight, 0);
             int last = (visible.y + visible.height - top) / rowHeight;

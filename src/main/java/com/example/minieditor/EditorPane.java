@@ -167,6 +167,7 @@ public abstract class EditorPane extends JPanel {
         views.add(added);
         added.views = views;
         added.path = path;
+        added.pathChanged();
         added.dirty = dirty;
         added.rawFile = rawFile;
         added.documentId = documentId;

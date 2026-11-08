@@ -70,6 +70,8 @@ public class TextEditorPane extends EditorPane implements Searchable {
 
     /** 文章の中の Markdown の読み取り結果。文章が変わったら空にして、次に描くときに読み直す。 */
     private Markdown.Result markdown;
+    private boolean viewIsMarkdown;         // いまの見た目の組み立てが、Markdown 用（行ごとに高さが変わる）か
+    private int headingSignature;           // 組み立てたときの、見出しの段の並び
 
     /** ふつうのテキストエリアに、ルビの表示と Markdown の装飾を足したもの。 */
     private final class MarkdownArea extends StripedTextArea implements MarkdownTextAreaUI.Host {
@@ -95,6 +97,34 @@ public class TextEditorPane extends EditorPane implements Searchable {
         public Markdown.Result markdown() {
             return TextEditorPane.this.markdown();
         }
+
+        @Override
+        public boolean markdownOn() {
+            return isMarkdown();
+        }
+
+        /** 見出しだけ高い行を、行ごとに縞にする（行を2つおきに、地を少し変える）。 */
+        @Override
+        protected boolean paintLineStripes(Graphics g, Rectangle visible) {
+            if (!isMarkdown()) {
+                return false;
+            }
+            try {
+                int first = getLineOfOffset(Math.max(0, viewToModel2D(new Point(0, visible.y))));
+                int last = getLineOfOffset(Math.max(0, viewToModel2D(new Point(0, visible.y + visible.height))));
+                g.setColor(Theme.BG_STRIPE);
+                for (int line = first; line <= last; line++) {
+                    if (line % 2 == 1) {
+                        Rectangle2D a = modelToView2D(getLineStartOffset(line));
+                        Rectangle2D b = modelToView2D(getLineEndOffset(line) - (line == getLineCount() - 1 ? 0 : 1));
+                        g.fillRect(visible.x, (int) a.getY(), visible.width, (int) (b.getY() + b.getHeight() - a.getY()));
+                    }
+                }
+            } catch (BadLocationException ex) {
+                return false;
+            }
+            return true;
+        }
     }
 
     private final StripedTextArea area = new MarkdownArea();
@@ -104,12 +134,14 @@ public class TextEditorPane extends EditorPane implements Searchable {
         public void insertUpdate(DocumentEvent e) {
             rubySpans = null;
             markdown = null;
+            checkHeadings();
             changed();
         }
 
         public void removeUpdate(DocumentEvent e) {
             rubySpans = null;
             markdown = null;
+            checkHeadings();
             changed();
         }
 
@@ -241,7 +273,38 @@ public class TextEditorPane extends EditorPane implements Searchable {
     @Override
     protected void pathChanged() {
         markdown = null;                // 名前を付けて保存で、拡張子が変わったとき
+        rebuildView();
+    }
+
+    /** .md かどうかが変わっていたら、見た目の組み立て（行の高さ・折り返し）をやり直す。 */
+    private void rebuildView() {
+        if (area == null) {
+            return;                     // まだ作っている途中
+        }
+        boolean on = isMarkdown();
+        if (on != viewIsMarkdown && area.getUI() instanceof MarkdownTextAreaUI ui) {
+            viewIsMarkdown = on;
+            headingSignature = on ? MarkdownTextAreaUI.headingSignature(markdown()) : 0;
+            ui.rebuild();
+        }
         area.repaint();
+    }
+
+    /** 文章が変わったあと、見出しの段の並びが変わっていたら（コードブロックの開け閉めなど）、行の高さを組み直す。 */
+    private void checkHeadings() {
+        if (!viewIsMarkdown) {
+            return;
+        }
+        SwingUtilities.invokeLater(() -> {
+            if (!viewIsMarkdown || !(area.getUI() instanceof MarkdownTextAreaUI ui)) {
+                return;
+            }
+            int signature = MarkdownTextAreaUI.headingSignature(markdown());
+            if (signature != headingSignature) {
+                headingSignature = signature;
+                ui.rebuild();
+            }
+        });
     }
 
     /** ファイルの中身を入れる。未保存マークは付けず、「元に戻す」の履歴も空にする。 */
