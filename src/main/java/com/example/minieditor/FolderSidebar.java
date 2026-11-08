@@ -606,7 +606,9 @@ public final class FolderSidebar extends JPanel {
             }
             if (mode != null) {
                 // タブと同じ印（文・縦・板）を名前の前に付けて、種類がわかるようにする
-                text = "<html><font color='" + BADGE_HEX[mode.ordinal()] + "'><b>" + mode.badge + "</b></font>&nbsp;&nbsp;"
+                Path file = (Path) user;
+                text = "<html><font color='" + EditorPane.badgeHexFor(file, mode, BADGE_HEX) + "'><b>"
+                        + EditorPane.badgeFor(file, mode) + "</b></font>&nbsp;&nbsp;"
                         + text.replace("&", "&amp;").replace("<", "&lt;") + "</html>";
             } else if (user instanceof Path p && isGoogleFile(p)) {
                 text = text + "  ↗";         // ブラウザで開くリンクだとわかるように

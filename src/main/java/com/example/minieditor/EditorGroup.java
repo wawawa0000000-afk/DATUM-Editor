@@ -338,9 +338,10 @@ public class EditorGroup extends JPanel {
             setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             setToolTipText(pane.getPath() == null ? pane.getMode().label : pane.getPath().toString());
 
-            JLabel badge = new JLabel(pane.getMode().badge);
+            JLabel badge = new JLabel(EditorPane.badgeFor(pane.getPath(), pane.getMode()));
             badge.setFont(Theme.small().deriveFont(Font.BOLD));
-            badge.setForeground(BADGE_COLORS[pane.getMode().ordinal()]);
+            badge.setForeground(EditorPane.isMarkdownFile(pane.getPath()) && pane.getMode() == EditorPane.Mode.TEXT
+                    ? new Color(0xE5C07B) : BADGE_COLORS[pane.getMode().ordinal()]);
 
             // 文字の色は、描くたびに「選ばれているか」で決める（選び直すたびにタブを作り直さないため）
             JLabel title = new JLabel(pane.getTitle()) {
