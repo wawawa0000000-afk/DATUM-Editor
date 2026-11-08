@@ -156,7 +156,6 @@ public class BoardPane extends EditorPane {
     // Board の部品が受け持っている範囲（ボード上の座標）。部品の (0, 0) が、ボード上の (canvas.x, canvas.y)
     private final Rectangle canvas = new Rectangle();
     private boolean canvasReady;                // 一度でも表示して、canvas を決めたか
-    private final double[] wheelRest = new double[2];   // ホイールの、1ピクセルに満たない残り（[0] 縦、[1] 横）
     private JTextArea editor;                   // 文字を編集している間だけ出す入力欄
     private Card editingCard;
 
@@ -164,7 +163,7 @@ public class BoardPane extends EditorPane {
         scrollPane.setBorder(null);
         scrollPane.getViewport().setBackground(Theme.BG);
         scrollPane.setWheelScrollingEnabled(false);     // ホイールは Board 側で受け取る（拡大・縮小のため）
-        // 端のないボードなので、スクロールバーは出さない（ホイール・ドラッグで動かす）
+        // 端のないボードなので、スクロールバーは出さない（ドラッグで動かす）
         scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_NEVER);
         scrollPane.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
         scrollPane.getViewport().addComponentListener(new ComponentAdapter() {
@@ -1157,31 +1156,6 @@ public class BoardPane extends EditorPane {
         fireStatusChanged();
     }
 
-    /** ホイールで、表示を縦（Shift なら横）に動かす。動く量は、ほかの画面（WheelScroll）と同じ。 */
-    private void scrollByWheel(MouseWheelEvent e) {
-        boolean horizontal = e.isShiftDown();
-        Dimension extent = scrollPane.getViewport().getExtentSize();
-        double amount;
-        if (e.getScrollType() == MouseWheelEvent.WHEEL_BLOCK_SCROLL) {
-            amount = e.getPreciseWheelRotation() * (horizontal ? extent.width : extent.height);
-        } else {
-            amount = e.getPreciseWheelRotation() * e.getScrollAmount() * WheelScroll.LINE * Theme.zoom() / 100.0;
-        }
-        int i = horizontal ? 1 : 0;
-        wheelRest[i] += amount;
-        int move = (int) wheelRest[i];
-        wheelRest[i] -= move;
-        if (move == 0) {
-            return;
-        }
-        Point2D.Double origin = viewOrigin();
-        if (horizontal) {
-            showFrom(origin.x + move / scale, origin.y);
-        } else {
-            showFrom(origin.x, origin.y + move / scale);
-        }
-    }
-
     // ---------- 文字の編集 ----------
 
     private void startEditing(Card card) {
@@ -1730,10 +1704,8 @@ public class BoardPane extends EditorPane {
             if (e.isControlDown()) {
                 // タッチパッドの細かい動きでは、少しずつ拡大・縮小する
                 setScale(scale * Math.pow(1.1, -e.getPreciseWheelRotation()), e.getPoint());
-                return;
             }
-            // ふつうのホイールは縦、Shift を押していたら横にスクロールする
-            scrollByWheel(e);
+            // Ctrl なしのホイールでは何もしない（回しても表示が動かないように。動かすのはドラッグで）
         }
 
         private void press(MouseEvent e) {

@@ -702,3 +702,10 @@ Windows で確かめてほしいこと（画面の操作が要る。「Windows �
 - 戻したファイル：`EditorFrame`・`EditorGroup`・`FolderSidebar`・`ToolIcons`・`HelpDialog`・`README.md` を、ツールバーのころの書き方に戻した（`ToolBar`・`CommandPalette`・`Fader` は 9203076 のままで、変えていない）。`GoalMeter` は升目と割合の表示に戻し、打つたびの重さの直し（`shown` で同じ表示なら描き直さない）は残した。
 - 残したもの：カードボードの見た目（`apple` パッケージ、`BoardPane` の描き直し、矢印の大きさが字に合わせて変わること、矢印の描く範囲の判断、キー操作 F2・Enter・Shift+Enter・矢印・Tab）と、その説明（`HelpDialog`・`README.md` の表の行）、CI の下のパッケージのテストも動かす変更。
 - 全テスト23本・`mvn package` 通過（Linux）。実際のウィンドウで、ツールバー・タブ・状態バーが昨日の形で出ることを確かめた。
+
+## カードボードでホイールを回しても表示が動かないようにした（2026-11-09、javatextediter-2f。コミットしていない）
+
+利用者の指示：「カードページの際にスクロールでページ移動しないようにして」。質問への答えは「何もしない」。
+
+- `BoardPane`：Ctrl なしのホイールでは何もしない（縦も、Shift での横も動かない）。`scrollByWheel` と `wheelRest` は使わなくなったので消した。Ctrl+ホイールの拡大・縮小と、右ボタン・中ボタンのドラッグで表示を動かすのは今までどおり。
+- 全テスト23本・`mvn package` 通過（Linux）。実際のボードにホイールの出来事を送って、表示の位置が変わらないことを確かめた。
