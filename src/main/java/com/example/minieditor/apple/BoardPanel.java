@@ -14,6 +14,7 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseWheelEvent;
 import java.awt.geom.CubicCurve2D;
+import java.awt.geom.FlatteningPathIterator;
 import java.awt.geom.Line2D;
 import java.awt.geom.Rectangle2D;
 import java.awt.geom.RoundRectangle2D;
@@ -25,10 +26,12 @@ import javax.swing.JComponent;
 import javax.swing.JPanel;
 import javax.swing.JTextField;
 import javax.swing.KeyStroke;
+import javax.swing.SwingUtilities;
 
 /**
  * Apple的デザインのカードボード。
  * 操作: つかんで動かす / ダブルクリックか Enter・F2 で書く / 矢印キーで 8px（Shift で 32px）/
+ *       線をクリックして選び Delete で消す / Alt を押しながらドラッグして線を横切ると切る（UE の BP と同じ）/
  *       Esc で選択解除 / Tab で次のカード / Ctrl+ホイール・Ctrl+「+」「−」で拡大縮小。
  */
 public class BoardPanel extends JPanel {
@@ -66,6 +69,8 @@ public class BoardPanel extends JPanel {
     private AppleTheme theme;
     private int zoomIndex = 1;
     private Card selected;
+    private Card[] selectedLink;
+    private List<double[]> cutPath; // Alt+ドラッグで描いている切り筋（ボードの座標）
     private Card dragging;
     private double grabDx;
     private double grabDy;
@@ -123,6 +128,27 @@ public class BoardPanel extends JPanel {
         links.add(new Card[] {from, to});
     }
 
+    /** 線を消す。消せたら true。 */
+    public boolean unlink(Card from, Card to) {
+        boolean removed = links.removeIf(l -> l[0] == from && l[1] == to);
+        if (selectedLink != null && selectedLink[0] == from && selectedLink[1] == to) {
+            selectedLink = null;
+        }
+        repaint();
+        return removed;
+    }
+
+    public int linkCount() {
+        return links.size();
+    }
+
+    /** 選んでいる線を消す（Delete）。 */
+    void deleteSelectedLink() {
+        if (selectedLink != null) {
+            unlink(selectedLink[0], selectedLink[1]);
+        }
+    }
+
     public List<Card> cards() {
         return cards;
     }
@@ -177,7 +203,7 @@ public class BoardPanel extends JPanel {
             paintGroup(g, gr);
         }
         for (Card[] l : links) {
-            paintArrow(g, BoardGeometry.arrow(l[0].r, l[1].r));
+            paintArrow(g, BoardGeometry.arrow(l[0].r, l[1].r), l == selectedLink);
         }
         for (Card c : cards) {
             if (c != dragging) {
@@ -187,6 +213,7 @@ public class BoardPanel extends JPanel {
         if (dragging != null) {
             paintCard(g, dragging); // 持ち上げたカードは最前面
         }
+        paintCut(g);
         g.dispose();
     }
 
@@ -216,9 +243,26 @@ public class BoardPanel extends JPanel {
         g.drawString(gr.title, (float) (gr.r.x + pad), (float) (gr.r.y + top + g.getFontMetrics().getAscent()));
     }
 
-    private void paintArrow(Graphics2D g, CubicCurve2D.Double c) {
-        g.setColor(theme.arrow);
-        g.setStroke(new BasicStroke(AppleTheme.ARROW_WIDTH, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+    /** Alt+ドラッグの切り筋（点線）。線を横切ると、離したときに切れる。 */
+    private void paintCut(Graphics2D g) {
+        if (cutPath == null || cutPath.size() < 2) {
+            return;
+        }
+        g.setColor(theme.accent);
+        g.setStroke(new BasicStroke(1.5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND,
+            1f, new float[] {4f, 4f}, 0f));
+        for (int i = 1; i < cutPath.size(); i++) {
+            double[] a = cutPath.get(i - 1);
+            double[] b = cutPath.get(i);
+            g.draw(new Line2D.Double(a[0], a[1], b[0], b[1]));
+        }
+    }
+
+    private void paintArrow(Graphics2D g, CubicCurve2D.Double c, boolean isSelected) {
+        g.setColor(isSelected ? theme.accent : theme.arrow);
+        g.setStroke(new BasicStroke(
+            isSelected ? AppleTheme.ARROW_WIDTH + 1.5f : AppleTheme.ARROW_WIDTH,
+            BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
         g.draw(c);
         // 先端は小さなシェブロン（く の字）
         double angle = Math.atan2(c.y2 - c.ctrly2, c.x2 - c.ctrlx2);
@@ -315,6 +359,63 @@ public class BoardPanel extends JPanel {
         return null;
     }
 
+    /** 曲線を細かい線分にして返す（当たり判定用）。 */
+    private static List<double[]> flatten(CubicCurve2D.Double c) {
+        List<double[]> pts = new ArrayList<>();
+        double[] co = new double[6];
+        FlatteningPathIterator it = new FlatteningPathIterator(c.getPathIterator(null), 0.5);
+        while (!it.isDone()) {
+            it.currentSegment(co);
+            pts.add(new double[] {co[0], co[1]});
+            it.next();
+        }
+        return pts;
+    }
+
+    /** (mx,my) に近い線を返す。なければ null。 */
+    private Card[] linkAt(double mx, double my) {
+        double tol = 6 / zoom();
+        for (int i = links.size() - 1; i >= 0; i--) {
+            Card[] l = links.get(i);
+            List<double[]> pts = flatten(BoardGeometry.arrow(l[0].r, l[1].r));
+            for (int k = 1; k < pts.size(); k++) {
+                if (Line2D.ptSegDist(pts.get(k - 1)[0], pts.get(k - 1)[1], pts.get(k)[0], pts.get(k)[1], mx, my) <= tol) {
+                    return l;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** 切り筋と交わる線をすべて消す。消した本数を返す。 */
+    int cutAlong(List<double[]> path) {
+        List<Card[]> doomed = new ArrayList<>();
+        for (Card[] l : links) {
+            List<double[]> pts = flatten(BoardGeometry.arrow(l[0].r, l[1].r));
+            if (crosses(pts, path)) {
+                doomed.add(l);
+            }
+        }
+        links.removeAll(doomed);
+        if (selectedLink != null && doomed.contains(selectedLink)) {
+            selectedLink = null;
+        }
+        return doomed.size();
+    }
+
+    private static boolean crosses(List<double[]> a, List<double[]> b) {
+        for (int i = 1; i < a.size(); i++) {
+            for (int j = 1; j < b.size(); j++) {
+                if (Line2D.linesIntersect(
+                    a.get(i - 1)[0], a.get(i - 1)[1], a.get(i)[0], a.get(i)[1],
+                    b.get(j - 1)[0], b.get(j - 1)[1], b.get(j)[0], b.get(j)[1])) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private void installMouse() {
         MouseAdapter m = new MouseAdapter() {
             @Override
@@ -323,8 +424,16 @@ public class BoardPanel extends JPanel {
                 commitEdit();
                 double mx = e.getX() / zoom();
                 double my = e.getY() / zoom();
+                if (e.isAltDown() && SwingUtilities.isLeftMouseButton(e)) { // 切り筋を描き始める
+                    cutPath = new ArrayList<>();
+                    cutPath.add(new double[] {mx, my});
+                    setCursor(Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR));
+                    repaint();
+                    return;
+                }
                 Card hit = cardAt(mx, my);
                 selected = hit;
+                selectedLink = hit != null ? null : linkAt(mx, my);
                 if (hit != null) {
                     dragging = hit;
                     grabDx = mx - hit.r.x;
@@ -340,6 +449,11 @@ public class BoardPanel extends JPanel {
 
             @Override
             public void mouseDragged(MouseEvent e) {
+                if (cutPath != null) {
+                    cutPath.add(new double[] {e.getX() / zoom(), e.getY() / zoom()});
+                    repaint();
+                    return;
+                }
                 if (dragging == null) {
                     return;
                 }
@@ -351,6 +465,10 @@ public class BoardPanel extends JPanel {
 
             @Override
             public void mouseReleased(MouseEvent e) {
+                if (cutPath != null) {
+                    cutAlong(cutPath);
+                    cutPath = null;
+                }
                 dragging = null;
                 updateCursor(e);
                 repaint();
@@ -376,8 +494,11 @@ public class BoardPanel extends JPanel {
     }
 
     private void updateCursor(MouseEvent e) {
-        Card hit = cardAt(e.getX() / zoom(), e.getY() / zoom());
-        setCursor(Cursor.getPredefinedCursor(hit != null ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
+        double mx = e.getX() / zoom();
+        double my = e.getY() / zoom();
+        int cursor = e.isAltDown() ? Cursor.CROSSHAIR_CURSOR
+            : cardAt(mx, my) != null || linkAt(mx, my) != null ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR;
+        setCursor(Cursor.getPredefinedCursor(cursor));
     }
 
     /** 親（スクロール枠など）へホイールをそのまま渡すための写し。 */
@@ -418,8 +539,11 @@ public class BoardPanel extends JPanel {
                 beginEdit(selected);
             }
         });
+        bind("DELETE", this::deleteSelectedLink);
+        bind("BACK_SPACE", this::deleteSelectedLink);
         bind("ESCAPE", () -> {
             selected = null;
+            selectedLink = null;
             repaint();
         });
         bind("TAB", () -> step(1));

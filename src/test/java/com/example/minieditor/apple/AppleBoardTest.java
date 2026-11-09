@@ -143,6 +143,20 @@ public final class AppleBoardTest {
             check(img.getRGB(2, 2) != 0, "描画: 背景が塗られている");
         }
 
+        // 線を切る：切り筋が横切った線だけ消え、離れた線は残る
+        {
+            BoardPanel lb = new BoardPanel(AppleTheme.DARK);
+            BoardPanel.Card c1 = lb.addCard("a", "", 0, 0, 100, 50);
+            BoardPanel.Card c2 = lb.addCard("b", "", 300, 0, 100, 50);
+            BoardPanel.Card c3 = lb.addCard("c", "", 300, 300, 100, 50);
+            lb.link(c1, c2);
+            lb.link(c1, c3);
+            check(lb.cutAlong(List.of(new double[] {200, -50}, new double[] {200, 60})) == 1 && lb.linkCount() == 1,
+                "切る: 横切った線だけが消える");
+            check(lb.cutAlong(List.of(new double[] {-500, -500}, new double[] {-400, -400})) == 0, "切る: 離れていれば消えない");
+            check(lb.unlink(c1, c3) && lb.linkCount() == 0 && !lb.unlink(c1, c3), "unlink: 消せる・二度目は false");
+        }
+
         if (failures > 0) {
             System.out.println(failures + " 件失敗");
             System.exit(1);
