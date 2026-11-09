@@ -84,6 +84,7 @@
 - やることの一覧にあった作業（「重さ・細かい点」22項目、AI の守り、つなぎ口の守り、http の注意、PATH の古い項目を外す処理）は、すべて済んでいる。
 - テスト: 8本（CommandTest・ConnectionTest・EncodingTest・JsonTest・LayoutTest・McpTest・RubyTest・SaveTest）。Linux で全部通った（2026-11-03、`8127f4e`）。Windows では `5048e1e` で全部通った。CI は `src/test` の `*Test` を全部動かす。
 - 配布 ZIP: 2026-11-03 に、4種類（Lite 1.1.0・Writer 1.1.1・Studio 1.1.2・AI 1.1.3）×4形式（Windows ZIP・共通 ZIP・Linux .tar.gz・Linux .deb）を同じ名前で作り直した（`8127f4e` の内容。`dist/`、リポジトリには入れない）。Windows ZIP には `datum.cmd`・`Add-Command.bat`・`Remove-Command.bat`・`command-path.ps1` が入っている。
+- 配布 ZIP の作り直し（2026-11-09、利用者の指示）：`b337de3` の内容で、4種類（Lite 1.1.0・Writer 1.1.1・Studio 1.1.2・AI 1.1.3）×4形式を同じ名前で作り直した（全テスト通過のあと `sh packaging/build-all.sh`）。種類ごとの機能の違いは、ビルドの仕組みを変えていないのでそのまま。Windows の画面確認はまだ。
 - Linux 側に `gh` が入っていないので、主役からは CI の結果が見えない。
 - 並列エージェント: 待機中。
 
