@@ -88,6 +88,14 @@
 - Linux 側に `gh` が入っていないので、主役からは CI の結果が見えない。
 - 並列エージェント: 待機中。
 
+- 横書きの行の高さ（2026-11-12、利用者の指示「エディタの書き込む行の高さを任意で指定できるように」。コミット済み）：「書式 ▸ 行間・字間・余白 ▸ 横の行の高さ」に 1.0（標準）・1.2・1.5・1.8・2.0 倍と「指定…」（1.0〜3.0 倍、0.05 刻みの数の欄）を置いた。設定は `spacingRow`（百分率、既定 100）。仕組み：JTextArea は行の高さを FontMetrics.getHeight から決めるので、`StripedTextArea.getFontMetrics` を上書きし、高さを足した寸法（`TallMetrics`。足したぶんは字の上下に半分ずつ）を返す。縞・カーソルの行・選択・スクロールの1行・行番号・Markdown の見出しは、この寸法から高さを求めるので追従する。変えたファイル: `Spacing`（row・rowLabel）、`AppSettings`（SPACING_ROW）、`StripedTextArea`、`TextEditorPane`（applyRowHeight、ルビを上に表示の位置を字のすぐ上に）、`LineNumberGutter`（番号の位置）、`EditorFrame`（メニューと指定の欄）、`README.md`、`RowHeightTest`（新規、26 項目）。全テスト通過（Linux）。画像に描いて、字が行の真ん中に来ることを確認。縦書き・PDF は対象外（縦書きは今までの「縦の行間」）。
+  - 未確認（Windows・画面）：メニューから選んで、開いている横書きの文書がすぐ高くなるか。「指定…」の欄。カーソルの縦棒が行の高さいっぱいになる（選択の色も行いっぱい）が、見た目として気にならないか。高くした行で、ルビを上に表示・集中モード・分割した2つ目の表示・IME の変換中の表示。
+
+- 横書きの打つ位置（2026-11-12〜13、利用者の指示「打ち続けると下側になり続ける。画面中央などに打ち込み位置を指定したい／下から上に書いていけるように」。コミット済み）。利用者が選んだ方針：高さは好きな値を指定できる／集中モードとは別にオン・オフ／「下から上」は**見え方だけ逆**（最初は Enter で文書の中にも上へ行を作る作りにしたが、利用者の指摘「途中で切り替えると、前後の行のあいだに行が溜まり続ける」で、表示だけを逆にする作りに替えた。ファイルの中身はいつもふつうの順番）。
+  - 「書式 ▸ 打つ位置」：固定のチェック・上寄り(30%)・真ん中(50%)・下寄り(70%)・「高さを指定…」(10〜90%)・「新しい行を上に表示する（下から上へ書く）」。高さを選ぶと固定も入る。設定は `typingFixed`・`typingPosition`・`typingUpward`。
+  - 変えたファイル: `TypingPosition`（新規）、`AppSettings`、`TextEditorPane`（集中モードの applyFocusLayout・centerCaret を applyLayout・holdCaret にまとめ、固定のときも同じ動きに。集中モードの高さも設定に従う。reversedOn。縞・ルビの描く範囲を上下どちら向きでも取れるように）、`MarkdownTextAreaUI`（逆向きのときは .md でなくても DocView を使い、layoutMajorAxis で最後の行から上に積む。押した位置は getViewAtPoint・viewToModel、↑↓ は getNextVisualPositionFrom で画面の位置から求める。.md でない文書では見出しにしない。背景の描く範囲も上下どちら向きでも）、`LineNumberGutter`（見えている上端と下端の行のあいだを描く）、`EditorFrame`（メニュー）、`README.md`、`TypingPositionTest`（新規）。全テスト通過（Linux）。画像に描いて、打つ行が指定の高さに来ること・逆向きの並び・行番号を確認。縦書きは対象外。右から左の字（アラビア文字など）を含む文書は、標準の描き方のままで逆向きにならない。
+  - 未確認（Windows・画面）：打っているあいだ、打つ行が同じ高さに留まるか（ちらつかないか）。逆向きで、↑↓・PageUp/PageDown・マウスでの範囲選択・IME の変換中の表示・検索で見つけた所へのスクロールが自然か。マウスで別の行を押したときに、その行が決まった高さへスクロールするのが使いにくくないか。分割した2つ目の表示。長い文書（数万字）で逆向きにしたときの重さ。
+
 ## ルビの修正（コミット済み。主役がレビューした）
 
 変えたファイル: `EditorFrame`、`FindBar`、`NarouRuby`、`Searchable`、`TextEditorPane`、`VerticalTextPane`（いずれも `src/main/java/com/example/minieditor/`）、`src/test/java/com/example/minieditor/RubyTest.java`（新規）。
@@ -200,7 +208,7 @@
 
 1. 利用者／Windows 側: 「Windows で未確認」の項目を、新しい配布 ZIP で確かめる（ビルドとテストは CI が自動で行う）。
 2. 見つかった不具合は、主役が直してコミットし、ZIP を同じ名前で作り直す（`mvn -q -B package` のあと `sh packaging/build-all.sh`）。
-3. 計画書の残りは、中17（行間・字間・余白）まで済み（横書きの行間・字間は JTextArea の制約で未対応）。Windows の確認結果を待つ。
+3. 計画書の残りは、中17（行間・字間・余白）まで済み（横書きの行の高さは 2026-11-12 に対応。横書きの字間は JTextArea の制約で未対応）。Windows の確認結果を待つ。
 
 ## 注意
 

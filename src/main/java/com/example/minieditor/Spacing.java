@@ -4,7 +4,7 @@ package com.example.minieditor;
  * 行間・字間・余白の設定。画面の描き方に使う。
  *
  * 縦書きでは「縦の行間」（列と列のあいだ）と「縦の字間」（1列の中で字と字のあいだ）と「余白」（画面の縁）を変えられる。
- * 横書きでは「余白」だけを変える（JTextArea は、行間や字間を変えられないため）。
+ * 横書きでは「行の高さ」（文字の高さに対する割合。1.0〜3.0 倍の好きな値）と「余白」を変えられる（字間は JTextArea の制約で変えない）。
  * 原稿用紙の表示では、マスの大きさが決まっているので、行間・字間は変えない（余白は縦書きの画面の縁に効く）。
  * 既定は、3つとも「標準」（今までの描き方と同じ）。値は AppSettings に覚える。
  */
@@ -25,9 +25,17 @@ public final class Spacing {
     /** 余白。今の余白に掛ける。 */
     private static final float[] MARGIN_FACTORS = {0.5f, 1f, 1.5f};
 
+    /** 横書きの行の高さ（百分率）の、いちばん低い値（標準）と高い値。文字より低くすると字が欠けるので、100 より下は選ばせない。 */
+    public static final int ROW_MIN = 100;
+    public static final int ROW_MAX = 300;
+
+    /** メニューに並べる、横書きの行の高さ（百分率）。ほかの値は「指定…」で選ぶ。 */
+    public static final int[] ROW_CHOICES = {100, 120, 150, 180, 200};
+
     private static int line = DEFAULT;
     private static int chars = DEFAULT;
     private static int margin = DEFAULT;
+    private static int row = ROW_MIN;
 
     private Spacing() {
     }
@@ -45,6 +53,28 @@ public final class Spacing {
     /** 余白の段階。 */
     public static int margin() {
         return margin;
+    }
+
+    /** 横書きの行の高さ（百分率。100 で今までと同じ）。 */
+    public static int row() {
+        return row;
+    }
+
+    /** 横書きの行の高さを決める。範囲の外は、いちばん近い端の値にする。 */
+    public static void setRow(int percent) {
+        row = Math.max(ROW_MIN, Math.min(ROW_MAX, percent));
+    }
+
+    /** 横書きの行の高さの倍率（文字の高さに掛ける）。 */
+    public static float rowFactor() {
+        return row / 100f;
+    }
+
+    /** 行の高さの表示（120 なら「1.2 倍」、135 なら「1.35 倍」）。 */
+    public static String rowLabel(int percent) {
+        int part = percent % 100;
+        String decimals = part == 0 ? "0" : part % 10 == 0 ? String.valueOf(part / 10) : String.format("%02d", part);
+        return percent / 100 + "." + decimals + " 倍";
     }
 
     public static void setLine(int level) {
@@ -84,6 +114,7 @@ public final class Spacing {
         setLine(settings.getInt(AppSettings.SPACING_LINE, DEFAULT));
         setChars(settings.getInt(AppSettings.SPACING_CHAR, DEFAULT));
         setMargin(settings.getInt(AppSettings.SPACING_MARGIN, DEFAULT));
+        setRow(settings.getInt(AppSettings.SPACING_ROW, ROW_MIN));
     }
 
     /** 設定に入れる。ファイルに書くのは、呼んだあとに AppSettings.save() で行う。 */
@@ -91,5 +122,6 @@ public final class Spacing {
         settings.put(AppSettings.SPACING_LINE, line);
         settings.put(AppSettings.SPACING_CHAR, chars);
         settings.put(AppSettings.SPACING_MARGIN, margin);
+        settings.put(AppSettings.SPACING_ROW, row);
     }
 }

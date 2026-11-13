@@ -50,6 +50,10 @@ public final class AppSettings {
     public static final String SPACING_LINE = "spacingLine";        // 縦の行間の段階（0 狭い・1 標準・2 広い。既定は 1）
     public static final String SPACING_CHAR = "spacingChar";        // 縦の字間の段階（既定は 1）
     public static final String SPACING_MARGIN = "spacingMargin";    // 余白の段階（既定は 1）
+    public static final String SPACING_ROW = "spacingRow";          // 横書きの行の高さ（文字の高さに対する百分率。100〜300、既定は 100）
+    public static final String TYPING_FIXED = "typingFixed";        // 横書きで、打つ行を画面の同じ高さに保つか（既定は切）
+    public static final String TYPING_POSITION = "typingPosition";  // その高さ（画面の上からの百分率。10〜90、既定は 50）
+    public static final String TYPING_UPWARD = "typingUpward";      // 横書きで、行を下から上へ並べて見せるか（見え方だけ。既定は切）
 
     private final Map<String, Object> data;
 

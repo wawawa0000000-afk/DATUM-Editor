@@ -83,26 +83,23 @@ public class LineNumberGutter extends JComponent {
         g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
         g2.setFont(area.getFont());
         FontMetrics fm = g2.getFontMetrics();
+        int descent = area.getFontMetrics(area.getFont()).getDescent();     // 行を高くしたときは、字の下に空く高さを含む
 
         try {
-            // 見えている範囲の、最初の行から描き始める
-            int firstOffset = area.viewToModel2D(new Point(0, clip.y));
-            int line = area.getLineOfOffset(Math.max(firstOffset, 0));
+            // 見えている範囲の、上の端と下の端の行のあいだだけを描く（行を下から上へ並べるときは、上の端の行のほうが後ろ）
+            int top = area.getLineOfOffset(Math.max(area.viewToModel2D(new Point(0, clip.y)), 0));
+            int bottom = area.getLineOfOffset(Math.max(area.viewToModel2D(new Point(0, clip.y + clip.height)), 0));
             int caretLine = area.getLineOfOffset(area.getCaretPosition());
-            int lineCount = area.getLineCount();
 
-            for (; line < lineCount; line++) {
+            for (int line = Math.min(top, bottom); line <= Math.max(top, bottom); line++) {
                 Rectangle2D r = area.modelToView2D(area.getLineStartOffset(line));
                 if (r == null) {
                     break;
                 }
-                if (r.getY() > clip.y + clip.height) {
-                    break;                      // ここから下は見えていないので、描かない
-                }
                 String number = String.valueOf(line + 1);
                 g2.setColor(line == caretLine ? Theme.FG_STRONG : Theme.FG_DIM);
                 int x = getWidth() - 14 - fm.stringWidth(number);    // 右にそろえる
-                g2.drawString(number, x, (int) (r.getY() + r.getHeight()) - fm.getDescent());   // 行の下にそろえる（見出しで行が高いときも、1段目の下に付く）
+                g2.drawString(number, x, (int) (r.getY() + r.getHeight()) - descent);   // 行の下にそろえる（見出しで行が高いときも、1段目の下に付く）
             }
         } catch (BadLocationException ex) {
             // 行の位置は文書の中から求めているので、通常は起きない

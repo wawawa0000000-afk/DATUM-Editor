@@ -36,13 +36,19 @@ import javax.swing.text.ViewFactory;
  * 行ごとに文字の大きさを変えられるように、行の高さ・折り返し・カーソルの位置・描画を自前のビュー（DocView・Line）で受け持つ。
  * 見出し（# ～ ######）は、段に応じて文字を大きく・太くする。太字・斜体・取り消し線・リンクなどは、
  * 色・かすかな二重打ち・傾け・線で装飾する（文字の幅は変えない）。
+ *
+ * 「新しい行を上に表示」（TypingPosition.upward）のときも、.md でなくても自前のビューを使い、行を下から上へ並べる
+ * （文書の最後の行がいちばん上。文書の中身の順番は変えず、見え方だけを逆にする。折り返した1行の中の段は、上から下のまま）。
  */
 final class MarkdownTextAreaUI extends BasicTextAreaUI {
 
     /** 装飾の元になる結果を渡す側（TextEditorPane の中のテキストエリア）。 */
     interface Host {
-        /** 拡張子 .md の文書か（自前のビューで描くか）。 */
+        /** 拡張子 .md の文書か（見出しを大きくするか）。 */
         boolean markdownOn();
+
+        /** 行を下から上へ並べるか（文書の最後の行を、いちばん上に）。 */
+        boolean reversedOn();
 
         /** 今の文書を読み取った結果。装飾しないときは null。 */
         Markdown.Result markdown();
@@ -55,13 +61,14 @@ final class MarkdownTextAreaUI extends BasicTextAreaUI {
     public View create(Element elem) {
         JTextComponent c = getComponent();
         Object i18n = elem.getDocument().getProperty("i18n");
-        if (c instanceof JTextArea area && c instanceof Host h && h.markdownOn() && !Boolean.TRUE.equals(i18n)) {
-            return new DocView(elem, area.getLineWrap(), area.getWrapStyleWord());
+        if (c instanceof JTextArea area && c instanceof Host h && (h.markdownOn() || h.reversedOn())
+                && !Boolean.TRUE.equals(i18n)) {
+            return new DocView(elem, area.getLineWrap(), area.getWrapStyleWord(), h.reversedOn());
         }
         return super.create(elem);
     }
 
-    /** 見た目の組み立てをやり直す（.md かどうかが変わったとき、見出しの段が変わったとき）。 */
+    /** 見た目の組み立てをやり直す（.md かどうか・並べる向きが変わったとき、見出しの段が変わったとき）。 */
     void rebuild() {
         if (getComponent() != null) {
             modelChanged();
@@ -83,10 +90,11 @@ final class MarkdownTextAreaUI extends BasicTextAreaUI {
 
     // ---------- ビュー（文書全体と、1行ずつ） ----------
 
-    /** 文書全体。行（Line）を縦に並べる。折り返しの幅・タブ・選択の色を、行に渡す。 */
+    /** 文書全体。行（Line）を縦に並べる（reversed なら下から上へ）。折り返しの幅・タブ・選択の色を、行に渡す。 */
     private static final class DocView extends BoxView implements TabExpander {
         private final boolean wrap;
         private final boolean word;
+        private final boolean reversed;
         private FontMetrics metrics;
         private float tabSize;
         private int tabBase;
@@ -96,10 +104,90 @@ final class MarkdownTextAreaUI extends BasicTextAreaUI {
         private Color unselected;
         private Color selected;
 
-        DocView(Element elem, boolean wrap, boolean word) {
+        DocView(Element elem, boolean wrap, boolean word, boolean reversed) {
             super(elem, Y_AXIS);
             this.wrap = wrap;
             this.word = word;
+            this.reversed = reversed;
+        }
+
+        /** 行の縦の位置を決める。逆向きのときは、最後の行を上から順に積む。 */
+        @Override
+        protected void layoutMajorAxis(int targetSpan, int axis, int[] offsets, int[] spans) {
+            super.layoutMajorAxis(targetSpan, axis, offsets, spans);
+            if (reversed) {
+                int y = 0;
+                for (int i = spans.length - 1; i >= 0; i--) {
+                    offsets[i] = y;
+                    y += spans[i];
+                }
+            }
+        }
+
+        /** 点 y を含む行。並びの外なら、近いほうの端の行（逆向きでも、位置で探す）。 */
+        @Override
+        protected View getViewAtPoint(int x, int y, Rectangle alloc) {
+            int n = getViewCount();
+            if (!reversed || n == 0) {
+                return super.getViewAtPoint(x, y, alloc);
+            }
+            int index = -1;
+            for (int i = 0; i < n; i++) {
+                int top = alloc.y + getOffset(Y_AXIS, i);
+                if (y >= top && y < top + getSpan(Y_AXIS, i)) {
+                    index = i;
+                    break;
+                }
+            }
+            if (index < 0) {
+                index = y < alloc.y + getOffset(Y_AXIS, n - 1) ? n - 1 : 0;     // 上の外は最後の行、下の外は最初の行
+            }
+            childAllocation(index, alloc);
+            return getView(index);
+        }
+
+        /** 押した位置の文字。逆向きのときは、上下の外も含めて、位置で行を探す（標準の作りは、上の外を文書の頭とみなすため）。 */
+        @Override
+        public int viewToModel(float x, float y, Shape a, Position.Bias[] bias) {
+            if (!reversed) {
+                return super.viewToModel(x, y, a, bias);
+            }
+            if (!isAllocationValid()) {
+                Rectangle r = a.getBounds();
+                setSize(r.width, r.height);
+            }
+            Rectangle alloc = getInsideAllocation(a);
+            View v = getViewAtPoint((int) x, (int) y, alloc);
+            if (v == null) {
+                bias[0] = Position.Bias.Forward;
+                return getStartOffset();
+            }
+            return v.viewToModel(x, y, alloc, bias);
+        }
+
+        /** ↑↓ の移動。逆向きのときは、文書の前後ではなく、画面の上下の位置で決める。 */
+        @Override
+        public int getNextVisualPositionFrom(int pos, Position.Bias b, Shape a, int direction, Position.Bias[] biasRet)
+                throws BadLocationException {
+            if (!reversed || pos < 0 || (direction != NORTH && direction != SOUTH)) {
+                return super.getNextVisualPositionFrom(pos, b, a, direction, biasRet);
+            }
+            JTextComponent host = (JTextComponent) getContainer();
+            Rectangle2D r = host.modelToView2D(pos);
+            if (r == null) {
+                return pos;
+            }
+            Point magic = host.getCaret().getMagicCaretPosition();     // ↑↓ を続けて押すあいだ、横の位置を保つ
+            int x = magic != null ? magic.x : (int) r.getX();
+            int y = direction == NORTH ? (int) r.getY() - 1 : (int) (r.getY() + r.getHeight());
+            int top = host.getInsets().top;     // a は、まだ描いていないと null のことがあるので、部品の余白から求める
+            int n = getViewCount();
+            int bottom = n == 0 ? top : top + getOffset(Y_AXIS, 0) + getSpan(Y_AXIS, 0);
+            if (y < top || y >= bottom) {
+                return pos;                     // いちばん上・下の段からは、動かない
+            }
+            biasRet[0] = Position.Bias.Forward;
+            return host.viewToModel2D(new Point(x, y));
         }
 
         private int tabCount() {
@@ -267,7 +355,10 @@ final class MarkdownTextAreaUI extends BasicTextAreaUI {
 
             /** この行の見出しの段（見出しでなければ 0）。読み取りの結果が今の文書と合っていれば結果から、合わなければ行の頭の字から。 */
             private int headingLevel(JTextComponent host) {
-                Markdown.Result r = host instanceof Host h ? h.markdown() : null;
+                if (!(host instanceof Host h) || !h.markdownOn()) {
+                    return 0;                   // .md でない文書（逆向きに並べるだけのとき）は、見出しにしない
+                }
+                Markdown.Result r = h.markdown();
                 int start = getStartOffset();
                 if (r != null && r.length == getDocument().getLength()) {
                     int line = r.lineOf(start);
@@ -627,8 +718,10 @@ final class MarkdownTextAreaUI extends BasicTextAreaUI {
             return;
         }
         try {
-            int firstLine = r.lineOf(area.viewToModel2D(new Point(0, visible.y)));
-            int lastLine = r.lineOf(area.viewToModel2D(new Point(0, visible.y + visible.height)));
+            int topLine = r.lineOf(area.viewToModel2D(new Point(0, visible.y)));
+            int bottomLine = r.lineOf(area.viewToModel2D(new Point(0, visible.y + visible.height)));
+            int firstLine = Math.min(topLine, bottomLine);      // 行を下から上へ並べるときは、上の行のほうが後ろ
+            int lastLine = Math.max(topLine, bottomLine);
             Color codeTint = mix(Theme.BG, Theme.FG, 0.10);
             Color bar = mix(Theme.BG, Theme.ACCENT, 0.65);
             Color rule = mix(Theme.FG, Theme.BG, 0.55);

@@ -356,6 +356,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         JMenuBar menuBar = new JMenuBar();
         SheetSize.load(appSettings);    // 原稿用紙の字数・行数（前回の設定。メニューの項目と、縦書きの表示に使う）
         Spacing.load(appSettings);      // 行間・字間・余白（前回の設定。メニューの項目と、画面の描き方に使う）
+        TypingPosition.load(appSettings);   // 打つ位置（固定・高さ・上へ書く。横書きの画面と Enter の動きに使う）
 
         // メニューバーは文字だけ（全部の操作の一覧）。よく使う操作は、下の段のツールバーにアイコンと名前で出す。
         // メニューの中の項目は、よく使うものと、決まった印がある（はさみ・時計など）ものにだけアイコンを付ける
@@ -415,11 +416,13 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         JMenu sheetMenu = new JMenu("原稿用紙の字数・行数");
         sheetMenu.add(sheetSizeMenu("字数", true));
         sheetMenu.add(sheetSizeMenu("行数", false));
-        // 行間・字間・余白（縦書きは3つとも、横書きは余白だけ。選ぶと、開いている文書にすぐ反映する）
+        // 行間・字間・余白（縦書きは行間・字間・余白、横書きは行の高さと余白。選ぶと、開いている文書にすぐ反映する）
         JMenu spacingRoot = new JMenu("行間・字間・余白");
         spacingRoot.add(spacingMenu("縦の行間", 0));
         spacingRoot.add(spacingMenu("縦の字間", 1));
+        spacingRoot.add(rowHeightMenu);
         spacingRoot.add(spacingMenu("余白", 2));
+        rebuildRowHeightMenu();
         // 入力補助（段落頭の全角スペース・かっこの自動閉じ）。前回の設定を読んで、メニューと打つ処理に反映する。既定は切
         InputAssist.indentOnBreak = appSettings.getBool(AppSettings.INPUT_INDENT, false);
         InputAssist.pairs = appSettings.getBool(AppSettings.INPUT_PAIRS, false);
@@ -476,6 +479,8 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             format.add(sheetMenu);
         }
         format.add(spacingRoot);
+        format.add(typingMenu);
+        rebuildTypingMenu();
         format.addSeparator();
         format.add(assistMenu);
         if (Edition.has(Edition.VERTICAL)) {
@@ -692,6 +697,160 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             menu.add(levelItem);
         }
         return menu;
+    }
+
+    /** 横書きの行の高さを選ぶサブメニュー（よく使う倍率と「指定…」）。選び直すたびに、チェックと「指定」の表示を作り直す。 */
+    private final JMenu rowHeightMenu = new JMenu("横の行の高さ");
+
+    private void rebuildRowHeightMenu() {
+        rowHeightMenu.removeAll();
+        javax.swing.ButtonGroup group = new javax.swing.ButtonGroup();
+        int current = Spacing.row();
+        boolean preset = false;
+        for (int value : Spacing.ROW_CHOICES) {
+            String label = Spacing.rowLabel(value) + (value == Spacing.ROW_MIN ? "（標準）" : "");
+            javax.swing.JRadioButtonMenuItem rowItem = new javax.swing.JRadioButtonMenuItem(label, value == current);
+            rowItem.addActionListener(e -> setRowHeight(value));
+            group.add(rowItem);
+            rowHeightMenu.add(rowItem);
+            preset |= value == current;
+        }
+        rowHeightMenu.addSeparator();
+        // よく使う倍率のどれでもないときは、「指定」に今の倍率を出してチェックを付ける
+        javax.swing.JRadioButtonMenuItem customItem = new javax.swing.JRadioButtonMenuItem(
+                preset ? "指定…" : "指定（" + Spacing.rowLabel(current) + "）…", !preset);
+        customItem.addActionListener(e -> askRowHeight());
+        group.add(customItem);
+        rowHeightMenu.add(customItem);
+    }
+
+    /** 行の高さを、数で指定してもらう（1.0〜3.0 倍、0.05 刻み）。 */
+    private void askRowHeight() {
+        javax.swing.SpinnerNumberModel model = new javax.swing.SpinnerNumberModel(
+                Spacing.row() / 100.0, Spacing.ROW_MIN / 100.0, Spacing.ROW_MAX / 100.0, 0.05);
+        javax.swing.JSpinner spinner = new javax.swing.JSpinner(model);
+        spinner.setEditor(new javax.swing.JSpinner.NumberEditor(spinner, "0.0#"));
+        JPanel panel = new JPanel(new BorderLayout(8, 8));
+        panel.add(new JLabel("横書きの行の高さ（文字の高さの何倍か。1.0 が標準、3.0 まで）"), BorderLayout.NORTH);
+        JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        row.add(spinner);
+        row.add(new JLabel(" 倍"));
+        panel.add(row, BorderLayout.CENTER);
+        int result = JOptionPane.showConfirmDialog(this, panel, "横の行の高さ",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (result == JOptionPane.OK_OPTION) {
+            try {
+                spinner.commitEdit();           // 打ち込んだまま OK を押したときも、その数を使う
+            } catch (java.text.ParseException ex) {
+                // 数として読めないときは、矢印で選んでいた値を使う
+            }
+            setRowHeight((int) Math.round(((Number) spinner.getValue()).doubleValue() * 100));
+        } else {
+            rebuildRowHeightMenu();             // チェックを、今の倍率の所に戻す
+        }
+    }
+
+    /** 横書きの行の高さを変えて覚える。開いている横書きの文書（すべて）を、すぐ組み直す。 */
+    private void setRowHeight(int percent) {
+        Spacing.setRow(percent);
+        Spacing.save(appSettings);
+        appSettings.save();
+        rebuildRowHeightMenu();
+        for (EditorPane pane : documentPanes()) {
+            forEachView(pane, view -> {
+                if (view instanceof TextEditorPane horizontal) {
+                    horizontal.applyRowHeight();
+                }
+            });
+        }
+    }
+
+    /** 横書きの打つ位置のサブメニュー（固定するか・高さ・上へ書くか）。選び直すたびに、チェックと「指定」の表示を作り直す。 */
+    private final JMenu typingMenu = new JMenu("打つ位置");
+
+    private void rebuildTypingMenu() {
+        typingMenu.removeAll();
+        JCheckBoxMenuItem fixedItem = new JCheckBoxMenuItem("打つ行を画面の同じ高さに保つ", TypingPosition.fixed());
+        fixedItem.addActionListener(e -> {
+            TypingPosition.setFixed(fixedItem.isSelected());
+            saveTypingPosition();
+        });
+        typingMenu.add(fixedItem);
+        typingMenu.addSeparator();
+        javax.swing.ButtonGroup group = new javax.swing.ButtonGroup();
+        int current = TypingPosition.position();
+        boolean preset = false;
+        for (int i = 0; i < TypingPosition.CHOICES.length; i++) {
+            int value = TypingPosition.CHOICES[i];
+            javax.swing.JRadioButtonMenuItem positionItem = new javax.swing.JRadioButtonMenuItem(
+                    TypingPosition.NAMES[i] + "（上から " + value + "%）", value == current);
+            positionItem.addActionListener(e -> setTypingPosition(value));
+            group.add(positionItem);
+            typingMenu.add(positionItem);
+            preset |= value == current;
+        }
+        // 並べた高さのどれでもないときは、「指定」に今の高さを出してチェックを付ける
+        javax.swing.JRadioButtonMenuItem customItem = new javax.swing.JRadioButtonMenuItem(
+                preset ? "高さを指定…" : "高さを指定（上から " + current + "%）…", !preset);
+        customItem.addActionListener(e -> askTypingPosition());
+        group.add(customItem);
+        typingMenu.add(customItem);
+        typingMenu.addSeparator();
+        JCheckBoxMenuItem upwardItem = new JCheckBoxMenuItem("新しい行を上に表示する（下から上へ書く）", TypingPosition.upward());
+        upwardItem.addActionListener(e -> {
+            TypingPosition.setUpward(upwardItem.isSelected());
+            saveTypingPosition();
+            flash(upwardItem.isSelected()
+                    ? "行を下から上へ並べて表示します（保存する中身の順番は、そのままです）"
+                    : "行を、ふつうの順番で表示します");
+        });
+        typingMenu.add(upwardItem);
+    }
+
+    /** 打つ位置の高さを、数で指定してもらう（画面の上から 10〜90%）。 */
+    private void askTypingPosition() {
+        javax.swing.SpinnerNumberModel model = new javax.swing.SpinnerNumberModel(
+                TypingPosition.position(), TypingPosition.MIN, TypingPosition.MAX, 5);
+        javax.swing.JSpinner spinner = new javax.swing.JSpinner(model);
+        JPanel panel = new JPanel(new BorderLayout(8, 8));
+        panel.add(new JLabel("打つ行を置く高さ（画面の上から何％の所か。50 が真ん中）"), BorderLayout.NORTH);
+        JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        row.add(spinner);
+        row.add(new JLabel(" %"));
+        panel.add(row, BorderLayout.CENTER);
+        int result = JOptionPane.showConfirmDialog(this, panel, "打つ位置の高さ",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (result == JOptionPane.OK_OPTION) {
+            try {
+                spinner.commitEdit();           // 打ち込んだまま OK を押したときも、その数を使う
+            } catch (java.text.ParseException ex) {
+                // 数として読めないときは、矢印で選んでいた値を使う
+            }
+            setTypingPosition(((Number) spinner.getValue()).intValue());
+        } else {
+            rebuildTypingMenu();                // チェックを、今の高さの所に戻す
+        }
+    }
+
+    /** 打つ位置の高さを変える。高さを選んだら、固定も入れる（選んだのに動かない、とならないように）。 */
+    private void setTypingPosition(int percent) {
+        TypingPosition.setPosition(percent);
+        TypingPosition.setFixed(true);
+        saveTypingPosition();
+    }
+
+    /** 打つ位置の設定を覚え、メニューを作り直し、開いている横書きの文書（すべて）にすぐ反映する。 */
+    private void saveTypingPosition() {
+        TypingPosition.save(appSettings);
+        appSettings.save();
+        rebuildTypingMenu();
+        for (EditorPane pane : documentPanes()) {
+            forEachView(pane, view -> {
+                if (view instanceof TextEditorPane horizontal) {
+                    horizontal.applyTypingPosition();
+                }
+            });
+        }
     }
 
     /** 行間・字間・余白の段階を変えて覚える。開いている文書（すべて）の並べ方と余白を、すぐ描き直す。 */

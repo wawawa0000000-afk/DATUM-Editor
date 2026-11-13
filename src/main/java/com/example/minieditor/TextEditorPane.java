@@ -103,6 +103,11 @@ public class TextEditorPane extends EditorPane implements Searchable {
             return isMarkdown();
         }
 
+        @Override
+        public boolean reversedOn() {
+            return TypingPosition.upward();
+        }
+
         /** 見出しだけ高い行を、行ごとに縞にする（行を2つおきに、地を少し変える）。 */
         @Override
         protected boolean paintLineStripes(Graphics g, Rectangle visible) {
@@ -110,8 +115,10 @@ public class TextEditorPane extends EditorPane implements Searchable {
                 return false;
             }
             try {
-                int first = getLineOfOffset(Math.max(0, viewToModel2D(new Point(0, visible.y))));
-                int last = getLineOfOffset(Math.max(0, viewToModel2D(new Point(0, visible.y + visible.height))));
+                int top = getLineOfOffset(Math.max(0, viewToModel2D(new Point(0, visible.y))));
+                int bottom = getLineOfOffset(Math.max(0, viewToModel2D(new Point(0, visible.y + visible.height))));
+                int first = Math.min(top, bottom);      // 行を下から上へ並べるときは、上の行のほうが後ろ
+                int last = Math.max(top, bottom);
                 g.setColor(Theme.BG_STRIPE);
                 for (int line = first; line <= last; line++) {
                     if (line % 2 == 1) {
@@ -172,8 +179,8 @@ public class TextEditorPane extends EditorPane implements Searchable {
         area.addCaretListener(e -> {
             area.repaint();             // カーソルのある行の強調を描き直す
             fireStatusChanged();
-            if (focusMode) {
-                SwingUtilities.invokeLater(this::centerCaret);
+            if (holding()) {
+                SwingUtilities.invokeLater(this::holdCaret);
             }
         });
         // JTextArea は Ctrl+H に「1文字削除」が割り当てられている。
@@ -214,8 +221,8 @@ public class TextEditorPane extends EditorPane implements Searchable {
         scrollPane.getViewport().addComponentListener(new ComponentAdapter() {
             @Override
             public void componentResized(ComponentEvent e) {
-                if (focusMode) {
-                    applyFocusLayout();
+                if (holding()) {
+                    applyLayout();
                 }
             }
         });
@@ -331,13 +338,13 @@ public class TextEditorPane extends EditorPane implements Searchable {
             wrapBeforeFocus = area.getLineWrap();
             setWrap(true);
             scrollPane.setRowHeaderView(null);
-            applyFocusLayout();
-            SwingUtilities.invokeLater(this::centerCaret);
         } else {
             setWrap(wrapBeforeFocus);
             scrollPane.setRowHeaderView(gutter);
-            area.setMargin(normalMargin());
-            area.revalidate();
+        }
+        applyLayout();
+        if (holding()) {
+            SwingUtilities.invokeLater(this::holdCaret);
         }
     }
 
@@ -351,34 +358,75 @@ public class TextEditorPane extends EditorPane implements Searchable {
         return new Insets(Math.round(4 * f), Math.round(12 * f), Math.round(4 * f), Math.round(12 * f));
     }
 
-    /** 余白の設定を、画面に反映する（集中モードのあいだは、集中モードの余白を使う）。 */
+    /** 余白の設定を、画面に反映する。 */
     public void applyMargin() {
-        if (!focusMode) {
-            area.setMargin(normalMargin());
+        applyLayout();
+    }
+
+    /** 打つ位置の設定（固定・高さ・行を並べる向き）を、画面に反映する。 */
+    public void applyTypingPosition() {
+        if (area.getUI() instanceof MarkdownTextAreaUI ui) {
+            ui.rebuild();                   // 並べる向きが変わったら、行の並びを組み直す
+        }
+        applyLayout();
+        area.revalidate();
+        area.repaint();
+        gutter.repaint();
+        if (holding()) {
+            SwingUtilities.invokeLater(this::holdCaret);
+        }
+    }
+
+    /** カーソルの行を、画面の決まった高さに保つか（打つ位置の固定か、集中モードのとき）。 */
+    private boolean holding() {
+        return focusMode || TypingPosition.fixed();
+    }
+
+    /** 行の高さの設定を、画面に反映する（並べ方を組み直す。寸法は StripedTextArea が設定から作る）。 */
+    public void applyRowHeight() {
+        if (area.getUI() instanceof MarkdownTextAreaUI ui) {
+            ui.rebuild();
+        }
+        applyLayout();                      // 打つ位置を保つときの上の余白は、行の高さから決めている
+        area.revalidate();
+        area.repaint();
+        gutter.revalidate();
+        gutter.repaint();
+    }
+
+    /**
+     * 余白を決めて当てる。集中モードでは、1行 40 字ほどの幅で中央に寄せる。
+     * 打つ位置を保つときは、上下にも画面の高さに合わせた余白を入れる（最初や最後の行でも、決まった高さに来られるように）。
+     */
+    private void applyLayout() {
+        Insets margin = normalMargin();
+        if (focusMode) {
+            int width = scrollPane.getViewport().getWidth();
+            int column = area.getFontMetrics(area.getFont()).charWidth('あ') * 40;
+            margin.left = margin.right = Math.max(12, (width - column) / 2);
+        }
+        if (holding()) {
+            int height = scrollPane.getViewport().getHeight();
+            int rowHeight = area.getFontMetrics(area.getFont()).getHeight();
+            int at = height * TypingPosition.position() / 100;      // 行の真ん中を置く高さ
+            margin.top = Math.max(margin.top, at - rowHeight / 2);
+            margin.bottom = Math.max(margin.bottom, height - at - rowHeight / 2);
+        }
+        if (!margin.equals(area.getMargin())) {
+            area.setMargin(margin);
             area.revalidate();
         }
     }
 
-    private void applyFocusLayout() {
-        int width = scrollPane.getViewport().getWidth();
-        int height = scrollPane.getViewport().getHeight();
-        int column = area.getFontMetrics(area.getFont()).charWidth('あ') * 40;
-        int side = Math.max(12, (width - column) / 2);
-        // 上下にも、画面の半分ほどの余白を入れる（最初や最後の行でも、真ん中に来られるように）
-        area.setMargin(new Insets(Math.max(4, height / 2 - area.getFontMetrics(area.getFont()).getHeight()), side,
-                Math.max(4, height / 2), side));
-        area.revalidate();
-    }
-
-    /** カーソルのある行が、画面の縦の真ん中に来るようにスクロールする。 */
-    private void centerCaret() {
+    /** カーソルのある行が、画面の決まった高さ（TypingPosition.position。ふだんは真ん中）に来るようにスクロールする。 */
+    private void holdCaret() {
         try {
             Rectangle2D r = area.modelToView2D(area.getCaretPosition());
             if (r == null) {
                 return;
             }
             int viewHeight = scrollPane.getViewport().getHeight();
-            int y = (int) (r.getCenterY() - viewHeight / 2.0);
+            int y = (int) (r.getCenterY() - viewHeight * TypingPosition.position() / 100.0);
             y = Math.max(0, Math.min(y, area.getHeight() - viewHeight));
             Point position = scrollPane.getViewport().getViewPosition();
             if (position.y != y) {
@@ -411,8 +459,10 @@ public class TextEditorPane extends EditorPane implements Searchable {
         }
         int rowHeight = area.getFontMetrics(area.getFont()).getHeight();
         int side = rowHeight * 4;
-        int first = area.viewToModel2D(new Point(visible.x - side, visible.y));
-        int last = area.viewToModel2D(new Point(visible.x + visible.width + side, visible.y + visible.height + rowHeight));
+        int top = area.viewToModel2D(new Point(visible.x - side, visible.y - rowHeight));
+        int bottom = area.viewToModel2D(new Point(visible.x + visible.width + side, visible.y + visible.height + rowHeight));
+        int first = Math.min(top, bottom);      // 行を下から上へ並べるときは、上の行のほうが後ろ
+        int last = Math.max(top, bottom);
         Font rubyFont = area.getFont().deriveFont(Math.max(9f, area.getFont().getSize2D() / 2));
         FontMetrics metrics = g.getFontMetrics(rubyFont);
         int caret = area.getCaretPosition();
@@ -454,7 +504,7 @@ public class TextEditorPane extends EditorPane implements Searchable {
                 // ふりがなは、親文字の1行目の左端と右端の真ん中にそろえ、その行の上に描く
                 double right = baseEnd.getY() == head.getY() ? baseEnd.getX() : rightOfRow(span.baseStart(), span.baseEnd(), head);
                 int x = (int) Math.round((head.getX() + right) / 2 - metrics.stringWidth(span.reading()) / 2.0);
-                int y = (int) head.getY() - metrics.getDescent() - 1;
+                int y = (int) head.getY() + area.rowGapAbove() - metrics.getDescent() - 1;    // 行を高くしたときは、字のすぐ上に
                 g.setFont(rubyFont);
                 g.setColor(area.getForeground());
                 g.drawString(span.reading(), x, y);
