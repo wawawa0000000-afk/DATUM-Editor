@@ -640,7 +640,7 @@ final class MarkdownTextAreaUI extends BasicTextAreaUI {
                 // 区切り線の「---」は、見せずに線を引く（線は背景を描くときに引いている）
                 return x + Utilities.getTabbedTextWidth(s, g.getFontMetrics(), x, tabs, offset);
             }
-            color = mix(fg, host.getBackground(), onCaret ? 0.30 : 0.62);
+            color = Theme.mix(fg, host.getBackground(), onCaret ? 0.30 : 0.62);
             bold = false;
             italic = false;
         } else {
@@ -659,7 +659,7 @@ final class MarkdownTextAreaUI extends BasicTextAreaUI {
                 color = Theme.ACCENT;
             }
             if ((flags & Markdown.DONE) != 0) {
-                color = mix(fg, host.getBackground(), 0.5);
+                color = Theme.mix(fg, host.getBackground(), 0.5);
                 strike = true;
             }
         }
@@ -722,9 +722,9 @@ final class MarkdownTextAreaUI extends BasicTextAreaUI {
             int bottomLine = r.lineOf(area.viewToModel2D(new Point(0, visible.y + visible.height)));
             int firstLine = Math.min(topLine, bottomLine);      // 行を下から上へ並べるときは、上の行のほうが後ろ
             int lastLine = Math.max(topLine, bottomLine);
-            Color codeTint = mix(Theme.BG, Theme.FG, 0.10);
-            Color bar = mix(Theme.BG, Theme.ACCENT, 0.65);
-            Color rule = mix(Theme.FG, Theme.BG, 0.55);
+            Color codeTint = Theme.mix(Theme.BG, Theme.FG, 0.10);
+            Color bar = Theme.mix(Theme.BG, Theme.ACCENT, 0.65);
+            Color rule = Theme.mix(Theme.FG, Theme.BG, 0.55);
             int left = area.getInsets().left;
             int right = area.getWidth() - area.getInsets().right;
             for (int line = firstLine; line <= lastLine && line < r.kind.length; line++) {
@@ -779,13 +779,5 @@ final class MarkdownTextAreaUI extends BasicTextAreaUI {
             }
             i = j;
         }
-    }
-
-    /** a と b を、b を ratio の割合で混ぜた色。 */
-    static Color mix(Color a, Color b, double ratio) {
-        return new Color(
-                (int) Math.round(a.getRed() + (b.getRed() - a.getRed()) * ratio),
-                (int) Math.round(a.getGreen() + (b.getGreen() - a.getGreen()) * ratio),
-                (int) Math.round(a.getBlue() + (b.getBlue() - a.getBlue()) * ratio));
     }
 }

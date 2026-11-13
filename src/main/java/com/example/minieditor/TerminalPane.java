@@ -2,9 +2,7 @@ package com.example.minieditor;
 
 import java.awt.BorderLayout;
 import java.awt.Color;
-import java.awt.FlowLayout;
 import java.awt.Font;
-import java.awt.event.ActionEvent;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.io.File;
@@ -22,7 +20,6 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
-import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JComponent;
@@ -83,29 +80,17 @@ public final class TerminalPane extends JPanel {
         Font mono = new Font(Font.MONOSPACED, Font.PLAIN, Theme.SMALL_SIZE);
 
         // 上の帯：名前と、操作のボタン
-        JLabel title = new JLabel("ターミナル");
-        title.setFont(Theme.small());
-        title.setForeground(Theme.FG);
         JButton stop = Theme.flatButton("中断");
         stop.setToolTipText("動いているコマンドを止める（Ctrl+C）");
         stop.addActionListener(e -> interrupt());
         JButton clear = Theme.flatButton("消去");
         clear.setToolTipText("表示を消す（Ctrl+L）");
         clear.addActionListener(e -> clear());
-        JButton close = Theme.flatButton("×");
-        close.setToolTipText("ターミナルを隠す（中のコマンドは動いたまま）");
-        close.addActionListener(e -> onClose.run());
-        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
-        buttons.setOpaque(false);
+        JButton close = PanelHeader.closeButton("ターミナルを隠す（中のコマンドは動いたまま）", onClose);
         for (JButton button : new JButton[]{stop, clear, close}) {
             button.setFocusable(false);         // 押しても、入力欄からカーソルが離れないようにする
-            buttons.add(button);
         }
-        JPanel header = new JPanel(new BorderLayout());
-        header.setBackground(Theme.PANEL);
-        header.setBorder(BorderFactory.createEmptyBorder(4, 14, 4, 8));
-        header.add(title, BorderLayout.WEST);
-        header.add(buttons, BorderLayout.EAST);
+        PanelHeader header = new PanelHeader("ターミナル").with(stop, clear, close);
 
         // 中央：シェルからの出力
         output.setEditable(false);
@@ -154,14 +139,7 @@ public final class TerminalPane extends JPanel {
     }
 
     private static void bind(JComponent component, KeyStroke key, Runnable action) {
-        String name = "terminal-" + key;
-        component.getInputMap(JComponent.WHEN_FOCUSED).put(key, name);
-        component.getActionMap().put(name, new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                action.run();
-            }
-        });
+        Keys.bind(component, key, "terminal-" + key, action);
     }
 
     /** 入力欄にカーソルを置く。 */

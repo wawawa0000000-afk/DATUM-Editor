@@ -51,10 +51,6 @@ public class EditorGroup extends JPanel {
         void tabDropped(EditorGroup group, EditorPane pane, Point screen);
     }
 
-    private static final Color[] BADGE_COLORS = {
-        new Color(0x4FC1FF), new Color(0xCE9178), new Color(0x4EC9B0)
-    };
-
     private final Host host;
     private final List<EditorPane> panes = new ArrayList<>();
     private EditorPane active;
@@ -329,9 +325,12 @@ public class EditorGroup extends JPanel {
     /** タブ1枚。種類の印・名前・閉じるボタンを横に並べる。 */
     private final class Tab extends JPanel {
         private final EditorPane pane;
+        // 選ばれている度合い（0〜1）。選び直したとき、地・上の線・名前の色を 100ms で移す
+        private final Motion lit = new Motion(Motion.FAST, 0f, this::repaint);
 
         Tab(EditorPane pane) {
             this.pane = pane;
+            lit.set(pane == active ? 1f : 0f);      // 作り直したタブは、動かさずに今の状態で出す
             setLayout(new BoxLayout(this, BoxLayout.X_AXIS));
             setOpaque(false);
             setBorder(BorderFactory.createEmptyBorder(9, 14, 8, 8));
@@ -340,14 +339,13 @@ public class EditorGroup extends JPanel {
 
             JLabel badge = new JLabel(EditorPane.badgeFor(pane.getPath(), pane.getMode()));
             badge.setFont(Theme.small().deriveFont(Font.BOLD));
-            badge.setForeground(EditorPane.isMarkdownFile(pane.getPath()) && pane.getMode() == EditorPane.Mode.TEXT
-                    ? new Color(0xE5C07B) : BADGE_COLORS[pane.getMode().ordinal()]);
+            badge.setForeground(EditorPane.badgeColorFor(pane.getPath(), pane.getMode()));
 
             // 文字の色は、描くたびに「選ばれているか」で決める（選び直すたびにタブを作り直さないため）
             JLabel title = new JLabel(pane.getTitle()) {
                 @Override
                 public Color getForeground() {
-                    return Tab.this.pane == active ? Theme.FG_STRONG : Theme.FG_DIM;
+                    return Theme.mix(Theme.FG_DIM, Theme.FG_STRONG, lit.value());
                 }
             };
             title.setFont(Theme.ui());
@@ -439,11 +437,18 @@ public class EditorGroup extends JPanel {
 
         @Override
         protected void paintComponent(Graphics g) {
-            boolean selected = pane == active;
-            g.setColor(selected ? Theme.BG : Theme.TAB_INACTIVE);
+            float target = pane == active ? 1f : 0f;
+            if (isShowing()) {
+                lit.to(target);         // 選び直されていたら、ここから動かし始める（同じ向きなら何もしない）
+            } else {
+                lit.set(target);
+            }
+            float k = lit.value();
+            g.setColor(Theme.mix(Theme.TAB_INACTIVE, Theme.BG, k));
             g.fillRect(0, 0, getWidth(), getHeight());
-            if (selected) {
-                g.setColor(groupActive ? Theme.ACCENT : Theme.BORDER);
+            if (k > 0f) {
+                Color line = groupActive ? Theme.ACCENT : Theme.BORDER;
+                g.setColor(new Color(line.getRed(), line.getGreen(), line.getBlue(), Math.round(255 * k)));
                 g.fillRect(0, 0, getWidth(), 3);        // 選択中のタブの上に出す線
             }
             g.setColor(Theme.PANEL);

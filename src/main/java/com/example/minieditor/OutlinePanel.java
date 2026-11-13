@@ -4,20 +4,15 @@ import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Dimension;
-import java.awt.FlowLayout;
-import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.List;
 import java.util.function.Supplier;
 
-import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.DefaultListModel;
-import javax.swing.JButton;
-import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JPanel;
@@ -52,25 +47,8 @@ final class OutlinePanel extends JPanel {
         setBackground(Theme.BG);
         setMinimumSize(new Dimension(0, 120));
 
-        JLabel title = new JLabel("見出し一覧");
-        title.setFont(Theme.small());
-        title.setForeground(Theme.FG);
-        JButton close = Theme.flatButton("×");
-        close.setToolTipText("閉じる（Esc）");
-        close.addActionListener(e -> onClose.run());
-        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
-        buttons.setOpaque(false);
-        buttons.add(close);
-        JPanel header = new JPanel(new BorderLayout());
-        header.setBackground(Theme.PANEL);
-        header.setBorder(BorderFactory.createEmptyBorder(6, 12, 6, 8));
-        header.add(title, BorderLayout.WEST);
-        header.add(summary, BorderLayout.CENTER);
-        header.add(buttons, BorderLayout.EAST);
-
-        summary.setFont(Theme.small());
-        summary.setForeground(Theme.FG_DIM);
-        summary.setBorder(BorderFactory.createEmptyBorder(0, 12, 0, 12));
+        PanelHeader header = new PanelHeader(new JLabel("見出し一覧"), summary)
+                .with(PanelHeader.closeButton("閉じる（Esc）", onClose));
 
         list.setBackground(Theme.BG);
         list.setCellRenderer(new DefaultListCellRenderer() {
@@ -92,8 +70,8 @@ final class OutlinePanel extends JPanel {
                 }
             }
         });
-        bind(list, KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "jumpOutline", this::jumpToSelected);
-        bind(list, KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "closeOutline", onClose);
+        Keys.bind(list, KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "jumpOutline", this::jumpToSelected);
+        Keys.bind(list, KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "closeOutline", onClose);
 
         JScrollPane scroll = new JScrollPane(list);
         scroll.setBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Theme.BORDER));
@@ -167,15 +145,5 @@ final class OutlinePanel extends JPanel {
     private void setSummary(String text, Color color) {
         summary.setText(text);
         summary.setForeground(color);
-    }
-
-    private static void bind(JComponent component, KeyStroke key, String name, Runnable action) {
-        component.getInputMap(JComponent.WHEN_FOCUSED).put(key, name);
-        component.getActionMap().put(name, new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                action.run();
-            }
-        });
     }
 }

@@ -2,7 +2,6 @@ package com.example.minieditor;
 
 import java.awt.BorderLayout;
 import java.awt.Component;
-import java.awt.FlowLayout;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.io.IOException;
@@ -83,8 +82,6 @@ public final class FolderSidebar extends JPanel {
         this.host = host;
         setBackground(Theme.PANEL);
 
-        title.setFont(Theme.small());
-        title.setForeground(Theme.FG);
         JButton open = Theme.flatButton("開く…");
         open.setToolTipText("表示するフォルダを選ぶ");
         open.addActionListener(e -> {
@@ -97,20 +94,11 @@ public final class FolderSidebar extends JPanel {
         JButton reload = Theme.flatButton("↻");
         reload.setToolTipText("表示を最新にする");
         reload.addActionListener(e -> refresh());
-        JButton close = Theme.flatButton("×");
-        close.setToolTipText("サイドバーを隠す");
-        close.addActionListener(e -> onClose.run());
-        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
-        buttons.setOpaque(false);
+        JButton close = PanelHeader.closeButton("サイドバーを隠す", onClose);
         for (JButton button : new JButton[]{open, reload, close}) {
             button.setFocusable(false);
-            buttons.add(button);
         }
-        JPanel header = new JPanel(new BorderLayout());
-        header.setBackground(Theme.PANEL);
-        header.setBorder(BorderFactory.createEmptyBorder(6, 12, 6, 6));
-        header.add(title, BorderLayout.CENTER);
-        header.add(buttons, BorderLayout.EAST);
+        PanelHeader header = new PanelHeader(title, null).with(open, reload, close);
 
         tree.setRootVisible(false);
         tree.setShowsRootHandles(true);
@@ -552,7 +540,6 @@ public final class FolderSidebar extends JPanel {
         tree.repaint();
     }
 
-    private static final String[] BADGE_HEX = {"#4FC1FF", "#CE9178", "#4EC9B0"};     // タブの印と同じ色
     private static final java.util.Map<Path, Object[]> KINDS = new java.util.HashMap<>();   // ファイル → {更新時刻, 種類}
 
     /** このアプリの形式の .json なら、その種類を返す。それ以外は null。更新時刻が同じあいだは、読み直さない。 */
@@ -607,7 +594,7 @@ public final class FolderSidebar extends JPanel {
             if (mode != null) {
                 // タブと同じ印（文・縦・板）を名前の前に付けて、種類がわかるようにする
                 Path file = (Path) user;
-                text = "<html><font color='" + EditorPane.badgeHexFor(file, mode, BADGE_HEX) + "'><b>"
+                text = "<html><font color='" + Theme.hex(EditorPane.badgeColorFor(file, mode)) + "'><b>"
                         + EditorPane.badgeFor(file, mode) + "</b></font>&nbsp;&nbsp;"
                         + text.replace("&", "&amp;").replace("<", "&lt;") + "</html>";
             } else if (user instanceof Path p && isGoogleFile(p)) {

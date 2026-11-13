@@ -46,6 +46,7 @@ public class TextEditorPane extends EditorPane implements Searchable {
         final UndoManager undoManager = new UndoManager();
         CompoundEdit compound;          // 複数の変更を「元に戻す1回ぶん」にまとめるときに使う
         boolean loading;                // ファイルを読み込んでいる最中か
+        String text;                    // 全文の写し（文書が変わるまで覚えておく。null なら、次に要るときに作る）
 
         Shared(javax.swing.text.Document document) {
             this.document = document;
@@ -139,6 +140,7 @@ public class TextEditorPane extends EditorPane implements Searchable {
     private final List<Object> highlightTags = new ArrayList<>();
     private final DocumentListener documentListener = new DocumentListener() {
         public void insertUpdate(DocumentEvent e) {
+            shared.text = null;
             rubySpans = null;
             markdown = null;
             checkHeadings();
@@ -146,6 +148,7 @@ public class TextEditorPane extends EditorPane implements Searchable {
         }
 
         public void removeUpdate(DocumentEvent e) {
+            shared.text = null;
             rubySpans = null;
             markdown = null;
             checkHeadings();
@@ -177,7 +180,7 @@ public class TextEditorPane extends EditorPane implements Searchable {
 
         area.getDocument().addDocumentListener(documentListener);
         area.addCaretListener(e -> {
-            area.repaint();             // カーソルのある行の強調を描き直す
+            repaintCaretLines();        // カーソルのある行の強調を描き直す
             fireStatusChanged();
             if (holding()) {
                 SwingUtilities.invokeLater(this::holdCaret);
@@ -255,7 +258,62 @@ public class TextEditorPane extends EditorPane implements Searchable {
         area.setDocument(new javax.swing.text.PlainDocument());    // JTextArea 自身が付けた見張りも、共有の文書から外れる
     }
 
+    private Rectangle caretBand;        // 前にカーソルがあった行の、描き直す範囲（まだ無ければ null）
+
+    /**
+     * カーソルが動いたとき、前にいた行と今いる行だけを描き直す（1回打つごとに、見えている全部を描き直さないように）。
+     * 行の強調のほか、Markdown の記号の濃さ・区切り線・ルビを上に表示の記法も、カーソルのある行で変わる。
+     * 範囲が求められないとき（まだ並べていないなど）は、全部を描き直す。
+     */
+    private void repaintCaretLines() {
+        Rectangle now = caretBand();
+        if (now == null || caretBand == null) {
+            area.repaint();
+        } else {
+            area.repaint(caretBand);
+            area.repaint(now);
+        }
+        caretBand = now;
+    }
+
+    /** カーソルのある行（折り返していれば、その全部の段）の範囲。ふりがなは1つ上の段に描くので、上下に1段ぶん広げる。 */
+    private Rectangle caretBand() {
+        try {
+            int line = area.getLineOfOffset(area.getCaretPosition());
+            int end = area.getLineEndOffset(line) - (line == area.getLineCount() - 1 ? 0 : 1);
+            Rectangle2D a = area.modelToView2D(area.getLineStartOffset(line));
+            Rectangle2D b = area.modelToView2D(end);
+            if (a == null || b == null) {
+                return null;
+            }
+            double top = Math.min(a.getY(), b.getY());      // 行を下から上へ並べるときも、上の端と下の端を取る
+            double bottom = Math.max(a.getMaxY(), b.getMaxY());
+            int pad = (int) Math.ceil(Math.max(a.getHeight(), b.getHeight()));
+            return new Rectangle(0, (int) Math.floor(top) - pad, area.getWidth(), (int) Math.ceil(bottom - top) + pad * 2);
+        } catch (BadLocationException ex) {
+            return null;
+        }
+    }
+
+    /**
+     * 全文。1回打つごとに、字数・原稿用紙換算・日々の字数・見出し一覧などが続けて全文を読むので、
+     * 文書が変わるまでは同じ写しを返す（長い原稿で、打つたびに全文を何度も写さないように）。
+     * 同じ文書を映すほかのタブとも、写しは1つ。
+     */
+    private String text() {
+        if (area.getDocument() != shared.document) {
+            return area.getText();      // 文書から切り離されたあと（閉じたタブ）は、覚えた写しに触らない
+        }
+        if (shared.text == null || shared.text.length() != area.getDocument().getLength()) {
+            shared.text = area.getText();
+        }
+        return shared.text;
+    }
+
     private void changed() {
+        if (isMarkdown()) {
+            area.repaint();             // Markdown は、1字の違いで離れた行の見た目も変わる（コードブロックの開け閉めなど）
+        }
         if (!shared.loading) {
             fireContentChanged();
         }
@@ -272,7 +330,7 @@ public class TextEditorPane extends EditorPane implements Searchable {
             return null;
         }
         if (markdown == null) {
-            markdown = Markdown.analyze(area.getText());
+            markdown = Markdown.analyze(text());
         }
         return markdown;
     }
@@ -445,7 +503,7 @@ public class TextEditorPane extends EditorPane implements Searchable {
      */
     private void paintRuby(Graphics g) {
         if (rubySpans == null) {
-            rubySpans = RubySpans.find(area.getText());
+            rubySpans = RubySpans.find(text());
         }
         if (rubySpans.isEmpty()) {
             return;
@@ -626,18 +684,18 @@ public class TextEditorPane extends EditorPane implements Searchable {
         json.put("fontName", area.getFont().getFamily());
         json.put("fontSize", Theme.unzoomed(area.getFont().getSize()));   // 等倍のときの大きさで保存する
         json.put("wrap", focusMode ? wrapBeforeFocus : area.getLineWrap());     // 集中モードの折り返しは、一時的なものなので保存しない
-        json.put("text", area.getText());
+        json.put("text", text());
         return json;
     }
 
     @Override
     public String toPlainText() {
-        return area.getText();
+        return text();
     }
 
     @Override
     public void exportPdf(PdfWriter writer) throws java.io.IOException {
-        PagePrinter.printHorizontal(area.getText(), area.getFont().getFamily(), writer);
+        PagePrinter.printHorizontal(text(), area.getFont().getFamily(), writer);
     }
 
     @Override
@@ -708,7 +766,7 @@ public class TextEditorPane extends EditorPane implements Searchable {
 
     @Override
     public String getText() {
-        return area.getText();
+        return text();
     }
 
     @Override

@@ -7,10 +7,8 @@ import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.GraphicsEnvironment;
 import java.awt.RenderingHints;
-import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
 
-import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JComponent;
@@ -126,6 +124,57 @@ public final class Theme {
     static Color[] preview(Scheme s) {
         int[] c = palette(s);
         return new Color[]{new Color(c[0]), new Color(c[9]), new Color(c[12])};
+    }
+
+    // 文書の種類の印（文・縦・板・MD）の色。暗い配色では明るい色、白の配色では、白地でも読める濃い色にする
+    private static final int[] BADGE_ON_DARK = {0x4FC1FF, 0xCE9178, 0x4EC9B0, 0xE5C07B};
+    private static final int[] BADGE_ON_LIGHT = {0x0B76B8, 0xB0562B, 0x12806A, 0x9A6700};
+    /** badge の kind：Markdown の文書の「MD」（ほかは EditorPane.Mode の順番）。 */
+    public static final int BADGE_MARKDOWN = 3;
+
+    /** 文書の種類の印の色。タブ・サイドバー・メニューで同じ色にする。 */
+    public static Color badge(int kind) {
+        return new Color((scheme.light ? BADGE_ON_LIGHT : BADGE_ON_DARK)[kind]);
+    }
+
+    /**
+     * 地の上に薄く重ねる色。暗い配色では白、明るい配色では黒を、share（0〜1）の濃さで重ねる。
+     * ボタンのプレートや枠は、これで濃さを決める（どの配色でも、地からの浮き方が同じになる）。
+     */
+    public static Color overlay(float share) {
+        int tone = scheme.light ? 0 : 255;
+        return new Color(tone, tone, tone, Math.round(share * 255));
+    }
+
+    /** 角の丸み（半径 6px。表示の倍率に合わせる）。ボタン・入力欄・切り替えボタンで同じにする。 */
+    public static int radius() {
+        return Math.max(2, Math.round(6 * zoom / 100f));
+    }
+
+    /** fillRoundRect などに渡す、角の丸みの直径。 */
+    public static int arc() {
+        return radius() * 2;
+    }
+
+    /**
+     * ボタンのプレートの濃さ（地・枠の順。overlay に渡す割合）。
+     * ふだん 4%・10%、乗せると 12%・22%、オン（欄を出している・切り替えが入っている）は 20%・35%。
+     */
+    public static float[] plate(boolean on, boolean hot) {
+        return on ? new float[]{0.20f, 0.35f} : hot ? new float[]{0.12f, 0.22f} : new float[]{0.04f, 0.10f};
+    }
+
+    /** a に b を t の割合で混ぜた色。 */
+    public static Color mix(Color a, Color b, double t) {
+        return new Color(
+                (int) Math.round(a.getRed() + (b.getRed() - a.getRed()) * t),
+                (int) Math.round(a.getGreen() + (b.getGreen() - a.getGreen()) * t),
+                (int) Math.round(a.getBlue() + (b.getBlue() - a.getBlue()) * t));
+    }
+
+    /** 色を、HTML に書く形（#RRGGBB）にする。 */
+    public static String hex(Color color) {
+        return String.format("#%06X", color.getRGB() & 0xFFFFFF);
     }
 
     /** 配色を入れ替える（色の値だけ。すでにある部品に反映するには switchTo を使う）。 */
@@ -498,15 +547,11 @@ public final class Theme {
         UIManager.put("Button.select", MENU_SELECTION);
         UIManager.put("Button.focus", FG_DIM);
         UIManager.put("Button.disabledText", FG_DIM);       // 押せないボタンの文字が、地の色に溶けて消えないように
-        UIManager.put("Button.border", BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(BORDER),
-                BorderFactory.createEmptyBorder(5, 14, 5, 14)));
+        UIManager.put("Button.border", new javax.swing.plaf.BorderUIResource(new RoundBorder(5, 14, 5, 14)));
         UIManager.put("TextField.background", INPUT);
         UIManager.put("TextField.foreground", FG);
         UIManager.put("TextField.caretForeground", FG_STRONG);
-        UIManager.put("TextField.border", BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(BORDER),
-                BorderFactory.createEmptyBorder(4, 6, 4, 6)));
+        UIManager.put("TextField.border", new javax.swing.plaf.BorderUIResource(new RoundBorder(4, 6, 4, 6)));
         UIManager.put("TextArea.caretForeground", FG_STRONG);
         UIManager.put("TextArea.background", INPUT);
         UIManager.put("TextArea.foreground", FG);
@@ -553,16 +598,25 @@ public final class Theme {
         UIManager.put("SplitPaneDivider.border", BorderFactory.createEmptyBorder());
     }
 
-    /** 枠のない、平らなボタンを作る（マウスを乗せると少し明るくなる）。 */
+    /**
+     * 欄の中のボタンを作る。ツールバーのボタンと同じ、極薄いプレートと細い枠
+     * （マウスを乗せると明るくなり、toggle でオンにすると、さらに明るくなる）。
+     */
     public static JButton flatButton(String text) {
         JButton button = new JButton(text) {
+            private final PlateFade fade = new PlateFade(this, true);   // 乗せた・オンの濃さを、100ms で移す
+
             @Override
             protected void paintComponent(Graphics g) {
                 Graphics2D g2 = (Graphics2D) g.create();
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                boolean hot = getModel().isRollover() || getModel().isPressed() || isFocusOwner();
-                g2.setColor(hot ? HOVER : INPUT);
-                g2.fillRoundRect(0, 0, getWidth(), getHeight(), 8, 8);
+                float[] plate = fade.plate();
+                java.awt.geom.RoundRectangle2D.Float shape = new java.awt.geom.RoundRectangle2D.Float(
+                        0.5f, 0.5f, getWidth() - 1, getHeight() - 1, arc(), arc());
+                g2.setColor(overlay(plate[0]));
+                g2.fill(shape);
+                g2.setColor(overlay(plate[1]));
+                g2.draw(shape);
                 g2.dispose();
                 super.paintComponent(g);
             }
@@ -575,14 +629,15 @@ public final class Theme {
         button.setBorder(BorderFactory.createEmptyBorder(4, 12, 4, 12));
         button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         // JButton は Space でしか押せないので、Enter でも押せるようにする
-        button.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "pressButton");
-        button.getActionMap().put("pressButton", new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                button.doClick();
-            }
-        });
+        Keys.bind(button, KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "pressButton", button::doClick);
         return button;
+    }
+
+    /** 「Aa」「.*」「選択内」のような切り替えボタンの、入・切の見た目。on のときは、プレートが明るくなり、字が濃くなる。 */
+    public static void toggle(JButton button, boolean on) {
+        button.setSelected(on);
+        button.setForeground(on ? FG_STRONG : FG_DIM);
+        button.repaint();
     }
 
     /** 検索欄などの入力欄を、暗い配色にそろえる。 */
@@ -593,9 +648,7 @@ public final class Theme {
         field.setSelectionColor(SELECTION);
         field.setSelectedTextColor(FG_STRONG);
         field.setFont(small());
-        field.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(BORDER),
-                BorderFactory.createEmptyBorder(4, 6, 4, 6)));
+        field.setBorder(new RoundBorder(4, 6, 4, 6));
     }
 
     /**

@@ -3,18 +3,15 @@ package com.example.minieditor;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
-import java.awt.event.ActionEvent;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Supplier;
 
-import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
-import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JTextField;
@@ -51,6 +48,13 @@ public class FindBar extends JPanel {
     private boolean internalEdit;       // 自分の置換で文書が変わっている最中か
     private EditorPane highlighted;     // 今、色を付けている文書
 
+    private final Fader fader = new Fader(this);
+
+    @Override
+    public void paint(java.awt.Graphics g) {
+        Fader.paint(this, g, super::paint);
+    }
+
     public FindBar(Supplier<EditorPane> currentPane) {
         super(new FlowLayout(FlowLayout.RIGHT, 16, 6));
         this.currentPane = currentPane;
@@ -71,24 +75,24 @@ public class FindBar extends JPanel {
         caseButton.setToolTipText("大文字と小文字を区別する");
         caseButton.addActionListener(e -> {
             caseSensitive = !caseSensitive;
-            styleToggle(caseButton, caseSensitive);
+            Theme.toggle(caseButton, caseSensitive);
             refresh(true);
         });
-        styleToggle(caseButton, false);
+        Theme.toggle(caseButton, false);
         regexButton.setToolTipText("正規表現で検索する");
         regexButton.addActionListener(e -> {
             regexMode = !regexMode;
-            styleToggle(regexButton, regexMode);
+            Theme.toggle(regexButton, regexMode);
             refresh(true);
         });
-        styleToggle(regexButton, false);
+        Theme.toggle(regexButton, false);
         selectionButton.setToolTipText("選んでいる範囲の中だけを検索する");
         selectionButton.addActionListener(e -> {
             selectionOnly = !selectionOnly;
-            styleToggle(selectionButton, selectionOnly);
+            Theme.toggle(selectionButton, selectionOnly);
             refresh(true);
         });
-        styleToggle(selectionButton, false);
+        Theme.toggle(selectionButton, false);
         selectionButton.setEnabled(false);
         JButton closeButton = Theme.flatButton("×");
         closeButton.setToolTipText("閉じる（Esc）");
@@ -144,11 +148,11 @@ public class FindBar extends JPanel {
             }
         });
         findField.addActionListener(e -> move(true));                    // Enter で次へ
-        bind(findField, KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.SHIFT_DOWN_MASK),
+        Keys.bind(findField, KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.SHIFT_DOWN_MASK),
                 "findPrevious", () -> move(false));
-        bind(findField, KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "closeFind", this::close);
+        Keys.bind(findField, KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "closeFind", this::close);
         replaceField.addActionListener(e -> replaceOne());               // Enter で1件置換
-        bind(replaceField, KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "closeFind", this::close);
+        Keys.bind(replaceField, KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "closeFind", this::close);
 
         setVisible(false);
     }
@@ -161,30 +165,16 @@ public class FindBar extends JPanel {
         return label;
     }
 
-    private static void bind(JComponent component, KeyStroke key, String name, Runnable action) {
-        component.getInputMap(JComponent.WHEN_FOCUSED).put(key, name);
-        component.getActionMap().put(name, new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                action.run();
-            }
-        });
-    }
-
-    /** 「Aa」「.*」「選択内」の切り替えボタンの見た目。on のときは枠を青にする。 */
-    private static void styleToggle(JButton button, boolean on) {
-        button.setForeground(on ? Theme.FG_STRONG : Theme.FG_DIM);
-        button.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(on ? Theme.ACCENT : Theme.INPUT),
-                BorderFactory.createEmptyBorder(3, 11, 3, 11)));
-    }
-
     // ---------- 開く・閉じる ----------
 
     /** バーを表示する。withReplace が true なら、置換の行も出す。 */
     public void open(boolean withReplace) {
         replaceRow.setVisible(withReplace);
+        boolean wasHidden = !isVisible();
         setVisible(true);
+        if (wasHidden) {
+            fader.fade(true, null);     // 出るときだけ、薄く浮かび上がらせる。入力欄はすぐ使える
+        }
         revalidate();
         findField.requestFocusInWindow();
         findField.selectAll();
@@ -192,7 +182,9 @@ public class FindBar extends JPanel {
         refresh(false);
     }
 
+    /** 閉じるときは動かさない（Esc のあと、すぐ本文を打ち始められるように）。 */
     public void close() {
+        fader.finish();
         clearHighlights();
         replaced.clear();
         selectionScope = null;

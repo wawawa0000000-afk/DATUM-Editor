@@ -145,7 +145,14 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     private final FindBar findBar = new FindBar(this::currentPane);
     private final JLabel statusLeft = new JLabel(" ");
     private final JLabel statusRight = new JLabel(" ");
-    private final JLabel statusCenter = new JLabel(" ", SwingConstants.CENTER);    // 「保存しました」を1秒だけ出す所
+    // 「保存しました」を1秒だけ出す所。出るとき・消えるときは、薄く浮かび、薄く消える
+    private final JLabel statusCenter = new JLabel(" ", SwingConstants.CENTER) {
+        @Override
+        public void paint(Graphics g) {
+            Fader.paint(this, g, super::paint);
+        }
+    };
+    private final Fader savedFader = new Fader(statusCenter);
     private JLabel zoomLabel;       // ステータスバーの「100%」
     private final JCheckBoxMenuItem wrapItem = new JCheckBoxMenuItem("折り返し");
     private final JCheckBoxMenuItem manuscriptItem = new JCheckBoxMenuItem("原稿用紙", true);   // 文字は、字数・行数に合わせて作り直す
@@ -156,6 +163,42 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     private final Map<Path, Instant> lastHistory = new HashMap<>();     // 自動保存で履歴を残した時刻（残しすぎないように）
     private final Set<Path> changedOutsideWarned = new HashSet<>();     // ほかのアプリで変わったので自動保存を止めた、と伝えたファイル
     private final Recovery recovery = new Recovery();                   // 異常終了に備えた、未保存の文書の控え
+    // 書式の、並べ方のサブメニュー（原稿用紙の字数・行数、行間・字間・余白、横の行の高さ、打つ位置）
+    private final LayoutMenus layoutMenus = new LayoutMenus(new LayoutMenus.Host() {
+        @Override
+        public Component parent() {
+            return EditorFrame.this;
+        }
+
+        @Override
+        public AppSettings settings() {
+            return appSettings;
+        }
+
+        @Override
+        public void forEachOpenView(java.util.function.Consumer<EditorPane> apply) {
+            for (EditorPane pane : documentPanes()) {
+                forEachView(pane, apply);
+            }
+        }
+
+        @Override
+        public void flash(String text) {
+            EditorFrame.this.flash(text);
+        }
+
+        @Override
+        public void layoutChanged() {
+            updateStatus();
+        }
+
+        @Override
+        public void sheetSizeChanged() {
+            manuscriptItem.setText(LayoutMenus.sheetLabel());
+            sheetCache.clear();
+        }
+    });
+    private final RubyActions rubyActions = new RubyActions(this, this::currentPane, this::flash);
     private final Timer autosaveTimer = new Timer(30_000, e -> autosaveTick());
 
     // 画面の左右に出す欄
@@ -163,7 +206,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     private FolderSidebar sidebar;
     private boolean sidebarVisible;
     private ProofreadPanel proofPanel;
-    private final Map<EditorPane, Integer> sheetCache = new java.util.WeakHashMap<>();  // 原稿用紙換算の枚数（中身が変わるまで覚えておく。カーソルが動くたびに全文を数えないため）
+    private final Map<EditorPane, SheetCount> sheetCache = new java.util.WeakHashMap<>();  // 原稿用紙換算の枚数（中身が変わるまで覚えておく。カーソルが動くたびに全文を数えないため）
     private final Map<EditorPane, CharCount> countCache = new java.util.WeakHashMap<>();  // ステータスバーの字数（同じく、中身が変わるまで覚えておく）
     private final Map<EditorPane, Object[]> zoomMemo = new java.util.WeakHashMap<>();   // 倍率を変えた文書：{そのとき付けた文字, 等倍の大きさ}
     private final Map<Theme.Scheme, javax.swing.JRadioButtonMenuItem> schemeItems = new java.util.EnumMap<>(Theme.Scheme.class);
@@ -186,7 +229,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         message = null;
         updateStatus();
     });
-    private final Timer savedTimer = new Timer(1000, e -> statusCenter.setText(" "));
+    private final Timer savedTimer = new Timer(1000, e -> savedFader.fade(false, () -> statusCenter.setText(" ")));
 
     public EditorFrame() {
         super(APP_NAME);
@@ -338,7 +381,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
                     Graphics2D g2 = (Graphics2D) g.create();
                     g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
                     g2.setColor(Theme.HOVER);
-                    g2.fillRoundRect(0, 0, getWidth(), getHeight(), 6, 6);
+                    g2.fillRoundRect(0, 0, getWidth(), getHeight(), Theme.arc(), Theme.arc());
                     g2.dispose();
                 }
                 super.paintComponent(g);
@@ -414,15 +457,15 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         // 表示には「画面（分割・倍率・配色・欄）」だけを残す。どちらにあるか迷わないように分けた
         // 原稿用紙の字数・行数（選ぶと、開いている縦書きの文書にすぐ反映する）
         JMenu sheetMenu = new JMenu("原稿用紙の字数・行数");
-        sheetMenu.add(sheetSizeMenu("字数", true));
-        sheetMenu.add(sheetSizeMenu("行数", false));
+        sheetMenu.add(layoutMenus.sheetSizeMenu("字数", true));
+        sheetMenu.add(layoutMenus.sheetSizeMenu("行数", false));
         // 行間・字間・余白（縦書きは行間・字間・余白、横書きは行の高さと余白。選ぶと、開いている文書にすぐ反映する）
         JMenu spacingRoot = new JMenu("行間・字間・余白");
-        spacingRoot.add(spacingMenu("縦の行間", 0));
-        spacingRoot.add(spacingMenu("縦の字間", 1));
-        spacingRoot.add(rowHeightMenu);
-        spacingRoot.add(spacingMenu("余白", 2));
-        rebuildRowHeightMenu();
+        spacingRoot.add(layoutMenus.spacingMenu("縦の行間", 0));
+        spacingRoot.add(layoutMenus.spacingMenu("縦の字間", 1));
+        spacingRoot.add(layoutMenus.rowHeightMenu);
+        spacingRoot.add(layoutMenus.spacingMenu("余白", 2));
+        layoutMenus.rebuildRowHeightMenu();
         // 入力補助（段落頭の全角スペース・かっこの自動閉じ）。前回の設定を読んで、メニューと打つ処理に反映する。既定は切
         InputAssist.indentOnBreak = appSettings.getBool(AppSettings.INPUT_INDENT, false);
         InputAssist.pairs = appSettings.getBool(AppSettings.INPUT_PAIRS, false);
@@ -479,15 +522,15 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             format.add(sheetMenu);
         }
         format.add(spacingRoot);
-        format.add(typingMenu);
-        rebuildTypingMenu();
+        format.add(layoutMenus.typingMenu);
+        layoutMenus.rebuildTypingMenu();
         format.addSeparator();
         format.add(assistMenu);
         if (Edition.has(Edition.VERTICAL)) {
             format.addSeparator();
-            format.add(item("ルビ（ふりがな）を振る…", key(KeyEvent.VK_R, CTRL), this::editRuby));
-            format.add(item("傍点を付ける", key(KeyEvent.VK_R, CTRL | SHIFT), this::addEmphasis));
-            format.add(item("ルビ・傍点を外す", null, this::removeRuby));
+            format.add(item("ルビ（ふりがな）を振る…", key(KeyEvent.VK_R, CTRL), rubyActions::editRuby));
+            format.add(item("傍点を付ける", key(KeyEvent.VK_R, CTRL | SHIFT), rubyActions::addEmphasis));
+            format.add(item("ルビ・傍点を外す", null, rubyActions::removeRuby));
         }
 
         JMenu view = new JMenu("表示");
@@ -662,242 +705,9 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         return menuBar;
     }
 
-    /** 原稿用紙の見出し（例「原稿用紙（25字×20行）」）。 */
-    private static String sheetLabel() {
-        return "原稿用紙（" + SheetSize.chars() + "字×" + SheetSize.lines() + "行）";
-    }
-
-    /** 原稿用紙の字数（chars が真）または行数を選ぶサブメニュー。今の値にチェックが付く。 */
-    private JMenu sheetSizeMenu(String title, boolean chars) {
-        JMenu menu = new JMenu(title);
-        javax.swing.ButtonGroup group = new javax.swing.ButtonGroup();
-        int current = chars ? SheetSize.chars() : SheetSize.lines();
-        for (int value : SheetSize.CHOICES) {
-            javax.swing.JRadioButtonMenuItem sizeItem = new javax.swing.JRadioButtonMenuItem(
-                    value + (chars ? " 字" : " 行"), value == current);
-            sizeItem.addActionListener(e -> setSheetSize(chars, value));
-            group.add(sizeItem);
-            menu.add(sizeItem);
-        }
-        return menu;
-    }
-
-    /** 行間・字間・余白の段階（狭い・標準・広い）を選ぶサブメニュー。kind は 0 縦の行間・1 縦の字間・2 余白。今の段階にチェックが付く。 */
-    private JMenu spacingMenu(String title, int kind) {
-        JMenu menu = new JMenu(title);
-        javax.swing.ButtonGroup group = new javax.swing.ButtonGroup();
-        int current = kind == 0 ? Spacing.line() : kind == 1 ? Spacing.chars() : Spacing.margin();
-        for (int level = 0; level < Spacing.NAMES.length; level++) {
-            int value = level;
-            javax.swing.JRadioButtonMenuItem levelItem = new javax.swing.JRadioButtonMenuItem(
-                    Spacing.NAMES[level], level == current);
-            withIcon(levelItem, ToolIcons.spacing(kind, level));      // 文字を読む前に、形で広さの違いがわかるように
-            levelItem.addActionListener(e -> setSpacing(kind, value));
-            group.add(levelItem);
-            menu.add(levelItem);
-        }
-        return menu;
-    }
-
-    /** 横書きの行の高さを選ぶサブメニュー（よく使う倍率と「指定…」）。選び直すたびに、チェックと「指定」の表示を作り直す。 */
-    private final JMenu rowHeightMenu = new JMenu("横の行の高さ");
-
-    private void rebuildRowHeightMenu() {
-        rowHeightMenu.removeAll();
-        javax.swing.ButtonGroup group = new javax.swing.ButtonGroup();
-        int current = Spacing.row();
-        boolean preset = false;
-        for (int value : Spacing.ROW_CHOICES) {
-            String label = Spacing.rowLabel(value) + (value == Spacing.ROW_MIN ? "（標準）" : "");
-            javax.swing.JRadioButtonMenuItem rowItem = new javax.swing.JRadioButtonMenuItem(label, value == current);
-            rowItem.addActionListener(e -> setRowHeight(value));
-            group.add(rowItem);
-            rowHeightMenu.add(rowItem);
-            preset |= value == current;
-        }
-        rowHeightMenu.addSeparator();
-        // よく使う倍率のどれでもないときは、「指定」に今の倍率を出してチェックを付ける
-        javax.swing.JRadioButtonMenuItem customItem = new javax.swing.JRadioButtonMenuItem(
-                preset ? "指定…" : "指定（" + Spacing.rowLabel(current) + "）…", !preset);
-        customItem.addActionListener(e -> askRowHeight());
-        group.add(customItem);
-        rowHeightMenu.add(customItem);
-    }
-
-    /** 行の高さを、数で指定してもらう（1.0〜3.0 倍、0.05 刻み）。 */
-    private void askRowHeight() {
-        javax.swing.SpinnerNumberModel model = new javax.swing.SpinnerNumberModel(
-                Spacing.row() / 100.0, Spacing.ROW_MIN / 100.0, Spacing.ROW_MAX / 100.0, 0.05);
-        javax.swing.JSpinner spinner = new javax.swing.JSpinner(model);
-        spinner.setEditor(new javax.swing.JSpinner.NumberEditor(spinner, "0.0#"));
-        JPanel panel = new JPanel(new BorderLayout(8, 8));
-        panel.add(new JLabel("横書きの行の高さ（文字の高さの何倍か。1.0 が標準、3.0 まで）"), BorderLayout.NORTH);
-        JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
-        row.add(spinner);
-        row.add(new JLabel(" 倍"));
-        panel.add(row, BorderLayout.CENTER);
-        int result = JOptionPane.showConfirmDialog(this, panel, "横の行の高さ",
-                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
-        if (result == JOptionPane.OK_OPTION) {
-            try {
-                spinner.commitEdit();           // 打ち込んだまま OK を押したときも、その数を使う
-            } catch (java.text.ParseException ex) {
-                // 数として読めないときは、矢印で選んでいた値を使う
-            }
-            setRowHeight((int) Math.round(((Number) spinner.getValue()).doubleValue() * 100));
-        } else {
-            rebuildRowHeightMenu();             // チェックを、今の倍率の所に戻す
-        }
-    }
-
-    /** 横書きの行の高さを変えて覚える。開いている横書きの文書（すべて）を、すぐ組み直す。 */
-    private void setRowHeight(int percent) {
-        Spacing.setRow(percent);
-        Spacing.save(appSettings);
-        appSettings.save();
-        rebuildRowHeightMenu();
-        for (EditorPane pane : documentPanes()) {
-            forEachView(pane, view -> {
-                if (view instanceof TextEditorPane horizontal) {
-                    horizontal.applyRowHeight();
-                }
-            });
-        }
-    }
-
-    /** 横書きの打つ位置のサブメニュー（固定するか・高さ・上へ書くか）。選び直すたびに、チェックと「指定」の表示を作り直す。 */
-    private final JMenu typingMenu = new JMenu("打つ位置");
-
-    private void rebuildTypingMenu() {
-        typingMenu.removeAll();
-        JCheckBoxMenuItem fixedItem = new JCheckBoxMenuItem("打つ行を画面の同じ高さに保つ", TypingPosition.fixed());
-        fixedItem.addActionListener(e -> {
-            TypingPosition.setFixed(fixedItem.isSelected());
-            saveTypingPosition();
-        });
-        typingMenu.add(fixedItem);
-        typingMenu.addSeparator();
-        javax.swing.ButtonGroup group = new javax.swing.ButtonGroup();
-        int current = TypingPosition.position();
-        boolean preset = false;
-        for (int i = 0; i < TypingPosition.CHOICES.length; i++) {
-            int value = TypingPosition.CHOICES[i];
-            javax.swing.JRadioButtonMenuItem positionItem = new javax.swing.JRadioButtonMenuItem(
-                    TypingPosition.NAMES[i] + "（上から " + value + "%）", value == current);
-            positionItem.addActionListener(e -> setTypingPosition(value));
-            group.add(positionItem);
-            typingMenu.add(positionItem);
-            preset |= value == current;
-        }
-        // 並べた高さのどれでもないときは、「指定」に今の高さを出してチェックを付ける
-        javax.swing.JRadioButtonMenuItem customItem = new javax.swing.JRadioButtonMenuItem(
-                preset ? "高さを指定…" : "高さを指定（上から " + current + "%）…", !preset);
-        customItem.addActionListener(e -> askTypingPosition());
-        group.add(customItem);
-        typingMenu.add(customItem);
-        typingMenu.addSeparator();
-        JCheckBoxMenuItem upwardItem = new JCheckBoxMenuItem("新しい行を上に表示する（下から上へ書く）", TypingPosition.upward());
-        upwardItem.addActionListener(e -> {
-            TypingPosition.setUpward(upwardItem.isSelected());
-            saveTypingPosition();
-            flash(upwardItem.isSelected()
-                    ? "行を下から上へ並べて表示します（保存する中身の順番は、そのままです）"
-                    : "行を、ふつうの順番で表示します");
-        });
-        typingMenu.add(upwardItem);
-    }
-
-    /** 打つ位置の高さを、数で指定してもらう（画面の上から 10〜90%）。 */
-    private void askTypingPosition() {
-        javax.swing.SpinnerNumberModel model = new javax.swing.SpinnerNumberModel(
-                TypingPosition.position(), TypingPosition.MIN, TypingPosition.MAX, 5);
-        javax.swing.JSpinner spinner = new javax.swing.JSpinner(model);
-        JPanel panel = new JPanel(new BorderLayout(8, 8));
-        panel.add(new JLabel("打つ行を置く高さ（画面の上から何％の所か。50 が真ん中）"), BorderLayout.NORTH);
-        JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
-        row.add(spinner);
-        row.add(new JLabel(" %"));
-        panel.add(row, BorderLayout.CENTER);
-        int result = JOptionPane.showConfirmDialog(this, panel, "打つ位置の高さ",
-                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
-        if (result == JOptionPane.OK_OPTION) {
-            try {
-                spinner.commitEdit();           // 打ち込んだまま OK を押したときも、その数を使う
-            } catch (java.text.ParseException ex) {
-                // 数として読めないときは、矢印で選んでいた値を使う
-            }
-            setTypingPosition(((Number) spinner.getValue()).intValue());
-        } else {
-            rebuildTypingMenu();                // チェックを、今の高さの所に戻す
-        }
-    }
-
-    /** 打つ位置の高さを変える。高さを選んだら、固定も入れる（選んだのに動かない、とならないように）。 */
-    private void setTypingPosition(int percent) {
-        TypingPosition.setPosition(percent);
-        TypingPosition.setFixed(true);
-        saveTypingPosition();
-    }
-
-    /** 打つ位置の設定を覚え、メニューを作り直し、開いている横書きの文書（すべて）にすぐ反映する。 */
-    private void saveTypingPosition() {
-        TypingPosition.save(appSettings);
-        appSettings.save();
-        rebuildTypingMenu();
-        for (EditorPane pane : documentPanes()) {
-            forEachView(pane, view -> {
-                if (view instanceof TextEditorPane horizontal) {
-                    horizontal.applyTypingPosition();
-                }
-            });
-        }
-    }
-
-    /** 行間・字間・余白の段階を変えて覚える。開いている文書（すべて）の並べ方と余白を、すぐ描き直す。 */
-    private void setSpacing(int kind, int level) {
-        if (kind == 0) {
-            Spacing.setLine(level);
-        } else if (kind == 1) {
-            Spacing.setChars(level);
-        } else {
-            Spacing.setMargin(level);
-        }
-        Spacing.save(appSettings);
-        appSettings.save();
-        for (EditorPane pane : documentPanes()) {
-            forEachView(pane, view -> {
-                if (view instanceof VerticalTextPane vertical) {
-                    vertical.refreshLayout();
-                } else if (view instanceof TextEditorPane horizontal) {
-                    horizontal.applyMargin();
-                }
-            });
-        }
-        updateStatus();
-    }
-
-    /** 原稿用紙の字数または行数を変えて覚える。開いている縦書きの文書（すべて）を描き直し、枚数の表示も直す。 */
-    private void setSheetSize(boolean chars, int value) {
-        if (chars) {
-            SheetSize.setChars(value);
-        } else {
-            SheetSize.setLines(value);
-        }
-        SheetSize.save(appSettings);
-        appSettings.save();
-        manuscriptItem.setText(sheetLabel());
-        sheetCache.clear();
-        for (EditorPane pane : documentPanes()) {
-            if (pane instanceof VerticalTextPane vertical) {
-                forEachView(vertical, view -> ((VerticalTextPane) view).setManuscript(((VerticalTextPane) view).isManuscript()));
-            }
-        }
-        updateStatus();
-    }
-
     /** 書式メニューの、原稿用紙の表示を切り替える項目（縦書き。Writer から）。 */
     private void addManuscriptItem(JMenu format) {
-        manuscriptItem.setText(sheetLabel());
+        manuscriptItem.setText(LayoutMenus.sheetLabel());
         manuscriptItem.setAccelerator(key(KeyEvent.VK_G, CTRL | SHIFT));
         manuscriptItem.addActionListener(e -> {
             if (currentPane() instanceof VerticalTextPane vertical) {
@@ -1326,25 +1136,54 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         return focusMode;
     }
 
-    /** 画面の上のほうに、数秒だけ案内を出す（ステータスバーが隠れているときに使う）。 */
+    /**
+     * 画面の上のほうに、数秒だけ案内を出す（ステータスバーが隠れているときに使う）。
+     * 本文の邪魔をしないよう、ベタ塗りの青にはせず、欄と同じ地に細い枠と角丸。薄く浮かび、薄く消える。
+     */
     private void showHint(String text) {
-        JLabel hint = new JLabel(text, JLabel.CENTER);
-        hint.setOpaque(true);
-        hint.setBackground(Theme.ACCENT);
-        hint.setForeground(Color.WHITE);
+        JLabel hint = new JLabel(text, JLabel.CENTER) {
+            @Override
+            public void paint(Graphics g) {
+                Fader.paint(this, g, super::paint);
+            }
+
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                java.awt.geom.RoundRectangle2D.Float shape = new java.awt.geom.RoundRectangle2D.Float(
+                        0.5f, 0.5f, getWidth() - 1, getHeight() - 1, Theme.arc(), Theme.arc());
+                g2.setColor(Theme.PANEL);
+                g2.fill(shape);
+                g2.setColor(Theme.overlay(0.22f));
+                g2.draw(shape);
+                g2.dispose();
+                super.paintComponent(g);
+            }
+        };
+        hint.setForeground(Theme.FG_STRONG);
         hint.setFont(Theme.small());
         hint.setBorder(BorderFactory.createEmptyBorder(8, 18, 8, 18));
         Dimension size = hint.getPreferredSize();
         JLayeredPane layers = getLayeredPane();
         layers.add(hint, JLayeredPane.POPUP_LAYER);
-        // ウィンドウを最大にした直後は大きさが変わっていくので、少しのあいだ、真ん中に置き直す
-        Timer place = new Timer(100, e -> hint.setBounds((layers.getWidth() - size.width) / 2, 24, size.width, size.height));
-        place.start();
-        Timer timer = new Timer(3000, e -> {
-            place.stop();
+        // ウィンドウを最大にした直後は大きさが変わっていくので、変わるたびに真ん中へ置き直す
+        Runnable place = () -> hint.setBounds((layers.getWidth() - size.width) / 2, 24, size.width, size.height);
+        java.awt.event.ComponentAdapter follow = new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent e) {
+                place.run();
+            }
+        };
+        layers.addComponentListener(follow);
+        place.run();
+        Fader fader = new Fader(hint);
+        fader.fade(true, null);
+        Timer timer = new Timer(3000, e -> fader.fade(false, () -> {
+            layers.removeComponentListener(follow);
             layers.remove(hint);
             layers.repaint();
-        });
+        }));
         timer.setRepeats(false);
         timer.start();
     }
@@ -2143,7 +1982,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
     }
 
     /** メニュー項目にアイコンを付ける。文字とくっつかないように、アイコンの半分ほど間をあける。 */
-    private static void withIcon(javax.swing.AbstractButton item, javax.swing.Icon icon) {
+    static void withIcon(javax.swing.AbstractButton item, javax.swing.Icon icon) {
         item.setIcon(icon);
         item.setIconTextGap(Math.max(6, icon.getIconWidth() / 2));
     }
@@ -2433,7 +2272,7 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
             format = "テキスト";
         }
         String sheets = pane instanceof TextEditorPane text && Edition.has(Edition.VERTICAL)
-                ? "    原稿用紙換算 " + sheetCache.computeIfAbsent(text.firstView(), p -> WritingStats.manuscriptSheets(text.getText())) + " 枚"
+                ? "    原稿用紙換算 " + sheetCount(text) + " 枚"
                 : "";
         // 字数は、設定の数え方で数える（横書きは記法を含むので、ルビを除くモードでは親文字だけを数える）
         String count = pane instanceof Searchable s ? "    " + charCountText(pane, s) : "";
@@ -2441,17 +2280,36 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
                 + (mcp.isRunning() ? "    AI 連携中" : ""));
     }
 
-    /** 覚えておく字数（数え方ごと。数え方を変えたら数え直す）。 */
-    private record CharCount(WritingStats.CountMode mode, int total) {
+    /**
+     * 覚えておく字数（数え方ごと。数え方を変えたら数え直す）。source は、数えたときの全文。
+     * 文書は、中身が変わるまで同じ全文（同じ String）を返すので、それが別の物になったときだけ数え直す
+     * （分割で同じ文書を2つ映していても、1回打つごとに数えるのは1回）。
+     */
+    private record CharCount(WritingStats.CountMode mode, int total, String source) {
+    }
+
+    /** 覚えておく原稿用紙換算の枚数。source は CharCount と同じ。 */
+    private record SheetCount(int sheets, String source) {
+    }
+
+    private int sheetCount(TextEditorPane pane) {
+        String text = pane.getText();
+        SheetCount cached = sheetCache.get(pane.firstView());
+        if (cached == null || cached.source() != text) {
+            cached = new SheetCount(WritingStats.manuscriptSheets(text), text);
+            sheetCache.put(pane.firstView(), cached);
+        }
+        return cached.sheets();
     }
 
     /** ステータスバーの字数。全体の字数は、文書が変わるまで覚えておき、カーソルが動いただけでは数え直さない。 */
     private String charCountText(EditorPane pane, Searchable s) {
         WritingStats.CountMode mode = WritingStats.CountMode.fromId(appSettings.getString(AppSettings.COUNT_MODE, "all"));
         boolean rubyNotation = pane instanceof TextEditorPane;     // 横書きは記法を含むので、ルビを除くモードでは親文字だけを数える
+        String text = s.getText();
         CharCount cached = countCache.get(pane.firstView());
-        if (cached == null || cached.mode() != mode) {
-            cached = new CharCount(mode, WritingStats.countChars(s.getText(), mode, rubyNotation));
+        if (cached == null || cached.mode() != mode || cached.source() != text) {
+            cached = new CharCount(mode, WritingStats.countChars(text, mode, rubyNotation), text);
             countCache.put(pane.firstView(), cached);
         }
         return WritingStats.charCountText(s, mode, rubyNotation, cached.total());
@@ -2469,7 +2327,9 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
 
     /** 保存できたことを、ステータスバーの真ん中に1秒だけ淡く出す（ダイアログは出さない）。 */
     private void showSaved() {
+        savedFader.finish();                // 前の「保存しました」が消えていく途中なら、先に終わらせる
         statusCenter.setText("保存しました");
+        savedFader.fade(true, null);
         savedTimer.restart();
     }
 
@@ -2484,8 +2344,6 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
 
     @Override
     public void contentChanged(EditorPane pane) {
-        sheetCache.remove(pane.firstView());
-        countCache.remove(pane.firstView());
         findBar.contentChanged(pane);
         stats.changed(pane);
         if (proofPanel != null && pane == currentPane()) {
@@ -2557,8 +2415,8 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
                 continue;
             }
             String[] choice = choices[mode.ordinal()];
-            JMenuItem item = new JMenuItem("<html><font color='" + BADGE_HEX[mode.ordinal()] + "'><b>" + mode.badge
-                    + "</b></font>&nbsp;&nbsp;" + choice[0] + "&nbsp;&nbsp;&nbsp;<font color='" + hex(Theme.FG_DIM) + "'>"
+            JMenuItem item = new JMenuItem("<html><font color='" + Theme.hex(Theme.badge(mode.ordinal())) + "'><b>" + mode.badge
+                    + "</b></font>&nbsp;&nbsp;" + choice[0] + "&nbsp;&nbsp;&nbsp;<font color='" + Theme.hex(Theme.FG_DIM) + "'>"
                     + choice[1] + "</font></html>");
             item.addActionListener(e -> {
                 setActiveGroup(group);
@@ -2568,12 +2426,6 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         }
         menu.show(invoker, 0, invoker.getHeight());
     }
-
-    private static String hex(Color color) {
-        return String.format("#%06X", color.getRGB() & 0xFFFFFF);
-    }
-
-    private static final String[] BADGE_HEX = {"#4FC1FF", "#CE9178", "#4EC9B0"};     // タブの印と同じ色
 
     /** タブの右クリックメニュー。分割や移動を、メニューを探さずにその場でできるようにする。 */
     @Override
@@ -3603,129 +3455,6 @@ public class EditorFrame extends JFrame implements EditorPane.Listener, EditorGr
         setActiveGroup(group);
         tidyGroups();
         SwingUtilities.invokeLater(fresh::focusEditor);
-    }
-
-    // ---------- ルビ ----------
-    // 縦書きでは、ルビを文字の属性として持つ（VerticalTextPane に任せる）。
-    // 横書きは文字だけを扱う画面なので、「小説家になろう」の記法を文章の中に書き込む。
-
-    /** 今の文書が、文章（横書き・縦書き）のときだけ返す。カードボードなら、案内を出して null。 */
-    private Searchable textTarget() {
-        if (currentPane() instanceof Searchable s) {
-            return s;
-        }
-        flash("ルビは、テキストと縦書きの文書で使えます");
-        return null;
-    }
-
-    /** position を含んでいるルビを探す（前後の端に接している場合も含む）。 */
-    private static NarouRuby.Span rubyAt(String text, int position) {
-        for (NarouRuby.Span span : NarouRuby.parse(text)) {
-            if (span.start() <= position && position <= span.end()) {
-                return span;
-            }
-        }
-        return null;
-    }
-
-    /** 選んだ文字にルビを振る。何も選ばずにルビの上で実行したときは、そのルビを書き直す。 */
-    private void editRuby() {
-        if (currentPane() instanceof VerticalTextPane vertical) {
-            vertical.beginRubyEdit();   // 縦書きでは、文字のすぐ横に入力欄を出す
-            return;
-        }
-        Searchable target = textTarget();
-        if (target == null) {
-            return;
-        }
-        String text = target.getText();
-        int start = target.getSelectionStart();
-        int end = target.getSelectionEnd();
-        String current = "";
-        if (start == end) {
-            NarouRuby.Span span = rubyAt(text, start);
-            if (span == null) {
-                flash("ルビを振る文字を選んでから、もう一度どうぞ");
-                return;
-            }
-            start = span.start();
-            end = span.end();
-            current = text.substring(span.rubyStart(), span.rubyEnd());
-        }
-        String base = NarouRuby.strip(text.substring(start, end));     // 元から付いていたルビは、いったん外す
-        if (base.isBlank() || base.contains("\n")) {
-            flash("ルビは、1行の中の文字に振れます");
-            return;
-        }
-        if (base.length() > NarouRuby.MAX_LENGTH) {
-            flash("ルビを振れるのは " + NarouRuby.MAX_LENGTH + " 文字までです（小説家になろうの決まり）");
-            return;
-        }
-        if (!NarouRuby.fits(base, "あ")) {
-            flash("｜ 《 》 （ ( を含む文字には、ルビを振れません");
-            return;
-        }
-        Object answer = JOptionPane.showInputDialog(this, "「" + base + "」のふりがな（空にすると、ルビを外します）",
-                "ルビを振る", JOptionPane.PLAIN_MESSAGE, null, null, current);
-        currentPane().focusEditor();
-        if (answer == null) {
-            return;                     // キャンセル
-        }
-        String ruby = answer.toString().strip();
-        if (!ruby.isEmpty() && !NarouRuby.fits(base, ruby)) {
-            flash("ふりがなは " + NarouRuby.MAX_LENGTH + " 文字までで、｜ 《 》 （ ( は使えません");
-            return;
-        }
-        target.replaceRange(ruby.isEmpty() ? base : NarouRuby.format(base, ruby), start, end);
-    }
-
-    /** 選んだ文字に、1文字ずつ傍点（・）を付ける。 */
-    private void addEmphasis() {
-        if (currentPane() instanceof VerticalTextPane vertical) {
-            vertical.emphasizeSelection();
-            return;
-        }
-        Searchable target = textTarget();
-        if (target == null) {
-            return;
-        }
-        int start = target.getSelectionStart();
-        int end = target.getSelectionEnd();
-        if (start == end) {
-            flash("傍点を付ける文字を選んでから、もう一度どうぞ");
-            return;
-        }
-        String base = NarouRuby.strip(target.getText().substring(start, end));
-        target.replaceRange(NarouRuby.emphasize(base), start, end);
-    }
-
-    /** 選んだ範囲（選んでいなければ、カーソルのあるルビ）から、ルビと傍点を外す。 */
-    private void removeRuby() {
-        if (currentPane() instanceof VerticalTextPane vertical) {
-            vertical.removeRubyAtSelection();
-            return;
-        }
-        Searchable target = textTarget();
-        if (target == null) {
-            return;
-        }
-        String text = target.getText();
-        int start = target.getSelectionStart();
-        int end = target.getSelectionEnd();
-        if (start == end) {
-            NarouRuby.Span span = rubyAt(text, start);
-            if (span == null) {
-                flash("外すルビが、カーソルの位置にありません");
-                return;
-            }
-            start = span.start();
-            end = span.end();
-        }
-        String original = text.substring(start, end);
-        String stripped = NarouRuby.strip(original);
-        if (!stripped.equals(original)) {
-            target.replaceRange(stripped, start, end);
-        }
     }
 
     private void zoom(int direction) {

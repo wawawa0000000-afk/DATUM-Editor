@@ -80,11 +80,6 @@ public final class AiChatPanel extends JPanel {
         this.host = host;
         setBackground(Theme.PANEL);
 
-        JLabel title = new JLabel("AI");
-        title.setFont(Theme.small().deriveFont(java.awt.Font.BOLD));
-        title.setForeground(Theme.FG);
-        backendLabel.setFont(Theme.small());
-        backendLabel.setForeground(Theme.FG_DIM);
         JButton history = Theme.flatButton("履歴");
         history.setToolTipText("前の会話を選んで、その続きから話す");
         history.addActionListener(e -> showHistory(history));
@@ -94,23 +89,12 @@ public final class AiChatPanel extends JPanel {
         JButton settingsButton = Theme.flatButton("設定");
         settingsButton.setToolTipText("どの AI を使うかを選ぶ");
         settingsButton.addActionListener(e -> host.openSettings());
-        JButton close = Theme.flatButton("×");
-        close.addActionListener(e -> onClose.run());
-        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
-        buttons.setOpaque(false);
+        JButton close = PanelHeader.closeButton(null, onClose);
         for (JButton button : new JButton[]{history, fresh, settingsButton, close}) {
             button.setFocusable(false);
-            buttons.add(button);
         }
-        JPanel titleRow = new JPanel(new BorderLayout(8, 0));
-        titleRow.setOpaque(false);
-        titleRow.add(title, BorderLayout.WEST);
-        titleRow.add(backendLabel, BorderLayout.CENTER);
-        JPanel header = new JPanel(new BorderLayout());
-        header.setBackground(Theme.PANEL);
-        header.setBorder(BorderFactory.createEmptyBorder(6, 12, 6, 6));
-        header.add(titleRow, BorderLayout.CENTER);
-        header.add(buttons, BorderLayout.EAST);
+        PanelHeader header = new PanelHeader(new JLabel("AI"), backendLabel)
+                .with(history, fresh, settingsButton, close);
 
         transcript.setEditable(false);
         transcript.setBackground(Theme.BG);

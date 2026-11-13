@@ -78,24 +78,11 @@ public final class ProofreadPanel extends JPanel {
         recheck.setRepeats(false);
         setBackground(Theme.PANEL);
 
-        JLabel title = new JLabel("校正");
-        title.setFont(Theme.small());
-        title.setForeground(Theme.FG);
         JButton items = Theme.flatButton("項目");
         items.setToolTipText("調べる項目を選ぶ");
         items.addActionListener(e -> showItemMenu(items));
-        JButton close = Theme.flatButton("×");
-        close.setToolTipText("校正の欄を隠す");
-        close.addActionListener(e -> onClose.run());
-        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
-        buttons.setOpaque(false);
-        buttons.add(items);
-        buttons.add(close);
-        JPanel header = new JPanel(new BorderLayout());
-        header.setBackground(Theme.PANEL);
-        header.setBorder(BorderFactory.createEmptyBorder(6, 12, 6, 8));
-        header.add(title, BorderLayout.WEST);
-        header.add(buttons, BorderLayout.EAST);
+        JButton close = PanelHeader.closeButton("校正の欄を隠す", onClose);
+        PanelHeader header = new PanelHeader("校正").with(items, close);
 
         summary.setFont(Theme.small());
         summary.setForeground(Theme.FG_DIM);

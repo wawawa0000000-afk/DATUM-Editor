@@ -172,6 +172,7 @@ final class ToolBar extends JPanel {
         private final Kind kind;
         private final String key;
         private boolean iconOnly;          // 名前を省いて、アイコンだけを描くか（狭いとき）
+        private final PlateFade fade = new PlateFade(this, false);     // 乗せた・オンの濃さを、100ms で移す
 
         private Button(Icon icon, String name, String label, String tooltip, Kind kind, String key, Consumer<Button> action) {
             this.icon = icon;
@@ -255,25 +256,22 @@ final class ToolBar extends JPanel {
             g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
             int w = getWidth();
             int h = getHeight();
-            int arc = Math.round(12 * zoom());  // 角の丸み（半径 6px）
-            boolean hot = getModel().isRollover() || getModel().isPressed();
-            boolean light = Theme.scheme().light;
+            int arc = Theme.arc();              // 角の丸み（半径 6px）
             if (kind == Kind.FIELD && !iconOnly) {
                 // 入力欄の形：押せる所だとわかるよう、外枠に淡い明るい線を引く（暗い配色では白の 15%、明るい配色では黒の 15%）
-                g2.setColor(hot ? Theme.HOVER : Theme.INPUT);
+                g2.setColor(Theme.mix(Theme.INPUT, Theme.HOVER, fade.hot()));
                 g2.fillRoundRect(0, 0, w - 1, h - 1, arc, arc);
-                g2.setColor(light ? new Color(0, 0, 0, 38) : new Color(255, 255, 255, 38));
+                g2.setColor(Theme.overlay(0.15f));
                 g2.drawRoundRect(0, 0, w - 1, h - 1, arc, arc);
             } else {
                 // どこまでが押せる所か一目でわかるよう、ふだんから極薄いプレートと細い枠を描く。
                 // 乗せると明るく浮き上がり、オン（欄を出している・分割中）は押し込んだように、さらに明るくする。
                 // 地と枠の濃さ（白の割合）：ふだん 4%・10%、乗せると 12%・22%、オン 20%・35%。明るい配色では、白の代わりに黒で同じ濃さ
-                float[] plate = isSelected() ? new float[]{0.20f, 0.35f} : hot ? new float[]{0.12f, 0.22f} : new float[]{0.04f, 0.10f};
-                int tone = light ? 0 : 255;
+                float[] plate = fade.plate();
                 java.awt.geom.RoundRectangle2D.Float shape = new java.awt.geom.RoundRectangle2D.Float(0.5f, 0.5f, w - 1, h - 1, arc, arc);
-                g2.setColor(new Color(tone, tone, tone, Math.round(plate[0] * 255)));
+                g2.setColor(Theme.overlay(plate[0]));
                 g2.fill(shape);
-                g2.setColor(new Color(tone, tone, tone, Math.round(plate[1] * 255)));
+                g2.setColor(Theme.overlay(plate[1]));
                 g2.draw(shape);
             }
 
@@ -309,19 +307,12 @@ final class ToolBar extends JPanel {
 
         /** オンのボタンの、アイコンと名前の色。暗い配色では、アクセントの青を少し明るくして読みやすくする。 */
         private static Color onColor() {
-            return Theme.scheme().light ? Theme.ACCENT : mix(Theme.ACCENT, Color.WHITE, 0.35f);
+            return Theme.scheme().light ? Theme.ACCENT : Theme.mix(Theme.ACCENT, Color.WHITE, 0.35f);
         }
 
         /** 入力欄の形のボタンの、薄い文字（操作を探す…・Ctrl+P）。背景に沈まないよう、ふつうの文字の色から少しだけ下げる。 */
         static Color placeholderColor() {
-            return mix(Theme.FG, Theme.INPUT, 0.30f);
-        }
-
-        /** a に b を t の割合で混ぜた色。 */
-        private static Color mix(Color a, Color b, float t) {
-            return new Color(Math.round(a.getRed() + (b.getRed() - a.getRed()) * t),
-                    Math.round(a.getGreen() + (b.getGreen() - a.getGreen()) * t),
-                    Math.round(a.getBlue() + (b.getBlue() - a.getBlue()) * t));
+            return Theme.mix(Theme.FG, Theme.INPUT, 0.30f);
         }
 
         /** 「▾」を、左端 x・縦の中心 cy に描く（線で描く下向きの山。アイコンと同じ線の太さ）。 */

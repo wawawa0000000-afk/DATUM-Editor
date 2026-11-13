@@ -63,9 +63,9 @@ public abstract class EditorPane extends JPanel {
         return mode == Mode.TEXT && isMarkdownFile(path) ? "MD" : mode.badge;
     }
 
-    /** badgeFor の印の色（16進）。タブ・サイドバー・メニューで同じ色にする。 */
-    static String badgeHexFor(Path path, Mode mode, String[] modeHex) {
-        return mode == Mode.TEXT && isMarkdownFile(path) ? "#E5C07B" : modeHex[mode.ordinal()];
+    /** badgeFor の印の色。タブ・サイドバー・メニューで同じ色にする。 */
+    static Color badgeColorFor(Path path, Mode mode) {
+        return Theme.badge(mode == Mode.TEXT && isMarkdownFile(path) ? Theme.BADGE_MARKDOWN : mode.ordinal());
     }
 
     /** 色を付ける範囲（検索結果の表示に使う）。 */

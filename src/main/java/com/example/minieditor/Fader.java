@@ -7,27 +7,27 @@ import java.util.List;
 import java.util.function.Consumer;
 
 import javax.swing.JComponent;
-import javax.swing.Timer;
 
 /**
- * 集中モードに出入りするとき、ツールバーとステータスバーを 150ms かけて薄く消す・浮かび上がらせる。
+ * 部品を 150ms かけて薄く消す・浮かび上がらせる（集中モードに出入りするときのツールバーとステータスバー、検索バーなど）。
  * 動かすのは透明度だけで、途中で大きさや並びは変えない（本文を毎回並べ直すと、長い原稿で入力がもたつくため）。
  * 並びが変わるのは、消し終わったとき（または浮かび始める前）の1回だけ。
- * 部品の側は、paint を {@link #paint} に通しておく。タイマーは javax.swing.Timer なので、すべて EDT の上で動く。
+ * 部品の側は、paint を {@link #paint} に通しておく。動かす仕組みは {@link Motion}（EDT の上で動く）。
  */
 final class Fader {
 
-    static final int DURATION = 150;                    // ミリ秒
+    static final int DURATION = Motion.NORMAL;          // ミリ秒
     private static final String ALPHA = "datum.fadeAlpha";
 
     private final List<JComponent> parts;
-    private final Timer timer = new Timer(15, e -> tick());
-    private long start;
-    private boolean in;
+    private final boolean[] opaque;                     // 動かす前に、地を塗る部品だったか
+    private final Motion motion = new Motion(DURATION, 1f, this::apply);
+    private boolean running;
     private Runnable done;
 
     Fader(JComponent... parts) {
         this.parts = List.of(parts);
+        this.opaque = new boolean[parts.length];
     }
 
     /**
@@ -36,53 +36,46 @@ final class Fader {
      */
     void fade(boolean in, Runnable done) {
         finish();
-        this.in = in;
         this.done = done;
-        for (JComponent c : parts) {
-            c.setOpaque(false);         // 透けている間は、後ろ（本文の地）を先に描いてもらう
-            set(c, in ? 0f : 1f);
+        running = true;
+        for (int i = 0; i < parts.size(); i++) {
+            opaque[i] = parts.get(i).isOpaque();
+            parts.get(i).setOpaque(false);      // 透けている間は、後ろ（本文の地）を先に描いてもらう
         }
-        start = System.nanoTime();
-        timer.start();
+        motion.set(in ? 0f : 1f);
+        apply();
+        motion.to(in ? 1f : 0f, this::end);
     }
 
     /** 動いている途中なら、最後の形にして終わらせる（続けて F11 を押されたとき）。 */
     void finish() {
-        if (!timer.isRunning()) {
-            return;
+        if (running) {
+            motion.finish();
         }
-        timer.stop();
-        end();
     }
 
-    private void tick() {
-        float t = Math.min(1f, (System.nanoTime() - start) / (DURATION * 1_000_000f));
-        float eased = 1f - (1f - t) * (1f - t);        // はじめ速く、終わりはゆっくり
-        for (JComponent c : parts) {
-            set(c, in ? eased : 1f - eased);
+    private void apply() {
+        if (!running) {
+            return;
         }
-        if (t >= 1f) {
-            timer.stop();
-            end();
+        for (JComponent c : parts) {
+            c.putClientProperty(ALPHA, motion.value());
+            c.repaint();
         }
     }
 
     private void end() {
-        for (JComponent c : parts) {
-            c.putClientProperty(ALPHA, null);
-            c.setOpaque(true);
-            c.repaint();
+        running = false;
+        for (int i = 0; i < parts.size(); i++) {
+            parts.get(i).putClientProperty(ALPHA, null);
+            parts.get(i).setOpaque(opaque[i]);
+            parts.get(i).repaint();
         }
         Runnable after = done;
         done = null;
         if (after != null) {
             after.run();
         }
-    }
-
-    private static void set(JComponent c, float alpha) {
-        c.putClientProperty(ALPHA, alpha);
-        c.repaint();
     }
 
     /** 部品の paint から呼ぶ。透明度が決まっていれば、その濃さで中身ごと描く。 */
@@ -96,7 +89,7 @@ final class Fader {
             return;
         }
         Graphics2D g2 = (Graphics2D) g.create();
-        g2.setComposite(AlphaComposite.SrcOver.derive(alpha));
+        g2.setComposite(AlphaComposite.SrcOver.derive(Math.min(1f, alpha)));
         paint.accept(g2);
         g2.dispose();
     }

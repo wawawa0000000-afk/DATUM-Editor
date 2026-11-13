@@ -5,7 +5,6 @@ import java.awt.Color;
 import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
-import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
@@ -15,12 +14,10 @@ import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.DefaultListModel;
 import javax.swing.JButton;
-import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JPanel;
@@ -85,15 +82,15 @@ final class FolderSearchPanel extends JPanel {
         caseButton.setToolTipText("大文字と小文字を区別する");
         caseButton.addActionListener(e -> {
             caseSensitive = !caseSensitive;
-            styleToggle(caseButton, caseSensitive);
+            Theme.toggle(caseButton, caseSensitive);
         });
-        styleToggle(caseButton, false);
+        Theme.toggle(caseButton, false);
         regexButton.setToolTipText("正規表現で検索する");
         regexButton.addActionListener(e -> {
             regexMode = !regexMode;
-            styleToggle(regexButton, regexMode);
+            Theme.toggle(regexButton, regexMode);
         });
-        styleToggle(regexButton, false);
+        Theme.toggle(regexButton, false);
         searchButton.setToolTipText("フォルダの中を探す（Enter）");
         searchButton.addActionListener(e -> startSearch());
         stopButton.setToolTipText("探すのを止める");
@@ -104,7 +101,7 @@ final class FolderSearchPanel extends JPanel {
         closeButton.addActionListener(e -> onClose.run());
 
         keywordField.addActionListener(e -> startSearch());     // Enter で検索する
-        bind(keywordField, KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "closeFolderSearch", onClose);
+        Keys.bind(keywordField, KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "closeFolderSearch", onClose);
 
         list.setCellRenderer(new DefaultListCellRenderer() {
             @Override
@@ -125,8 +122,8 @@ final class FolderSearchPanel extends JPanel {
                 }
             }
         });
-        bind(list, KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "openFolderHit", this::openSelected);
-        bind(list, KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "closeFolderSearch", onClose);
+        Keys.bind(list, KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "openFolderHit", this::openSelected);
+        Keys.bind(list, KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "closeFolderSearch", onClose);
 
         JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
         row.setOpaque(false);
@@ -143,11 +140,11 @@ final class FolderSearchPanel extends JPanel {
         JPanel widget = new JPanel(new BorderLayout());
         widget.setBackground(Theme.PANEL);
         widget.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(Theme.BORDER),
-                BorderFactory.createEmptyBorder(8, 8, 8, 8)));
+                BorderFactory.createMatteBorder(1, 0, 0, 0, Theme.BORDER),
+                BorderFactory.createEmptyBorder(8, 8, 0, 8)));
         widget.add(row, BorderLayout.NORTH);
         JScrollPane scroll = new JScrollPane(list);
-        scroll.setBorder(BorderFactory.createLineBorder(Theme.BORDER));
+        scroll.setBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Theme.BORDER));
         widget.add(scroll, BorderLayout.CENTER);
         add(widget, BorderLayout.CENTER);
     }
@@ -297,23 +294,5 @@ final class FolderSearchPanel extends JPanel {
         label.setForeground(Theme.FG_DIM);
         label.setPreferredSize(new Dimension(48, 28));
         return label;
-    }
-
-    /** 「Aa」「.*」の切り替えボタンの見た目（FindBar と同じ）。on のときは枠を青にする。 */
-    private static void styleToggle(JButton button, boolean on) {
-        button.setForeground(on ? Theme.FG_STRONG : Theme.FG_DIM);
-        button.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(on ? Theme.ACCENT : Theme.INPUT),
-                BorderFactory.createEmptyBorder(3, 11, 3, 11)));
-    }
-
-    private static void bind(JComponent component, KeyStroke key, String name, Runnable action) {
-        component.getInputMap(JComponent.WHEN_FOCUSED).put(key, name);
-        component.getActionMap().put(name, new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                action.run();
-            }
-        });
     }
 }

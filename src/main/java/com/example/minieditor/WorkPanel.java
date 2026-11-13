@@ -4,7 +4,6 @@ import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Dimension;
-import java.awt.FlowLayout;
 import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
@@ -18,7 +17,6 @@ import javax.swing.BorderFactory;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.DefaultListModel;
 import javax.swing.JButton;
-import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JPanel;
@@ -76,26 +74,10 @@ final class WorkPanel extends JPanel {
         setBackground(Theme.BG);
         setMinimumSize(new Dimension(0, 120));
 
-        JLabel title = new JLabel("作品の集計");
-        title.setFont(Theme.small());
-        title.setForeground(Theme.FG);
-        summary.setFont(Theme.small());
-        summary.setForeground(Theme.FG_DIM);
         recount.setToolTipText("フォルダの中の文章を、もう一度数える");
         recount.addActionListener(e -> refresh());
-        JButton close = Theme.flatButton("×");
-        close.setToolTipText("閉じる（Esc）");
-        close.addActionListener(e -> onClose.run());
-        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
-        buttons.setOpaque(false);
-        buttons.add(recount);
-        buttons.add(close);
-        JPanel header = new JPanel(new BorderLayout());
-        header.setBackground(Theme.PANEL);
-        header.setBorder(BorderFactory.createEmptyBorder(6, 12, 6, 8));
-        header.add(title, BorderLayout.WEST);
-        header.add(summary, BorderLayout.CENTER);
-        header.add(buttons, BorderLayout.EAST);
+        PanelHeader header = new PanelHeader(new JLabel("作品の集計"), summary)
+                .with(recount, PanelHeader.closeButton("閉じる（Esc）", onClose));
 
         list.setBackground(Theme.BG);
         list.setCellRenderer(new DefaultListCellRenderer() {
@@ -117,7 +99,7 @@ final class WorkPanel extends JPanel {
                 }
             }
         });
-        bind(list, KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "openWorkEntry", this::openSelected);
+        Keys.bind(list, KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "openWorkEntry", this::openSelected);
         // Esc は、欄の中のどこにフォーカスがあっても効くようにする（一覧・ボタンのどれでも）
         getInputMap(WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "closeWork");
         getActionMap().put("closeWork", new AbstractAction() {
@@ -185,16 +167,6 @@ final class WorkPanel extends JPanel {
     private void setSummary(String text, Color color) {
         summary.setText(text);
         summary.setForeground(color);
-    }
-
-    private static void bind(JComponent component, KeyStroke key, String name, Runnable action) {
-        component.getInputMap(JComponent.WHEN_FOCUSED).put(key, name);
-        component.getActionMap().put(name, new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                action.run();
-            }
-        });
     }
 
     /** 数える処理を、画面のスレッドの外で動かす。終わったら、切り離されていなければ一覧を出す。 */
